@@ -1,0 +1,50 @@
+[
+  {
+    "id": "la_vectors",
+    "topic": "Linear Algebra",
+    "concept": "vectors",
+    "content": "Vectors are ordered lists of numbers that represent magnitude and direction. They can be added, scaled, and used to describe positions and velocities. In learning settings, emphasize geometric intuition (arrows) and algebraic operations (component-wise). Examples: [1,2,3], geometric representation in R^2."
+  },
+  {
+    "id": "la_matrices",
+    "topic": "Linear Algebra",
+    "concept": "matrices",
+    "content": "Matrices are rectangular arrays of numbers that represent linear maps between vector spaces. They support operations like addition, multiplication, transpose, and inversion (when square and full-rank). Practical examples include transformation matrices for rotations and scalings, and systems of linear equations."
+  },
+  {
+    "id": "la_projections",
+    "topic": "Linear Algebra",
+    "concept": "projections",
+    "content": "A projection maps a vector onto a subspace, typically orthogonally. Projection matrices are idempotent (P^2 = P) and useful for approximations and least-squares solutions. Demonstrate with projecting a point onto a line or plane."
+  },
+  {
+    "id": "la_eigen",
+    "topic": "Linear Algebra",
+    "concept": "eigenvalues_and_vectors",
+    "content": "Eigenvalues and eigenvectors are scalars and vectors such that A v = lambda v. They reveal invariant directions under a linear transform and are central to diagonalization, stability analysis, and PCA. Provide geometric intuition and computation steps for small matrices."
+  },
+  {
+    "id": "calc_limits",
+    "topic": "Calculus",
+    "concept": "limits",
+    "content": "Limits describe the value a function approaches as the input approaches a point. Teach with intuitive graphs and epsilon-delta formalism for advanced learners. Examples: limit of (sin x)/x as x->0 equals 1."
+  },
+  {
+    "id": "calc_derivatives",
+    "topic": "Calculus",
+    "concept": "derivatives",
+    "content": "Derivatives measure instantaneous rate of change and are defined as the limit of difference quotients. Connect derivatives to slopes, tangent lines, and physical rates (velocity, acceleration). Include rules: product, quotient, chain rule."
+  },
+  {
+    "id": "calc_gradients",
+    "topic": "Calculus",
+    "concept": "gradients",
+    "content": "Gradients generalize derivatives to multivariable functions; the gradient vector points in direction of steepest ascent. Use geometric visualization and examples in optimization."
+  },
+  {
+    "id": "calc_hessians",
+    "topic": "Calculus",
+    "concept": "hessians",
+    "content": "The Hessian is the matrix of second partial derivatives and encodes local curvature. It's used to determine local minima/maxima and in second-order optimization methods."
+  }
+]
