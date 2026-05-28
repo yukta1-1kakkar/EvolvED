@@ -17,8 +17,9 @@ class Orchestrator:
 
     def __init__(self):
         self.graph = None
-        if lg:
-            self.graph = lg.Graph(name="evolved_pipeline")
+        graph_cls = getattr(lg, "Graph", None) if lg else None
+        if graph_cls:
+            self.graph = graph_cls(name="evolved_pipeline")
             # register nodes using functions in `langgraph_nodes`
             # Keep orchestration minimal here; implement conditional routing in runtime code.
 

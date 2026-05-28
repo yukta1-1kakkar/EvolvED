@@ -4,7 +4,7 @@ from app.core import models, repository, langgraph_nodes
 from app.langgraph import graph as lg_graph
 from typing import Any
 from pydantic import BaseModel
-from app.ai.openai_client import synthesize_speech
+from app.ai.bedrock_client import synthesize_speech
 
 router = APIRouter()
 
@@ -96,7 +96,7 @@ class TTSRequest(BaseModel):
 @router.post("/tts")
 async def tts(req: TTSRequest):
     try:
-        audio = await synthesize_speech(req.text, voice=req.voice or "alloy")
+        audio = await synthesize_speech(req.text, voice=req.voice or "Joanna")
         return Response(content=audio, media_type="audio/mpeg")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

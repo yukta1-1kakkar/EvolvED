@@ -1,12 +1,35 @@
 from typing import Any, Dict
+import logging
+
+from pydantic import ValidationError
+
 from app.core import models
-import asyncio
-from app.ai.openai_client import call_chat_model, create_embedding
+from app.ai.bedrock_client import call_chat_model
 from app.core.chroma_client import ChromaClient
 from app.core.config import settings
 
 
 chroma = ChromaClient()
+logger = logging.getLogger(__name__)
+
+
+def _json_from_model_text(text: str) -> Dict[str, Any]:
+    import json
+    import re
+
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start >= 0 and end > start:
+            return json.loads(cleaned[start : end + 1])
+        raise
 
 
 def _fallback_lesson(learner_id: str, topic: str) -> models.LessonBlueprint:
@@ -33,6 +56,16 @@ def _fallback_lesson(learner_id: str, topic: str) -> models.LessonBlueprint:
         interaction_points=[{"step": 2, "type": "matrix_visualization"}],
         assessment_points=[{"step": 3, "type": "reflection"}],
         estimated_lesson_duration=12,
+    )
+
+
+def _fallback_strategy() -> models.TeachingStrategy:
+    return models.TeachingStrategy(
+        strategy_type="scaffolded",
+        recommended_modalities=["text", "visual", "interactive"],
+        difficulty_level="adaptive",
+        pacing_strategy="moderate",
+        interaction_density="medium",
     )
 
 
@@ -68,17 +101,16 @@ async def pedagogy_agent(state: Dict[str, Any]) -> models.TeachingStrategy:
     try:
         resp = await call_chat_model(messages, model=settings.pedagogy_model, temperature=0.0)
         text = resp["choices"][0]["message"]["content"]
-    except Exception:
-        text = "{}"
-    import json
+    except Exception as exc:
+        logger.warning("Pedagogy generation failed; using the default strategy: %s", exc)
+        return _fallback_strategy()
 
     try:
-        payload = json.loads(text)
-    except Exception:
-        # Fallback heuristic parsing
-        payload = {"strategy_type": "scaffolded", "recommended_modalities": ["text", "visual"], "difficulty_level": "adaptive", "pacing_strategy": "moderate", "interaction_density": "medium"}
-
-    return models.TeachingStrategy(**payload)
+        payload = _json_from_model_text(text)
+        return models.TeachingStrategy(**payload)
+    except (ValueError, TypeError, ValidationError) as exc:
+        logger.warning("Pedagogy response was invalid; using the default strategy: %s", exc)
+        return _fallback_strategy()
 
 
 async def lesson_planning_agent(req: models.GenerateLessonRequest) -> models.LessonBlueprint:
@@ -88,26 +120,28 @@ async def lesson_planning_agent(req: models.GenerateLessonRequest) -> models.Les
     )
     messages = [{"role": "user", "content": prompt}]
     try:
-        resp = await call_chat_model(messages, model=settings.generation_model)
+        resp = await call_chat_model(messages, model=settings.lesson_planning_model)
         text = resp["choices"][0]["message"]["content"]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Lesson planning failed; using the default lesson: %s", exc)
         return _fallback_lesson(req.learner_id, req.topic)
-    import json
 
     try:
-        payload = json.loads(text)
-    except Exception:
+        payload = _json_from_model_text(text)
+        blueprint = models.LessonBlueprint(**payload)
+    except (ValueError, TypeError, ValidationError) as exc:
+        logger.warning("Lesson response was invalid; using the default lesson: %s", exc)
         return _fallback_lesson(req.learner_id, req.topic)
 
     # Optionally persist lesson blueprint embeddings to Chroma
     try:
         docs = [text]
         metas = [{"learner_id": req.learner_id, "topic": req.topic}]
-        await chroma.add_documents("lessons", docs, metas, ids=[payload.get("lesson_id")])
-    except Exception:
-        pass
+        await chroma.add_documents("lessons", docs, metas, ids=[blueprint.lesson_id])
+    except Exception as exc:
+        logger.warning("Lesson embedding persistence failed: %s", exc)
 
-    return models.LessonBlueprint(**payload)
+    return blueprint
 
 
 async def content_generation_agent(blueprint: models.LessonBlueprint) -> models.GeneratedContent:
@@ -117,7 +151,7 @@ async def content_generation_agent(blueprint: models.LessonBlueprint) -> models.
         prompt = f"Generate explanation for step {step}. Keep it concise and instructive."
         messages = [{"role": "user", "content": prompt}]
         try:
-            resp = await call_chat_model(messages, model=settings.generation_model)
+            resp = await call_chat_model(messages, model=settings.content_generation_model)
             content = resp["choices"][0]["message"]["content"]
         except Exception:
             content = step.get("content") or step.get("activity") or "Practice the concept with the interactive visualization."
@@ -129,8 +163,8 @@ async def content_generation_agent(blueprint: models.LessonBlueprint) -> models.
         metas = [{"lesson_id": blueprint.lesson_id, "type": a["type"]} for a in assets]
         ids = [a["id"] for a in assets]
         await chroma.add_documents("lesson_assets", docs, metas, ids=ids)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Lesson asset embedding persistence failed: %s", exc)
 
     return models.GeneratedContent(lesson_assets=assets)
 
@@ -144,13 +178,13 @@ async def assessment_agent(sub: models.AssessmentSubmission) -> models.Assessmen
     scores = {}
     for qid, ans in sub.answers.items():
         if isinstance(ans, (str,)):
-            messages = [{"role": "user", "content": f"Score the following answer on 0-1 scale for correctness: {ans}"}]
-            resp = await call_chat_model(messages, model=settings.generation_model, temperature=0.0)
-            text = resp["choices"][0]["message"]["content"]
             try:
-                score = float(text.strip())
+                messages = [{"role": "user", "content": f"Score the following answer on 0-1 scale for correctness. Return only a number: {ans}"}]
+                resp = await call_chat_model(messages, model=settings.fast_interaction_model, temperature=0.0, max_tokens=16)
+                text = resp["choices"][0]["message"]["content"]
+                score = max(0.0, min(1.0, float(text.strip())))
             except Exception:
-                score = 1.0
+                score = 0.5
             scores[qid] = score
         else:
             scores[qid] = 1.0

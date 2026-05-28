@@ -1,7 +1,5 @@
-import asyncio
 from logging.config import fileConfig
 import os
-from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 
 from alembic import context
@@ -23,7 +21,7 @@ target_metadata = db_models.Base.metadata
 
 
 def run_migrations_offline():
-    raise RuntimeError("offline migrations not supported in this scaffold")
+    raise RuntimeError("Offline migrations are not supported. Set DATABASE_URL and run online migrations against Neon.")
 
 
 def do_run_migrations(conn: Connection):
@@ -33,14 +31,15 @@ def do_run_migrations(conn: Connection):
         context.run_migrations()
 
 
-def run_migrations_online():
-    connectable = engine
-
-    with connectable.connect() as connection:
-        do_run_migrations(connection)
+async def run_async_migrations():
+    async with engine.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await engine.dispose()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    run_migrations_online()
+    import asyncio
+
+    asyncio.run(run_async_migrations())

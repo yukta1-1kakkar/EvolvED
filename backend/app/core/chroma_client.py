@@ -1,57 +1,76 @@
 from typing import List, Dict, Any
-import os
 import asyncio
 
 try:
     import chromadb
-    from chromadb.config import Settings
 except Exception:
     chromadb = None
 
-from app.ai.openai_client import create_embedding
+from app.ai.bedrock_client import create_embedding
+from app.core.config import settings
 
 
 class ChromaClient:
     def __init__(self):
         self.client = None
-        if chromadb:
-            host = os.getenv("CHROMA_API_HOST", "http://chroma:8000").replace("http://", "").replace("https://", "")
-            if ":" in host:
-                host, port = host.rsplit(":", 1)
-            else:
-                port = "8000"
-            self.client = chromadb.Client(
-                Settings(
-                    chroma_api_impl="chromadb.api.fastapi.FastAPI",
-                    chroma_server_host=host,
-                    chroma_server_http_port=port,
-                )
-            )
 
-    async def add_documents(self, collection_name: str, docs: List[str], metadatas: List[Dict[str, Any]], ids: List[str] | None = None):
-        if not self.client:
+    def _ensure_client(self):
+        if self.client:
+            return self.client
+        if not chromadb:
+            raise RuntimeError("The chromadb package is not installed.")
+        if not settings.chroma_api_key:
+            return None
+
+        kwargs = {"api_key": settings.chroma_api_key}
+        if settings.chroma_tenant:
+            kwargs["tenant"] = settings.chroma_tenant
+        if settings.chroma_database:
+            kwargs["database"] = settings.chroma_database
+        self.client = chromadb.CloudClient(**kwargs)
+        return self.client
+
+    def _collection_name(self, namespace: str, collection_name: str) -> str:
+        safe_namespace = namespace.strip().replace(" ", "_")
+        safe_collection = collection_name.strip().replace(" ", "_")
+        return f"{safe_namespace}_{safe_collection}" if safe_namespace else safe_collection
+
+    def _get_or_create_collection(self, collection_name: str):
+        client = self._ensure_client()
+        if not client:
+            raise RuntimeError("Chroma Cloud is not configured. Set CHROMA_TENANT, CHROMA_DATABASE, and CHROMA_API_KEY.")
+        return client.get_or_create_collection(collection_name)
+
+    async def add_documents(
+        self,
+        collection_name: str,
+        docs: List[str],
+        metadatas: List[Dict[str, Any]],
+        ids: List[str] | None = None,
+        namespace: str = "evolved",
+    ):
+        if not self._ensure_client():
             return None
         embeddings = await create_embedding(docs)
+        cloud_collection_name = self._collection_name(namespace, collection_name)
+        document_ids = ids or [f"{cloud_collection_name}:{index}" for index in range(len(docs))]
 
         def _add():
-            coll = None
-            try:
-                coll = self.client.get_collection(collection_name)
-            except Exception:
-                coll = self.client.create_collection(collection_name)
-            coll.add(documents=docs, metadatas=metadatas, ids=ids, embeddings=embeddings)
+            coll = self._get_or_create_collection(cloud_collection_name)
+            coll.upsert(documents=docs, metadatas=metadatas, ids=document_ids, embeddings=embeddings)
             return True
 
         return await asyncio.to_thread(_add)
 
-    async def semantic_search(self, collection_name: str, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        if not self.client:
+    async def semantic_search(self, collection_name: str, query: str, top_k: int = 5, namespace: str = "evolved") -> List[Dict[str, Any]]:
+        if not self._ensure_client():
             return []
 
         query_emb = await create_embedding([query])
+        cloud_collection_name = self._collection_name(namespace, collection_name)
 
         def _query():
-            coll = self.client.get_collection(collection_name)
+            coll = self._get_or_create_collection(cloud_collection_name)
             res = coll.query(query_embeddings=query_emb, n_results=top_k)
             return res
 

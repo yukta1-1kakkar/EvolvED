@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Boolean,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -72,3 +73,21 @@ class StrategyHistory(Base):
     strategy = Column(JSON, default=dict)
     effectiveness = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CurriculumProgress(Base):
+    __tablename__ = "curriculum_progress"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "curriculum_item_id", name="uq_curriculum_progress_learner_item"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    curriculum_item_id = Column(String(128), nullable=False)
+    topic = Column(String(128), nullable=True)
+    concept = Column(String(128), nullable=True)
+    status = Column(String(64), nullable=False, default="not_started")
+    mastery_score = Column(Float, nullable=False, default=0.0)
+    progress_metadata = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

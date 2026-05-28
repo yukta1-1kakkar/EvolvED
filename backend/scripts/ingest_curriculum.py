@@ -1,19 +1,18 @@
 """
-Ingest initial curriculum into Chroma using OpenAI embeddings.
+Ingest initial curriculum into Chroma using Amazon Titan embeddings on AWS Bedrock.
 
 Usage:
     python -m backend.scripts.ingest_curriculum
 
 Environment:
-  - OPENAI_API_KEY must be set
-  - CHROMA_API_HOST should point to running Chroma server (default: http://chroma:8000)
+  - AWS credentials and Bedrock model access must be configured
+  - CHROMA_TENANT, CHROMA_DATABASE, and CHROMA_API_KEY must point to Chroma Cloud
 
 This script reads `backend/data/initial_curriculum.json` and stores entries
 in the Chroma collection named `curriculum`.
 """
 import asyncio
 import json
-import os
 from pathlib import Path
 
 from app.core.chroma_client import ChromaClient

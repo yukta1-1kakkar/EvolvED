@@ -104,7 +104,7 @@ self.__SERVER_FILES_MANIFEST={
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "C:\\EvolvED\\frontend",
+    "outputFileTracingRoot": "C:\\Users\\cheta",
     "cacheComponents": false,
     "cacheLife": {
       "default": {
@@ -166,7 +166,7 @@ self.__SERVER_FILES_MANIFEST={
       "proxyPrefetch": "flexible",
       "optimisticClientCache": true,
       "manualClientBasePath": false,
-      "cpus": 3,
+      "cpus": 7,
       "memoryBasedWorkersCount": false,
       "imgOptConcurrency": null,
       "imgOptTimeoutInSeconds": 7,
@@ -305,12 +305,12 @@ self.__SERVER_FILES_MANIFEST={
     "bundlePagesRouterDependencies": false,
     "configFileName": "next.config.js",
     "turbopack": {
-      "root": "C:\\EvolvED\\frontend"
+      "root": "C:\\Users\\cheta"
     },
     "distDirRoot": ".next"
   },
-  "appDir": "C:\\EvolvED\\frontend",
-  "relativeAppDir": "",
+  "appDir": "C:\\Users\\cheta\\OneDrive\\Documents\\EvolvED\\frontend",
+  "relativeAppDir": "OneDrive\\Documents\\EvolvED\\frontend",
   "files": [
     ".next\\routes-manifest.json",
     ".next\\server\\pages-manifest.json",

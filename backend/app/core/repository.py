@@ -46,8 +46,35 @@ class AsyncRepository:
         )
 
     async def get_progress(self, learner_id: str) -> models.ProgressResponse:
-        # placeholder that could aggregate session history
-        return models.ProgressResponse(learner_id=learner_id)
+        async with AsyncSessionLocal() as session:
+            stmt = sa.select(db_models.Learner).where(db_models.Learner.learner_id == learner_id)
+            res = await session.execute(stmt)
+            learner = res.scalars().first()
+            if not learner:
+                return models.ProgressResponse(learner_id=learner_id)
+
+            progress_stmt = sa.select(db_models.CurriculumProgress).where(
+                db_models.CurriculumProgress.learner_id == learner.id
+            )
+            progress_res = await session.execute(progress_stmt)
+            rows = progress_res.scalars().all()
+
+        mastery = {
+            row.concept or row.curriculum_item_id: float(row.mastery_score or 0.0)
+            for row in rows
+        }
+        history = [
+            {
+                "curriculum_item_id": row.curriculum_item_id,
+                "topic": row.topic,
+                "concept": row.concept,
+                "status": row.status,
+                "mastery_score": row.mastery_score,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
+        ]
+        return models.ProgressResponse(learner_id=learner_id, mastery=mastery, history=history)
 
     async def get_analytics(self, learner_id: str) -> models.AnalyticsResponse:
         return models.AnalyticsResponse(learner_id=learner_id)
