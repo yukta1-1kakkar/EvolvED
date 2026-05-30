@@ -4,8 +4,9 @@ from app.core import models, repository, langgraph_nodes
 from app.langgraph import graph as lg_graph
 from typing import Any
 from pydantic import BaseModel
-from app.ai.bedrock_client import synthesize_speech
+from app.ai.factory import get_provider
 
+provider = get_provider()
 router = APIRouter()
 
 
@@ -96,7 +97,16 @@ class TTSRequest(BaseModel):
 @router.post("/tts")
 async def tts(req: TTSRequest):
     try:
-        audio = await synthesize_speech(req.text, voice=req.voice or "Joanna")
+        # Note: This assumes the provider has a synthesize_speech method.
+        # If using Gemini (which doesn't have TTS), we might need to handle this
+        # or use the BedrockProvider explicitly if the active provider is Gemini.
+        if hasattr(provider, "synthesize_speech"):
+            audio = await provider.synthesize_speech(req.text, voice=req.voice or "Joanna")
+        else:
+            # Fallback or error handling
+            from app.ai.bedrock_provider import BedrockProvider
+            fallback_provider = BedrockProvider()
+            audio = await fallback_provider.synthesize_speech(req.text, voice=req.voice or "Joanna")
         return Response(content=audio, media_type="audio/mpeg")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

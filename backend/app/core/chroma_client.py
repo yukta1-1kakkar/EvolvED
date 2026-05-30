@@ -1,18 +1,22 @@
 from typing import List, Dict, Any
 import asyncio
+import logging
 
 try:
     import chromadb
 except Exception:
     chromadb = None
 
-from app.ai.bedrock_client import create_embedding
+from app.ai.factory import get_provider
+from app.ai.router import ModelRouter
 from app.core.config import settings
 
 
 class ChromaClient:
     def __init__(self):
         self.client = None
+        self.provider = get_provider()
+        self.logger = logging.getLogger(__name__)
 
     def _ensure_client(self):
         if self.client:
@@ -51,9 +55,23 @@ class ChromaClient:
     ):
         if not self._ensure_client():
             return None
-        embeddings = await create_embedding(docs)
+
+        if ids:
+            seen = set()
+            unique_ids = []
+            for uid in ids:
+                if uid in seen:
+                    self.logger.warning(f"Duplicate ID detected and removed: {uid}")
+                    continue
+                seen.add(uid)
+                unique_ids.append(uid)
+            ids = unique_ids
+
+        embeddings = await self.provider.create_embedding(docs, model=ModelRouter.get_embedding_model())
         cloud_collection_name = self._collection_name(namespace, collection_name)
         document_ids = ids or [f"{cloud_collection_name}:{index}" for index in range(len(docs))]
+
+        self.logger.info(f"Upserting {len(document_ids)} documents into {cloud_collection_name}")
 
         def _add():
             coll = self._get_or_create_collection(cloud_collection_name)
@@ -66,7 +84,7 @@ class ChromaClient:
         if not self._ensure_client():
             return []
 
-        query_emb = await create_embedding([query])
+        query_emb = await self.provider.create_embedding([query], model=ModelRouter.get_embedding_model())
         cloud_collection_name = self._collection_name(namespace, collection_name)
 
         def _query():
@@ -75,4 +93,3 @@ class ChromaClient:
             return res
 
         return await asyncio.to_thread(_query)
-

@@ -1,22 +1,23 @@
 from typing import Any, Dict
 import logging
+import json
+import re
 
 from pydantic import ValidationError
 
 from app.core import models
-from app.ai.bedrock_client import call_chat_model
+from app.ai.factory import get_provider
+from app.ai.router import ModelRouter
 from app.core.chroma_client import ChromaClient
 from app.core.config import settings
 
 
+provider = get_provider()
 chroma = ChromaClient()
 logger = logging.getLogger(__name__)
 
 
 def _json_from_model_text(text: str) -> Dict[str, Any]:
-    import json
-    import re
-
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
@@ -73,7 +74,6 @@ async def learner_agent(profile_or_state: Any) -> models.LearnerState:
     if isinstance(profile_or_state, models.LearnerState):
         return profile_or_state
     profile = profile_or_state
-    # Simple initialization; could be extended with historical DB queries
     state = models.LearnerState(
         learner_id=profile.learner_id,
         knowledge_level=profile.topic_familiarity or "novice",
@@ -85,7 +85,6 @@ async def learner_agent(profile_or_state: Any) -> models.LearnerState:
 
 
 async def pedagogy_agent(state: Dict[str, Any]) -> models.TeachingStrategy:
-    # Build a detailed prompt for pedagogical reasoning using the required schema
     system = (
         "You are an expert pedagogical reasoning agent. Given the learner state and topic context,"
         " decide teaching strategy: select strategy_type, recommended_modalities, difficulty_level, pacing_strategy, and interaction_density."
@@ -99,7 +98,7 @@ async def pedagogy_agent(state: Dict[str, Any]) -> models.TeachingStrategy:
     ]
 
     try:
-        resp = await call_chat_model(messages, model=settings.pedagogy_model, temperature=0.0)
+        resp = await provider.call_chat_model(messages, model=ModelRouter.get_model("pedagogy"), temperature=0.0)
         text = resp["choices"][0]["message"]["content"]
     except Exception as exc:
         logger.warning("Pedagogy generation failed; using the default strategy: %s", exc)
@@ -107,20 +106,30 @@ async def pedagogy_agent(state: Dict[str, Any]) -> models.TeachingStrategy:
 
     try:
         payload = _json_from_model_text(text)
-        return models.TeachingStrategy(**payload)
+        # Normalize
+        normalized = {}
+        # Ensure we capture all required fields even if missing from model response
+        # Defaulting missing values to prevent ValidationError
+        normalized["strategy_type"] = payload.get("strategy_type") or payload.get("strategyType") or "scaffolded"
+        normalized["recommended_modalities"] = payload.get("recommended_modalities") or payload.get("recommendedModalities") or ["text"]
+        normalized["difficulty_level"] = payload.get("difficulty_level") or payload.get("difficultyLevel") or "adaptive"
+        normalized["pacing_strategy"] = payload.get("pacing_strategy") or payload.get("pacingStrategy") or "moderate"
+        normalized["interaction_density"] = payload.get("interaction_density") or payload.get("interactionDensity") or "medium"
+
+        return models.TeachingStrategy(**normalized)
     except (ValueError, TypeError, ValidationError) as exc:
-        logger.warning("Pedagogy response was invalid; using the default strategy: %s", exc)
+        logger.warning("Pedagogy response was invalid (%s); using the default strategy", exc)
         return _fallback_strategy()
 
 
 async def lesson_planning_agent(req: models.GenerateLessonRequest) -> models.LessonBlueprint:
     prompt = (
         f"Create a lesson blueprint for learner {req.learner_id} on topic {req.topic}."
-        " Provide steps, modality sequence, interaction points, assessment points, and estimated duration. Return JSON matching LessonBlueprint."
+        " Return ONLY a JSON object with the following fields: 'lesson_id', 'lesson_structure' (list of dicts), 'modality_sequence' (list of strings), 'interaction_points' (list of dicts), 'assessment_points' (list of dicts), and 'estimated_lesson_duration' (int)."
     )
     messages = [{"role": "user", "content": prompt}]
     try:
-        resp = await call_chat_model(messages, model=settings.lesson_planning_model)
+        resp = await provider.call_chat_model(messages, model=ModelRouter.get_model("planning"))
         text = resp["choices"][0]["message"]["content"]
     except Exception as exc:
         logger.warning("Lesson planning failed; using the default lesson: %s", exc)
@@ -130,12 +139,11 @@ async def lesson_planning_agent(req: models.GenerateLessonRequest) -> models.Les
         payload = _json_from_model_text(text)
         blueprint = models.LessonBlueprint(**payload)
     except (ValueError, TypeError, ValidationError) as exc:
-        logger.warning("Lesson response was invalid; using the default lesson: %s", exc)
+        logger.warning("Lesson response was invalid (%s); using the default lesson", exc)
         return _fallback_lesson(req.learner_id, req.topic)
 
-    # Optionally persist lesson blueprint embeddings to Chroma
     try:
-        docs = [text]
+        docs = [json.dumps(blueprint.model_dump())]
         metas = [{"learner_id": req.learner_id, "topic": req.topic}]
         await chroma.add_documents("lessons", docs, metas, ids=[blueprint.lesson_id])
     except Exception as exc:
@@ -145,19 +153,18 @@ async def lesson_planning_agent(req: models.GenerateLessonRequest) -> models.Les
 
 
 async def content_generation_agent(blueprint: models.LessonBlueprint) -> models.GeneratedContent:
-    # Generate text explanations and examples for each step using fast model
     assets = []
-    for step in blueprint.lesson_structure:
+    for index, step in enumerate(blueprint.lesson_structure):
+        step_id = step.get('step') or str(index)
         prompt = f"Generate explanation for step {step}. Keep it concise and instructive."
         messages = [{"role": "user", "content": prompt}]
         try:
-            resp = await call_chat_model(messages, model=settings.content_generation_model)
+            resp = await provider.call_chat_model(messages, model=ModelRouter.get_model("content"))
             content = resp["choices"][0]["message"]["content"]
         except Exception:
             content = step.get("content") or step.get("activity") or "Practice the concept with the interactive visualization."
-        assets.append({"id": f"asset:{blueprint.lesson_id}:{step.get('step')}", "type": "text", "content": content})
+        assets.append({"id": f"asset:{blueprint.lesson_id}:{step_id}", "type": "text", "content": content})
 
-    # store content embeddings
     try:
         docs = [a["content"] for a in assets]
         metas = [{"lesson_id": blueprint.lesson_id, "type": a["type"]} for a in assets]
@@ -174,13 +181,12 @@ async def interactive_agent(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def assessment_agent(sub: models.AssessmentSubmission) -> models.AssessmentResult:
-    # Use LLM to grade free-text answers when needed
     scores = {}
     for qid, ans in sub.answers.items():
         if isinstance(ans, (str,)):
             try:
                 messages = [{"role": "user", "content": f"Score the following answer on 0-1 scale for correctness. Return only a number: {ans}"}]
-                resp = await call_chat_model(messages, model=settings.fast_interaction_model, temperature=0.0, max_tokens=16)
+                resp = await provider.call_chat_model(messages, model=ModelRouter.get_model("assessment"), temperature=0.0, max_tokens=16)
                 text = resp["choices"][0]["message"]["content"]
                 score = max(0.0, min(1.0, float(text.strip())))
             except Exception:
@@ -193,7 +199,6 @@ async def assessment_agent(sub: models.AssessmentSubmission) -> models.Assessmen
 
 
 async def adaptation_agent(req: models.AdaptationRequest) -> models.AdaptationDecision:
-    # Simple rule-based adaptation; in future use LLM to synthesize optimal interventions
     assessment = req.assessment_state.get("mastery_scores", {})
     weak = [k for k, v in assessment.items() if v < 0.7]
     decision = {"action": "remediate" if weak else "advance", "targets": weak}
@@ -201,5 +206,4 @@ async def adaptation_agent(req: models.AdaptationRequest) -> models.AdaptationDe
 
 
 async def evolutionary_agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    # Placeholder for evolutionary optimization using embeddings and performance data
     return {"status": "evolution-step-completed"}
