@@ -1,0 +1,126 @@
+export type ApiPrimitive = string | number | boolean | null;
+export type ApiJson = ApiPrimitive | ApiJson[] | { [key: string]: ApiJson };
+export type ApiRecord = { [key: string]: ApiJson };
+
+export interface LearnerProfile {
+  learner_id: string;
+  age_group?: string | null;
+  education_level?: string | null;
+  learning_goal?: string | null;
+  pace_preference?: string | null;
+  preferred_modality: string[];
+  topic?: string | null;
+  topic_familiarity?: string | null;
+  accessibility: Record<string, boolean>;
+}
+
+export interface LearnerState {
+  learner_id: string;
+  knowledge_level?: string | null;
+  pace_preference?: string | null;
+  preferred_modalities: string[];
+  weak_topics: string[];
+  strong_topics: string[];
+  confidence_score: number;
+  engagement_score: number;
+  cognitive_load_estimate: number;
+}
+
+export interface TeachingStrategy {
+  strategy_type: string;
+  recommended_modalities: string[];
+  difficulty_level?: string | null;
+  pacing_strategy?: string | null;
+  interaction_density?: string | null;
+}
+
+export interface LessonBlueprint {
+  lesson_id: string;
+  lesson_structure: ApiRecord[];
+  modality_sequence: string[];
+  interaction_points: ApiRecord[];
+  assessment_points: ApiRecord[];
+  estimated_lesson_duration: number;
+}
+
+export interface ContentSpec {
+  target_concept: string;
+  content_difficulty_target?: string | null;
+}
+
+export interface GeneratedContent {
+  lesson_assets: ApiRecord[];
+}
+
+export interface GenerateLessonRequest {
+  learner_id: string;
+  topic: string;
+  constraints?: ApiRecord;
+}
+
+export interface AssessmentSubmission {
+  learner_id: string;
+  session_id: string;
+  answers: ApiRecord;
+}
+
+export interface AssessmentResult {
+  learner_id: string;
+  session_id: string;
+  quiz_scores: Record<string, number>;
+  mastery_estimates: Record<string, number>;
+}
+
+export interface AdaptationRequest {
+  learner_id: string;
+  session_id?: string | null;
+  assessment_state: ApiRecord;
+}
+
+export interface AdaptationDecision {
+  learner_id: string;
+  session_id?: string | null;
+  adaptations: ApiRecord;
+}
+
+export interface RetrieveMemoryRequest {
+  query: string;
+}
+
+export interface RetrieveMemoryResponse {
+  results: ApiRecord[];
+}
+
+export interface SaveLessonRequest {
+  learner_id: string;
+  lesson_id: string;
+  updated_structure: ApiRecord[];
+}
+
+export interface SaveLessonResponse {
+  status: "ok";
+  saved: ApiJson;
+}
+
+export interface CurriculumItem {
+  id: string;
+  topic: string;
+  concept: string;
+  content: string;
+}
+
+export interface CurriculumResponse {
+  items: CurriculumItem[];
+}
+
+export interface ProgressResponse {
+  learner_id: string;
+  mastery: Record<string, number>;
+  history: ApiRecord[];
+}
+
+export interface AnalyticsResponse {
+  learner_id: string;
+  engagement_trends: ApiRecord;
+  performance_trends: ApiRecord;
+}

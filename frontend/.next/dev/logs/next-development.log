@@ -1,6 +1,0 @@
-{"timestamp":"00:00:02.739","source":"Server","level":"LOG","message":""}
-{"timestamp":"00:00:51.028","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
-{"timestamp":"00:41:18.822","source":"Browser","level":"ERROR","message":"unhandledRejection: NotSupportedError: Failed to load because no supported source was found."}
-{"timestamp":"00:41:18.832","source":"Server","level":"ERROR","message":"[browser] \"\\u001b[31m⨯ unhandledRejection: NotSupportedError: Failed to load because no supported source was found.\\u001b[39m\\n\\u001b[31m\\u001b[39m\""}
-{"timestamp":"00:41:18.833","source":"Browser","level":"ERROR","message":"\u001b[31m⨯ unhandledRejection: NotSupportedError: Failed to load because no supported source was found.\u001b[39m\n\u001b[31m\u001b[39m"}
-{"timestamp":"00:58:07.994","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}

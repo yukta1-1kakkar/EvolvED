@@ -1,6 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 10, "column": 0}, "map": {"version":3,"sources":["file:///C:/EvolvED/frontend/app/page.tsx"],"sourcesContent":["import Link from 'next/link'\r\n\r\nexport default function Page() {\r\n  return (\r\n    <main className=\"p-8\">\r\n      <h1 className=\"text-3xl font-bold\">EvolvED</h1>\r\n      <p className=\"mt-4\">Adaptive Educational Intelligence Platform (scaffold)</p>\r\n      <div className=\"mt-6\">\r\n        <div className=\"flex gap-4\">\r\n          <Link href=\"/curriculum\" className=\"text-blue-600\">Browse Curriculum</Link>\r\n          <Link href=\"/lesson\" className=\"text-blue-600\">Start Lesson</Link>\r\n        </div>\r\n      </div>\r\n    </main>\r\n  )\r\n}\r\n"],"names":["Page","className","href"],"mappings":";;;;;AAAA;;;AAEe,SAASA;IACtB,qBACE,8OAAC;QAAKC,WAAU;;0BACd,8OAAC;gBAAGA,WAAU;0BAAqB;;;;;;0BACnC,8OAAC;gBAAEA,WAAU;0BAAO;;;;;;0BACpB,8OAAC;gBAAIA,WAAU;0BACb,cAAA,8OAAC;oBAAIA,WAAU;;sCACb,8OAAC,0LAAI;4BAACC,MAAK;4BAAcD,WAAU;sCAAgB;;;;;;sCACnD,8OAAC,0LAAI;4BAACC,MAAK;4BAAUD,WAAU;sCAAgB;;;;;;;;;;;;;;;;;;;;;;;AAKzD"}}]
-}
