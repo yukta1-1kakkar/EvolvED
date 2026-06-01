@@ -15,7 +15,6 @@ import { ROUTES } from "@/lib/routes";
 const profileSchema = z.object({
   educationLevel: z.string().min(1, "Choose your education level."),
   interests: z.string().min(2, "Tell us at least one subject or interest."),
-  appliedProject: z.string().min(3, "Describe the project you want to build toward."),
   learningGoal: z.string().min(2, "Tell us what you want to achieve."),
   pacePreference: z.string().min(1, "Choose a learning pace."),
   learningAvailability: z.string().min(1, "Choose your learning availability."),
@@ -72,9 +71,8 @@ function ProfileSetupPage() {
         topic_familiarity: values.topicFamiliarity,
         accessibility: { additional_support: values.accessibility },
         learning_availability: values.learningAvailability,
-        learning_project: values.appliedProject,
       });
-      completeProfile(values.interests, values.appliedProject);
+      completeProfile(values.interests);
       await navigate({ to: ROUTES.LESSON, replace: true });
     } catch (error) {
       setError("root", {
@@ -109,10 +107,6 @@ function ProfileSetupPage() {
 
         <Field label="Subjects and interests" htmlFor="interests" error={errors.interests?.message}>
           <Input id="interests" placeholder="e.g. calculus, robotics, economics" {...register("interests")} />
-        </Field>
-
-        <Field label="Applied project" htmlFor="appliedProject" error={errors.appliedProject?.message}>
-          <Input id="appliedProject" placeholder="e.g. model the motion of a small delivery robot" {...register("appliedProject")} />
         </Field>
 
         <Field label="Primary learning goal" htmlFor="learningGoal" error={errors.learningGoal?.message}>

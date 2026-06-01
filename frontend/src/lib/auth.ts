@@ -56,7 +56,7 @@ export function persistUser(user: AuthUser, rememberMe = true) {
   window.localStorage.setItem(AUTH_REMEMBER_KEY, String(rememberMe));
 }
 
-export function completeStoredProfile(user: AuthUser, learningTopic: string, learningProject: string): AuthUser {
+export function completeStoredProfile(user: AuthUser, learningTopic: string, learningProject = ""): AuthUser {
   const updatedUser = { ...user, profileComplete: true, learningTopic, learningProject };
   persistUser(updatedUser, window.localStorage.getItem(AUTH_REMEMBER_KEY) !== "false");
   return updatedUser;

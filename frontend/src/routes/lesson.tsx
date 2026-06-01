@@ -2,26 +2,25 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   BookMarked,
   CheckCircle2,
-  Hammer,
   MessageCircle,
   RefreshCw,
   Sparkles,
   Target,
 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type ElementType, type FormEvent, type SelectHTMLAttributes } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
-import { useLesson, useTutorInteraction } from "@/hooks/useLesson";
-import type { ApiJson, ApiRecord } from "@/types/api";
+import { useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
+import type { ApiJson, ApiRecord, LessonRoadmapItem } from "@/types/api";
 
 export const Route = createFileRoute("/lesson")({
   head: () => ({
     meta: [
       { title: "Lesson - EvolvED" },
-      { name: "description", content: "An adaptive, project-aware lesson composed in real time by EvolvED." },
+      { name: "description", content: "An adaptive lesson roadmap and concept-first lesson composed in real time by EvolvED." },
     ],
   }),
   component: LessonPage,
@@ -29,18 +28,32 @@ export const Route = createFileRoute("/lesson")({
 
 type LessonBrief = {
   topic: string;
-  project_context: string;
+  education_level: string;
+  familiarity_level: string;
+  pace: string;
+  learning_style: string;
+  availability: string;
+  accessibility_support: boolean;
 };
 
 function LessonPage() {
   const { currentUser } = useAuth();
   const initialTopic = currentUser?.learningTopic ?? "";
-  const initialProject = currentUser?.learningProject ?? defaultProject(initialTopic);
-  const [draft, setDraft] = useState<LessonBrief>({ topic: initialTopic, project_context: initialProject });
-  const [brief, setBrief] = useState<LessonBrief>({ topic: initialTopic, project_context: initialProject });
+  const initialBrief = makeInitialBrief(initialTopic);
+  const [draft, setDraft] = useState<LessonBrief>(initialBrief);
+  const [brief, setBrief] = useState<LessonBrief>(initialBrief);
+  const [selectedLesson, setSelectedLesson] = useState<LessonRoadmapItem | null>(null);
+  const constraints = constraintsFromBrief(brief);
+  const roadmap = useRoadmap({
+    learner_id: currentUser?.id ?? "",
+    topic: brief.topic,
+    constraints,
+  });
   const lesson = useLesson({
     learner_id: currentUser?.id ?? "",
-    ...brief,
+    topic: brief.topic,
+    selected_lesson: selectedLesson ? roadmapItemToRecord(selectedLesson) : undefined,
+    constraints,
   });
   const tutor = useTutorInteraction();
   const [question, setQuestion] = useState("");
@@ -48,10 +61,16 @@ function LessonPage() {
   function regenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const topic = draft.topic.trim();
-    const project_context = draft.project_context.trim();
-    if (!topic || !project_context) return;
-    setBrief({ topic, project_context });
-    if (topic === brief.topic && project_context === brief.project_context) void lesson.refetch();
+    if (!topic) return;
+    const nextBrief = { ...draft, topic };
+    setBrief(nextBrief);
+    setSelectedLesson(null);
+    if (JSON.stringify(nextBrief) === JSON.stringify(brief)) void roadmap.refetch();
+  }
+
+  function chooseLesson(item: LessonRoadmapItem) {
+    setSelectedLesson(item);
+    if (selectedLesson?.id === item.id) void lesson.refetch();
   }
 
   function askTutor(action = "question") {
@@ -64,15 +83,31 @@ function LessonPage() {
     });
   }
 
+  useEffect(() => {
+    if (!lesson.data || typeof window === "undefined") return;
+    window.localStorage.setItem("evolved.currentLessonSession", lesson.data.lesson_id);
+  }, [lesson.data]);
+
   return (
     <AppShell
       title={lesson.data?.topic || brief.topic || "Create your lesson"}
-      subtitle="A focused lesson that teaches the topic through the project you want to build."
-      accent={lesson.isFetching ? "Composing" : "Lesson ready"}
+      subtitle="Choose a topic and preferences, then pick a roadmap lesson to generate content."
+      accent={lesson.isFetching ? "Composing" : roadmap.isFetching ? "Planning" : "Lesson ready"}
     >
-      <LessonBriefForm draft={draft} onChange={setDraft} onSubmit={regenerate} loading={lesson.isFetching} />
+      <LessonBriefForm draft={draft} onChange={setDraft} onSubmit={regenerate} loading={roadmap.isFetching} />
 
-      {lesson.isLoading && <LessonSkeleton />}
+      {roadmap.isLoading && <RoadmapSkeleton />}
+      {roadmap.isError && <ErrorPanel title="Roadmap generation failed" message={roadmap.error.message} onRetry={() => void roadmap.refetch()} />}
+      {roadmap.data && (
+        <RoadmapCards
+          lessons={roadmap.data.lessons}
+          selectedId={selectedLesson?.id}
+          onSelect={chooseLesson}
+          loading={lesson.isFetching}
+        />
+      )}
+
+      {lesson.isLoading && selectedLesson && <LessonSkeleton />}
       {lesson.isError && <ErrorPanel message={lesson.error.message} onRetry={() => void lesson.refetch()} />}
       {lesson.data && (
         <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -86,9 +121,9 @@ function LessonPage() {
               <div className="grid gap-4 px-6 py-5 md:grid-cols-[1fr_auto] md:items-center">
                 <div>
                   <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                    <Hammer className="size-3.5 text-plum" /> Applied project
+                    <Target className="size-3.5 text-plum" /> Selected lesson
                   </div>
-                  <p className="mt-2 text-sm font-medium">{lesson.data.project_context}</p>
+                  <p className="mt-2 text-sm font-medium">{selectedLessonTitle(lesson.data.selected_lesson) || selectedLesson?.title || lesson.data.topic}</p>
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {lesson.data.estimated_lesson_duration || "Adaptive"} min
@@ -155,18 +190,18 @@ function LessonBriefForm({
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-plum">
             <Sparkles className="size-3.5" /> Lesson studio
           </div>
-          <p className="mt-2 text-sm text-muted-foreground">Choose what to learn and the project that should make it useful.</p>
+          <p className="mt-2 text-sm text-muted-foreground">Choose what to learn and how you want the roadmap adapted.</p>
         </div>
         <button
           type="submit"
-          disabled={loading || !draft.topic.trim() || !draft.project_context.trim()}
+          disabled={loading || !draft.topic.trim()}
           className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm text-background transition-opacity disabled:opacity-50"
         >
           <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-          {loading ? "Generating lesson" : "Generate lesson"}
+          {loading ? "Generating roadmap" : "Generate roadmap"}
         </button>
       </div>
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
+      <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         <label className="text-xs font-medium text-muted-foreground">
           Topic to learn
           <Input
@@ -177,23 +212,107 @@ function LessonBriefForm({
           />
         </label>
         <label className="text-xs font-medium text-muted-foreground">
-          Project to build toward
-          <Input
-            className="mt-2"
-            value={draft.project_context}
-            onChange={(event) => onChange({ ...draft, project_context: event.target.value })}
-            placeholder="e.g. Tune the braking curve for a delivery robot"
-          />
+          Education level
+          <Select value={draft.education_level} onChange={(event) => onChange({ ...draft, education_level: event.target.value })}>
+            <option>School</option>
+            <option>Undergraduate</option>
+            <option>Postgraduate</option>
+            <option>Professional / Independent Learner</option>
+          </Select>
+        </label>
+        <label className="text-xs font-medium text-muted-foreground">
+          Current familiarity
+          <Select value={draft.familiarity_level} onChange={(event) => onChange({ ...draft, familiarity_level: event.target.value })}>
+            <option>Beginner</option>
+            <option>Intermediate</option>
+            <option>Advanced</option>
+          </Select>
+        </label>
+        <label className="text-xs font-medium text-muted-foreground">
+          Preferred pace
+          <Select value={draft.pace} onChange={(event) => onChange({ ...draft, pace: event.target.value })}>
+            <option>Gentle and Thorough</option>
+            <option>Balanced</option>
+            <option>Fast and Challenging</option>
+          </Select>
+        </label>
+        <label className="text-xs font-medium text-muted-foreground">
+          Learning style
+          <Select value={draft.learning_style} onChange={(event) => onChange({ ...draft, learning_style: event.target.value })}>
+            <option>Visual Examples and Diagrams</option>
+            <option>Practice First Learning</option>
+            <option>Detailed Written Explanations</option>
+            <option>Balanced Mix</option>
+          </Select>
+        </label>
+        <label className="text-xs font-medium text-muted-foreground">
+          Learning availability
+          <Select value={draft.availability} onChange={(event) => onChange({ ...draft, availability: event.target.value })}>
+            <option>30 min/day</option>
+            <option>1 hr/day</option>
+            <option>2 hr/day</option>
+          </Select>
         </label>
       </div>
+      <label className="mt-4 flex items-center gap-3 text-sm text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={draft.accessibility_support}
+          onChange={(event) => onChange({ ...draft, accessibility_support: event.target.checked })}
+          className="size-4 accent-plum"
+        />
+        Accessibility support
+      </label>
     </form>
+  );
+}
+
+function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select className="mt-2 h-10 w-full rounded-xl border border-input bg-background px-3 text-sm" {...props} />;
+}
+
+function RoadmapCards({
+  lessons,
+  selectedId,
+  onSelect,
+  loading,
+}: {
+  lessons: LessonRoadmapItem[];
+  selectedId?: string;
+  onSelect: (item: LessonRoadmapItem) => void;
+  loading: boolean;
+}) {
+  return (
+    <section className="mb-7">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Personalized roadmap</div>
+        {loading && <div className="text-xs text-muted-foreground">Generating selected lesson...</div>}
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {lessons.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelect(item)}
+            className={`min-h-44 rounded-2xl border p-4 text-left transition ${selectedId === item.id ? "border-plum bg-plum/[0.06]" : "border-border bg-card hover:border-plum/50"}`}
+          >
+            <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              <span>{item.difficulty}</span>
+              <span>{item.estimated_duration} min</span>
+            </div>
+            <h3 className="mt-3 font-display text-xl">{item.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.description}</p>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
 function LessonSection({ section, index }: { section: ApiRecord; index: number }) {
   const explanation = stringValue(section.explanation) || stringValue(section.content);
   const example = stringValue(section.example);
-  const projectConnection = stringValue(section.project_connection);
+  const conceptConnection = stringValue(section.concept_connection) || stringValue(section.project_connection);
   const checkpoint = stringValue(section.checkpoint);
 
   return (
@@ -204,7 +323,7 @@ function LessonSection({ section, index }: { section: ApiRecord; index: number }
       <h3 className="mt-3 font-display text-2xl">{recordTitle(section, index)}</h3>
       <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-foreground/80">{explanation}</p>
       {example && <Detail label="Example" text={example} />}
-      {projectConnection && <Detail label="Use it in your project" text={projectConnection} accent />}
+      {conceptConnection && <Detail label="Concept connection" text={conceptConnection} accent />}
       {checkpoint && (
         <div className="mt-4 flex gap-3 rounded-2xl bg-muted/40 p-4 text-sm leading-relaxed">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-plum" />
@@ -224,7 +343,7 @@ function Detail({ label, text, accent = false }: { label: string; text: string; 
   );
 }
 
-function AgentList({ icon: Icon, title, empty, items }: { icon: React.ElementType; title: string; empty: string; items: ApiRecord[] }) {
+function AgentList({ icon: Icon, title, empty, items }: { icon: ElementType; title: string; empty: string; items: ApiRecord[] }) {
   return (
     <div className="rounded-3xl border border-border bg-card p-5">
       <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
@@ -246,7 +365,7 @@ function LessonSkeleton() {
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Sparkles className="size-4 text-plum" /> Composing explanations, examples, and project checkpoints.
+        <Sparkles className="size-4 text-plum" /> Composing explanations, examples, and checkpoints.
       </div>
       <Skeleton className="h-56 rounded-3xl" />
       <Skeleton className="h-72 rounded-3xl" />
@@ -254,10 +373,21 @@ function LessonSkeleton() {
   );
 }
 
-function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
+function RoadmapSkeleton() {
+  return (
+    <div className="mb-7 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <Skeleton className="h-44 rounded-2xl" />
+      <Skeleton className="h-44 rounded-2xl" />
+      <Skeleton className="h-44 rounded-2xl" />
+      <Skeleton className="h-44 rounded-2xl" />
+    </div>
+  );
+}
+
+function ErrorPanel({ title = "Lesson generation failed", message, onRetry }: { title?: string; message: string; onRetry: () => void }) {
   return (
     <div className="rounded-3xl border border-rose/30 bg-rose/5 p-6">
-      <div className="font-medium">Lesson generation failed</div>
+      <div className="font-medium">{title}</div>
       <p className="mt-2 text-sm text-muted-foreground">{message}</p>
       <button onClick={onRetry} className="mt-4 rounded-full bg-foreground px-4 py-2 text-sm text-background">Retry generation</button>
     </div>
@@ -300,6 +430,40 @@ function humanize(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function defaultProject(topic: string) {
-  return topic ? `Build a practical ${topic} mini project` : "";
+function makeInitialBrief(topic: string): LessonBrief {
+  return {
+    topic,
+    education_level: "Undergraduate",
+    familiarity_level: "Beginner",
+    pace: "Balanced",
+    learning_style: "Balanced Mix",
+    availability: "30 min/day",
+    accessibility_support: false,
+  };
+}
+
+function constraintsFromBrief(brief: LessonBrief): ApiRecord {
+  return {
+    education_level: brief.education_level,
+    familiarity_level: brief.familiarity_level,
+    pace: brief.pace,
+    learning_style: brief.learning_style,
+    availability: brief.availability,
+    accessibility: { additional_support: brief.accessibility_support },
+  };
+}
+
+function roadmapItemToRecord(item: LessonRoadmapItem): ApiRecord {
+  return {
+    id: item.id,
+    title: item.title,
+    description: item.description,
+    difficulty: item.difficulty,
+    estimated_duration: item.estimated_duration,
+    objectives: item.objectives,
+  };
+}
+
+function selectedLessonTitle(value: ApiRecord | null | undefined) {
+  return typeof value?.title === "string" ? value.title : "";
 }

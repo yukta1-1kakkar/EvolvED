@@ -31,21 +31,23 @@ async def main() -> None:
                 "topic_familiarity": "beginner",
                 "accessibility": {},
                 "learning_availability": "30_min",
-                "learning_project": "Tune the braking curve for a small delivery robot",
             },
         )
-        first_lesson = await post(client, "/generate-lesson", {"learner_id": learner_id, "topic": "Derivatives", "project_context": "Tune the braking curve for a small delivery robot"})
+        roadmap = await post(client, "/generate-roadmap", {"learner_id": learner_id, "topic": "Derivatives"})
+        selected_lesson = roadmap["lessons"][0]
+        first_lesson = await post(client, "/generate-lesson", {"learner_id": learner_id, "topic": "Derivatives", "selected_lesson": selected_lesson})
         session_id = first_lesson["lesson_id"]
         await post(client, "/tutor-interaction", {"learner_id": learner_id, "session_id": session_id, "question": "Explain the first idea more simply.", "action": "simpler_explanation"})
-        memories = await post(client, "/retrieve-memory", {"learner_id": learner_id, "query": "simpler explanation derivatives braking"})
+        memories = await post(client, "/retrieve-memory", {"learner_id": learner_id, "query": "simpler explanation derivatives foundations"})
         quiz = await post(client, "/generate-quiz", {"learner_id": learner_id, "session_id": session_id})
-        answers = {question["id"]: question.get("expected_answer", "I would explain the concept using the braking curve.") for question in quiz["questions"]}
+        answers = {question["id"]: question.get("expected_answer", "I would explain the concept using the lesson objective.") for question in quiz["questions"]}
         confidence = {question_id: 80 for question_id in answers}
         assessment = await post(client, "/submit-assessment", {"learner_id": learner_id, "session_id": session_id, "answers": answers, "confidence": confidence})
         progress = await get(client, "/progress", {"learner_id": learner_id})
         analytics = await get(client, "/analytics", {"learner_id": learner_id})
-        second_lesson = await post(client, "/generate-lesson", {"learner_id": learner_id, "topic": "Derivatives", "project_context": "Tune the braking curve for a small delivery robot"})
+        second_lesson = await post(client, "/generate-lesson", {"learner_id": learner_id, "topic": "Derivatives", "selected_lesson": selected_lesson})
 
+    assert roadmap["lessons"]
     assert first_lesson["lesson_structure"]
     assert quiz["questions"]
     assert isinstance(memories["results"], list)

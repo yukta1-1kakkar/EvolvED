@@ -41,7 +41,8 @@ export interface TeachingStrategy {
 export interface LessonBlueprint {
   lesson_id: string;
   topic: string;
-  project_context: string;
+  project_context?: string | null;
+  selected_lesson?: ApiRecord | null;
   learning_objective: string;
   lesson_summary: string;
   lesson_structure: ApiRecord[];
@@ -64,7 +65,23 @@ export interface GenerateLessonRequest {
   learner_id: string;
   topic: string;
   project_context?: string;
+  selected_lesson?: ApiRecord;
   constraints?: ApiRecord;
+}
+
+export interface LessonRoadmapItem {
+  id: string;
+  title: string;
+  description: string;
+  difficulty: string;
+  estimated_duration: number;
+  objectives: string[];
+}
+
+export interface LessonRoadmapResponse {
+  learner_id: string;
+  topic: string;
+  lessons: LessonRoadmapItem[];
 }
 
 export interface AssessmentSubmission {

@@ -18,7 +18,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (credentials: LoginCredentials) => Promise<AuthUser>;
   signup: (credentials: SignupCredentials) => Promise<AuthUser>;
-  completeProfile: (learningTopic: string, learningProject: string) => void;
+  completeProfile: (learningTopic: string, learningProject?: string) => void;
   forgotPassword: (email: string) => Promise<void>;
   logout: () => void;
 }

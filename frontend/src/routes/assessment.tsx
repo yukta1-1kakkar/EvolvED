@@ -1,23 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { useGenerateQuiz, useSubmitAssessment } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
-import { useLesson } from "@/hooks/useLesson";
 import type { ApiRecord } from "@/types/api";
 
 export const Route = createFileRoute("/assessment")({ component: AssessmentPage });
 
 function AssessmentPage() {
   const { currentUser } = useAuth();
-  const lesson = useLesson({
-    learner_id: currentUser?.id ?? "",
-    topic: currentUser?.learningTopic ?? "",
-    project_context: currentUser?.learningProject ?? defaultProject(currentUser?.learningTopic),
-  });
-  const quiz = useGenerateQuiz({ learner_id: currentUser?.id ?? "", session_id: lesson.data?.lesson_id ?? "" });
+  const [sessionId, setSessionId] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setSessionId(window.localStorage.getItem("evolved.currentLessonSession") ?? "");
+  }, []);
+  const quiz = useGenerateQuiz({ learner_id: currentUser?.id ?? "", session_id: sessionId });
   const submit = useSubmitAssessment();
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confidence, setConfidence] = useState<Record<string, number>>({});
@@ -30,8 +29,9 @@ function AssessmentPage() {
   const questions = quiz.data?.questions ?? [];
   return (
     <AppShell title="Adaptive assessment" subtitle="A generated quiz that updates your learner model and shapes the next lesson." accent={submit.isPending ? "Evolving" : "Adaptive"}>
-      {(lesson.isLoading || quiz.isLoading) && <p className="text-sm text-muted-foreground">Generating a quiz from your current lesson...</p>}
-      {(lesson.isError || quiz.isError) && <p className="text-sm text-destructive">{lesson.error?.message ?? quiz.error?.message}</p>}
+      {!sessionId && <p className="text-sm text-muted-foreground">Select a lesson from your roadmap before starting an assessment.</p>}
+      {quiz.isLoading && <p className="text-sm text-muted-foreground">Generating a quiz from your current lesson...</p>}
+      {quiz.isError && <p className="text-sm text-destructive">{quiz.error.message}</p>}
       {questions.length > 0 && (
         <div className="max-w-4xl space-y-4">
           {questions.map((question, index) => (
@@ -76,6 +76,3 @@ function textValue(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
-function defaultProject(topic?: string) {
-  return topic ? `Build a practical ${topic} mini project` : "";
-}

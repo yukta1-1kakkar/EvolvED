@@ -70,7 +70,6 @@ class Orchestrator:
         request = models.GenerateLessonRequest(
             learner_id=learner_profile.learner_id,
             topic=topic,
-            project_context=constraints.get("project_context") if constraints else None,
             constraints=constraints or {},
         )
         return await langgraph_nodes.lesson_planning_agent(request, learner_state, teaching_strategy)
@@ -80,7 +79,6 @@ class Orchestrator:
         learner_profile: models.LearnerProfile,
         learner_state: models.LearnerState,
         topic: str,
-        project_context: str | None,
         constraints: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         teaching_strategy = await langgraph_nodes.pedagogy_agent(
@@ -95,7 +93,7 @@ class Orchestrator:
         request = models.GenerateLessonRequest(
             learner_id=learner_profile.learner_id,
             topic=topic,
-            project_context=project_context,
+            selected_lesson=(constraints or {}).get("selected_lesson"),
             constraints=constraints or {},
         )
         lesson = await langgraph_nodes.lesson_planning_agent(request, learner_state, teaching_strategy)
@@ -131,6 +129,29 @@ class Orchestrator:
             }
         )
 
+    async def generate_roadmap(
+        self,
+        learner_profile: models.LearnerProfile,
+        learner_state: models.LearnerState,
+        topic: str,
+        constraints: Dict[str, Any] | None = None,
+    ) -> models.LessonRoadmapResponse:
+        teaching_strategy = await langgraph_nodes.pedagogy_agent(
+            {
+                "state": {
+                    "learner_state": learner_state.model_dump(),
+                    "topic_context": {"current_topic": topic},
+                    "adaptation_context": (constraints or {}).get("adaptation_context", {}),
+                }
+            }
+        )
+        request = models.GenerateLessonRequest(
+            learner_id=learner_profile.learner_id,
+            topic=topic,
+            constraints=constraints or {},
+        )
+        return await langgraph_nodes.lesson_roadmap_agent(request, learner_profile, learner_state, teaching_strategy)
+
 
 orchestrator = Orchestrator()
 
@@ -154,10 +175,18 @@ async def generate_lesson_package(
     profile: models.LearnerProfile,
     learner_state: models.LearnerState,
     topic: str,
-    project_context: str | None,
     constraints: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    return await orchestrator.generate_lesson_package(profile, learner_state, topic, project_context, constraints)
+    return await orchestrator.generate_lesson_package(profile, learner_state, topic, constraints)
+
+
+async def generate_roadmap(
+    profile: models.LearnerProfile,
+    learner_state: models.LearnerState,
+    topic: str,
+    constraints: Dict[str, Any] | None = None,
+) -> models.LessonRoadmapResponse:
+    return await orchestrator.generate_roadmap(profile, learner_state, topic, constraints)
 
 
 async def _enrich_lesson_content(lesson: models.LessonBlueprint) -> None:

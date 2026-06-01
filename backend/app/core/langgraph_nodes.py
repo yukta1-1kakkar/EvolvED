@@ -115,21 +115,26 @@ async def lesson_planning_agent(
     learner_state: models.LearnerState,
     teaching_strategy: models.TeachingStrategy,
 ) -> models.LessonBlueprint:
-    project_context = req.project_context or f"a practical {req.topic} project"
+    selected_lesson = req.selected_lesson or {}
+    lesson_title = selected_lesson.get("title") or req.topic
+    lesson_objectives = selected_lesson.get("objectives") or []
     prompt = (
-        f"Create a lesson blueprint for learner {req.learner_id} on the literal topic: {req.topic}."
-        f" The learner will apply the lesson in this literal project: {project_context}."
+        f"Create learner-facing lesson content for learner {req.learner_id}."
+        f" Overall topic: {req.topic}. Selected lesson: {json.dumps(selected_lesson) if selected_lesson else lesson_title}."
+        f" Lesson objectives: {json.dumps(lesson_objectives)}."
         f" Learner state: {learner_state.model_dump_json()}."
         f" Teaching strategy selected by the pedagogy agent: {teaching_strategy.model_dump_json()}."
         f" Additional constraints: {json.dumps(req.constraints or {})}."
-        " Return ONLY a JSON object with these fields: 'lesson_id', 'topic', 'project_context',"
+        " Return ONLY a JSON object with these fields: 'lesson_id', 'topic', 'selected_lesson',"
         " 'learning_objective', 'lesson_summary', 'lesson_structure' (list of dicts),"
         " 'modality_sequence' (list of strings), 'interaction_points' (list of dicts),"
         " 'assessment_points' (list of dicts), and 'estimated_lesson_duration' (int)."
         " Return 4 to 6 lesson_structure items. Each item must contain 'title', 'explanation',"
-        " 'example', 'project_connection', and 'checkpoint'. Write complete learner-facing"
-        " explanations that teach the topic, not a plan for teaching it. Use the project throughout"
-        " to make the lesson concrete. Include learner-facing prompts in interaction_points and assessment_points."
+        " 'example', 'concept_connection', and 'checkpoint'. Write complete learner-facing"
+        " explanations that teach foundational concepts before applications. Adapt examples to the learner's level,"
+        " pace, modality, education level, availability, and accessibility needs. Include learner-facing prompts"
+        " in interaction_points and assessment_points."
+        " Do not use projects, project goals, applied projects, or project context to plan or teach this lesson."
         " Never emit placeholders such as [Topic], [Concept], TODO, or template text. Use the literal topic everywhere it is needed."
     )
     messages = [{"role": "user", "content": prompt}]
@@ -147,14 +152,14 @@ async def lesson_planning_agent(
         except Exception as exc:
             if attempt == 1:
                 logger.warning("Lesson planning model unavailable; using structured lesson fallback: %s", exc)
-                blueprint = _fallback_blueprint(req, project_context)
+                blueprint = _fallback_blueprint(req)
                 break
             messages.append(
                 {
                     "role": "user",
                     "content": (
                         f"The previous blueprint was unusable: {exc}. Regenerate complete JSON for the literal topic "
-                        f"{req.topic} applied to the literal project {project_context}. Replace every placeholder with learner-facing content."
+                        f"{req.topic} and selected lesson {lesson_title}. Replace every placeholder with learner-facing content."
                     ),
                 }
             )
@@ -167,12 +172,51 @@ async def lesson_planning_agent(
     return blueprint
 
 
+async def lesson_roadmap_agent(
+    req: models.GenerateLessonRequest,
+    learner_profile: models.LearnerProfile,
+    learner_state: models.LearnerState,
+    teaching_strategy: models.TeachingStrategy,
+) -> models.LessonRoadmapResponse:
+    constraints = req.constraints or {}
+    planning_context = {
+        "topic": req.topic,
+        "education_level": constraints.get("education_level") or learner_profile.education_level,
+        "familiarity_level": constraints.get("familiarity_level") or learner_profile.topic_familiarity or learner_state.knowledge_level,
+        "pace": constraints.get("pace") or learner_profile.pace_preference or learner_state.pace_preference,
+        "learning_style": constraints.get("learning_style") or learner_profile.preferred_modality or learner_state.preferred_modalities,
+        "availability": constraints.get("availability") or learner_profile.learning_availability,
+        "accessibility": constraints.get("accessibility") or learner_profile.accessibility,
+        "teaching_strategy": teaching_strategy.model_dump(),
+        "adaptation_context": constraints.get("adaptation_context", []),
+    }
+    prompt = (
+        "Generate a personalized lesson roadmap before any lesson content is created. "
+        "Return JSON only with a 'lessons' list of 4 to 8 items. Every item must include id, title, "
+        "description, difficulty, estimated_duration as minutes, and objectives as a list of strings. "
+        "Sequence prerequisites before advanced material and adapt the roadmap to this learner context. "
+        "Do not hardcode a generic plan. Do not use project context, project goals, or applied projects. "
+        f"Learner roadmap context: {json.dumps(planning_context)}"
+    )
+    try:
+        resp = await _call_layer("planning", [{"role": "user", "content": prompt}], temperature=0.2)
+        payload = _json_from_model_text(resp["choices"][0]["message"]["content"])
+        raw_lessons = payload.get("lessons")
+        if not isinstance(raw_lessons, list) or len(raw_lessons) < 3:
+            raise ValueError("roadmap requires at least three lessons")
+        lessons = [_normalize_roadmap_item(item, index) for index, item in enumerate(raw_lessons)]
+    except Exception as exc:
+        logger.warning("Roadmap model unavailable; using adaptive roadmap fallback: %s", exc)
+        lessons = _fallback_roadmap(req, planning_context)
+    return models.LessonRoadmapResponse(learner_id=req.learner_id, topic=req.topic, lessons=lessons)
+
+
 def _validate_blueprint(blueprint: models.LessonBlueprint):
     if len(blueprint.lesson_structure) < 4:
         raise ValueError("lesson_structure must contain at least four learning steps")
-    if not blueprint.topic.strip() or not blueprint.project_context.strip():
-        raise ValueError("topic and project_context must be explicit")
-    required_section_fields = {"title", "explanation", "example", "project_connection", "checkpoint"}
+    if not blueprint.topic.strip():
+        raise ValueError("topic must be explicit")
+    required_section_fields = {"title", "explanation", "example", "checkpoint"}
     for index, section in enumerate(blueprint.lesson_structure):
         missing = required_section_fields.difference(section)
         if missing:
@@ -216,7 +260,7 @@ async def interactive_agent(req: models.TutorInteractionRequest, session_state: 
         answer = resp["choices"][0]["message"]["content"].strip()
     except Exception as exc:
         logger.warning("Tutor model unavailable; using lesson-grounded response: %s", exc)
-        answer = f"Here is a simpler way to think about it: {lesson.get('lesson_summary', '')} Focus on this project connection: {lesson.get('project_context', '')}."
+        answer = f"Here is a simpler way to think about it: {lesson.get('lesson_summary', '')} Focus on the objective: {lesson.get('learning_objective', '')}."
     return models.TutorInteractionResponse(interaction_id=f"interaction:{uuid4()}", answer=answer)
 
 
@@ -240,11 +284,21 @@ async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, A
     return models.QuizResponse(quiz_id=f"quiz:{uuid4()}", session_id=req.session_id, questions=questions)
 
 
-async def assessment_agent(sub: models.AssessmentSubmission) -> models.AssessmentResult:
+async def assessment_agent(sub: models.AssessmentSubmission, session_state: Dict[str, Any] | None = None) -> models.AssessmentResult:
+    lesson = (session_state or {}).get("lesson", {})
+    assessment_context = {
+        "selected_lesson": lesson.get("selected_lesson"),
+        "learning_objective": lesson.get("learning_objective"),
+        "assessment_points": lesson.get("assessment_points"),
+        "learner_level": lesson.get("selected_lesson", {}).get("difficulty") if isinstance(lesson.get("selected_lesson"), dict) else None,
+    }
     prompt = (
         "Evaluate this learner assessment. Return JSON only with quiz_scores (object of 0-1 scores keyed by question), "
         "mastery_estimates (object of 0-1 concept scores), score (0-1 overall), strengths (list), weaknesses (list), "
         "misconceptions (list), and detailed_feedback (string). "
+        "Assess only the concepts taught in the selected lesson and its learning objectives. "
+        "Do not use project context, project goals, or applied projects. "
+        f"Lesson assessment context: {json.dumps(assessment_context)}. "
         f"Submission: {sub.model_dump_json()}"
     )
     try:
@@ -315,28 +369,77 @@ async def evolutionary_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     return current
 
 
-def _fallback_blueprint(req: models.GenerateLessonRequest, project_context: str) -> models.LessonBlueprint:
+def _normalize_roadmap_item(item: Dict[str, Any], index: int) -> models.LessonRoadmapItem:
+    title = str(item.get("title") or item.get("lesson_title") or f"Lesson {index + 1}").strip()
+    objectives = item.get("objectives") or item.get("lesson_objectives") or []
+    if not isinstance(objectives, list):
+        objectives = [str(objectives)]
+    return models.LessonRoadmapItem(
+        id=str(item.get("id") or f"lesson-{index + 1}"),
+        title=title,
+        description=str(item.get("description") or item.get("summary") or f"Learn {title}."),
+        difficulty=str(item.get("difficulty") or "adaptive"),
+        estimated_duration=int(item.get("estimated_duration") or item.get("duration") or 30),
+        objectives=[str(objective) for objective in objectives if str(objective).strip()],
+    )
+
+
+def _fallback_roadmap(req: models.GenerateLessonRequest, context: Dict[str, Any]) -> list[models.LessonRoadmapItem]:
     topic = req.topic
+    familiarity = str(context.get("familiarity_level") or "beginner").lower()
+    pace = str(context.get("pace") or "balanced").lower()
+    duration = 25 if "fast" in pace else 45 if "gentle" in pace else 35
+    if "advanced" in familiarity:
+        stages = [
+            ("Diagnostic refresh", "Identify what you already know and surface subtle gaps.", "advanced"),
+            ("Deeper structure", f"Study the formal structure and edge cases behind {topic}.", "advanced"),
+            ("Challenging applications", f"Solve multi-step {topic} problems with increasing independence.", "advanced"),
+            ("Transfer and proof", f"Explain, justify, and transfer {topic} to unfamiliar problems.", "advanced"),
+        ]
+    else:
+        stages = [
+            ("Intuition and vocabulary", f"Build the meaning, notation, and basic language of {topic}.", "beginner"),
+            ("Core operations", f"Practice the essential moves used when working with {topic}.", "beginner"),
+            ("Guided examples", f"Work through scaffolded {topic} examples step by step.", "intermediate"),
+            ("Independent practice", f"Check understanding with fresh {topic} problems.", "intermediate"),
+        ]
+    return [
+        models.LessonRoadmapItem(
+            id=f"roadmap-{index + 1}",
+            title=title,
+            description=description,
+            difficulty=difficulty,
+            estimated_duration=duration,
+            objectives=[description],
+        )
+        for index, (title, description, difficulty) in enumerate(stages)
+    ]
+
+
+def _fallback_blueprint(req: models.GenerateLessonRequest) -> models.LessonBlueprint:
+    topic = req.topic
+    selected_lesson = req.selected_lesson or {}
+    lesson_title = selected_lesson.get("title") or topic
     sections = [
-        ("Build the core idea", f"{topic} becomes useful when you can describe its central idea in plain language and recognize what changes in a real situation.", f"Identify the inputs, outputs, and one changing quantity in {project_context}."),
-        ("Work through an example", f"Start with a small example of {topic}, label each quantity, and explain why each step follows from the previous one.", f"Create one simplified example from {project_context} and solve it step by step."),
-        ("Connect the idea to the project", f"Now apply {topic} directly to the project. Compare two possible choices and explain how the concept helps you decide between them.", f"Use {topic} to compare two design choices for {project_context}."),
-        ("Check and extend your understanding", f"Summarize the concept, test it with a fresh case, and name one assumption that could change your result.", f"Explain how you would validate your use of {topic} in {project_context}."),
+        ("Build the core idea", f"{lesson_title} starts with the meaning behind the notation and the reason each step is valid. Focus on naming the quantities, seeing what changes, and explaining the idea in plain language.", f"State the central idea of {lesson_title} in your own words."),
+        ("Work through an example", f"Use a small example of {lesson_title}, label each quantity, and explain why each operation follows from the previous one before moving to shortcuts.", f"Solve a simple {lesson_title} example step by step."),
+        ("Compare representations", f"Look at the same {topic} idea through words, symbols, and a worked example so the concept is not tied to one format.", f"Translate one {lesson_title} example into another representation."),
+        ("Check and extend understanding", f"Summarize the lesson, test it with a fresh case, and name one condition that would change the method or result.", f"Explain when this {topic} method should be used."),
     ]
     return models.LessonBlueprint(
         lesson_id=f"lesson:{req.learner_id}:{uuid4()}",
         topic=topic,
-        project_context=project_context,
-        learning_objective=f"Understand {topic} and apply it to {project_context}.",
-        lesson_summary=f"This lesson teaches {topic} through a practical project so each idea has a concrete use.",
+        selected_lesson=selected_lesson or None,
+        learning_objective=f"Understand {lesson_title} as part of {topic}.",
+        lesson_summary=f"This lesson teaches {lesson_title} with concept-first explanations, examples, and checks for understanding.",
         lesson_structure=[
-            {"title": title, "explanation": explanation, "example": example, "project_connection": project, "checkpoint": checkpoint}
+            {"title": title, "explanation": explanation, "example": example, "concept_connection": concept, "checkpoint": checkpoint}
             for title, explanation, checkpoint in sections
-            for example, project in [(checkpoint, f"Keep connecting each decision back to {project_context}.")]
+            for example, concept in [(checkpoint, f"This step supports the lesson objective: understand {lesson_title}.")]
         ],
-        modality_sequence=["text", "practice", "project_application", "reflection"],
+        modality_sequence=["text", "example", "practice", "reflection"],
         interaction_points=[{"prompt": f"Explain the hardest part of {topic} in your own words."}],
-        assessment_points=[{"prompt": f"How would you use {topic} in {project_context}?"}],
+        assessment_points=[{"prompt": f"Explain the key idea from {lesson_title} and solve a short example."}],
         estimated_lesson_duration=35,
     )
 

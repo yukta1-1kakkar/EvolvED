@@ -41,14 +41,31 @@ async def generate_lesson(req: models.GenerateLessonRequest):
     learner_state = await repo.get_learner_state(req.learner_id)
     topic = req.topic.strip() or learner_profile.topic or learner_profile.learning_goal or "foundational learning"
     try:
-        constraints = {**(req.constraints or {}), "adaptation_context": learner_state.adaptation_history[-1:] or []}
-        package = await lg_graph.generate_lesson_package(learner_profile, learner_state, topic, req.project_context or learner_profile.learning_project, constraints)
+        constraints = {
+            **(req.constraints or {}),
+            "selected_lesson": req.selected_lesson or (req.constraints or {}).get("selected_lesson"),
+            "adaptation_context": learner_state.adaptation_history[-1:] or [],
+        }
+        package = await lg_graph.generate_lesson_package(learner_profile, learner_state, topic, constraints)
         lesson = package["lesson"]
         await repo.persist_lesson(req.learner_id, lesson, {
             "teaching_strategy": package["teaching_strategy"].model_dump(),
             "generated_content": package["generated_content"].model_dump(),
         })
         return lesson
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/generate-roadmap", response_model=models.LessonRoadmapResponse)
+async def generate_roadmap(req: models.GenerateLessonRequest):
+    repo = repository.AsyncRepository()
+    learner_profile = await repo.get_learner_profile(req.learner_id)
+    learner_state = await repo.get_learner_state(req.learner_id)
+    topic = req.topic.strip() or learner_profile.topic or learner_profile.learning_goal or "foundational learning"
+    try:
+        constraints = {**(req.constraints or {}), "adaptation_context": learner_state.adaptation_history[-1:] or []}
+        return await lg_graph.generate_roadmap(learner_profile, learner_state, topic, constraints)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -68,7 +85,8 @@ async def get_teaching_strategy(req: models.GenerateLessonRequest):
 async def submit_assessment(sub: models.AssessmentSubmission):
     repo = repository.AsyncRepository()
     try:
-        result = await langgraph_nodes.assessment_agent(sub)
+        session_state = await repo.get_session_state(sub.learner_id, sub.session_id)
+        result = await langgraph_nodes.assessment_agent(sub, session_state)
         state = await repo.get_learner_state(sub.learner_id)
         decision = await langgraph_nodes.adaptation_agent(models.AdaptationRequest(learner_id=sub.learner_id, session_id=sub.session_id, assessment_state=result.model_dump()))
         evolved = await langgraph_nodes.evolutionary_agent({"learner_model": state.model_dump(), "assessment": result.model_dump(), "adaptation": decision.adaptations})

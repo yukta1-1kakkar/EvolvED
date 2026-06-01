@@ -43,7 +43,8 @@ class TeachingStrategy(BaseModel):
 class LessonBlueprint(BaseModel):
     lesson_id: str
     topic: str
-    project_context: str
+    project_context: Optional[str] = None
+    selected_lesson: Optional[Dict[str, Any]] = None
     learning_objective: str
     lesson_summary: str
     lesson_structure: List[Dict[str, Any]] = Field(default_factory=list)
@@ -98,7 +99,23 @@ class GenerateLessonRequest(BaseModel):
     learner_id: str
     topic: str
     project_context: Optional[str] = None
+    selected_lesson: Optional[Dict[str, Any]] = None
     constraints: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class LessonRoadmapItem(BaseModel):
+    id: str
+    title: str
+    description: str
+    difficulty: str
+    estimated_duration: int
+    objectives: List[str] = Field(default_factory=list)
+
+
+class LessonRoadmapResponse(BaseModel):
+    learner_id: str
+    topic: str
+    lessons: List[LessonRoadmapItem] = Field(default_factory=list)
 
 
 class RetrieveMemoryRequest(BaseModel):
