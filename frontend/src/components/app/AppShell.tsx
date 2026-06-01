@@ -94,12 +94,10 @@ export function AppShell({
               <span className="size-1.5 rounded-full bg-orchid animate-pulse" /> Learner model
             </div>
             <div className="font-display text-base leading-tight">
-              {currentUser?.fullName ?? "Maya Learner"} · Calculus I
+              {currentUser?.fullName ?? "Learner"}
             </div>
-            <div className="mt-3 space-y-1.5 text-[11px] text-muted-foreground">
-              <Row k="Mastery" v={74} />
-              <Row k="Confidence" v={61} />
-              <Row k="Streak" raw="12d" />
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              {currentUser?.learningTopic ?? "Learner profile ready"}
             </div>
             <button
               type="button"
@@ -167,29 +165,5 @@ export function AppShell({
         </nav>
       </div>
     </ProtectedRoute>
-  );
-}
-
-function Row({ k, v, raw }: { k: string; v?: number; raw?: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-16 text-muted-foreground">{k}</span>
-      {raw ? (
-        <span className="ml-auto font-display text-foreground">{raw}</span>
-      ) : (
-        <>
-          <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${v}%` }}
-              transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
-              className="h-full rounded-full"
-              style={{ backgroundImage: "var(--gradient-aurora)" }}
-            />
-          </div>
-          <span className="font-mono tabular-nums text-foreground/80 w-6 text-right">{v}</span>
-        </>
-      )}
-    </div>
   );
 }

@@ -1,11 +1,27 @@
 import { apiRequest } from "./client";
-import type { GenerateLessonRequest, LessonBlueprint, SaveLessonRequest, SaveLessonResponse } from "@/types/api";
+import type { GenerateLessonRequest, LessonBlueprint, SaveLessonRequest, SaveLessonResponse, TeachingStrategy, TutorInteractionRequest, TutorInteractionResponse } from "@/types/api";
 
 export function generateLesson(request: GenerateLessonRequest) {
   return apiRequest<LessonBlueprint, GenerateLessonRequest>("/generate-lesson", {
     method: "POST",
     body: request,
-    timeoutMs: 30000,
+    timeoutMs: 60000,
+  });
+}
+
+export function askTutor(request: TutorInteractionRequest) {
+  return apiRequest<TutorInteractionResponse, TutorInteractionRequest>("/tutor-interaction", {
+    method: "POST",
+    body: request,
+    timeoutMs: 60000,
+  });
+}
+
+export function generateTeachingStrategy(request: GenerateLessonRequest) {
+  return apiRequest<TeachingStrategy, GenerateLessonRequest>("/teaching-strategy", {
+    method: "POST",
+    body: request,
+    timeoutMs: 60000,
   });
 }
 

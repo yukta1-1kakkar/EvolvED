@@ -87,7 +87,7 @@ function SignupPage() {
         password: values.password,
         age: values.age,
       });
-      await navigate({ to: ROUTES.LESSON, replace: true });
+      await navigate({ to: ROUTES.PROFILE_SETUP, replace: true });
     } catch (error) {
       setError("root", {
         message: error instanceof Error ? error.message : "Signup failed. Please try again.",

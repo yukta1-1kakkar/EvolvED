@@ -59,9 +59,13 @@ function LoginPage() {
 
   async function onSubmit(values: LoginFormValues) {
     try {
-      await login(values);
+      const user = await login(values);
       await navigate({
-        to: redirect && redirect.startsWith("/") ? redirect : ROUTES.LESSON,
+        to: !user.profileComplete
+          ? ROUTES.PROFILE_SETUP
+          : isWorkspaceRedirect(redirect)
+            ? redirect
+            : ROUTES.LESSON,
         replace: true,
       });
     } catch (error) {
@@ -152,6 +156,15 @@ function LoginPage() {
         </Link>
       </p>
     </AuthLayout>
+  );
+}
+
+function isWorkspaceRedirect(redirect?: string): redirect is string {
+  return Boolean(
+    redirect?.startsWith("/") &&
+      ![ROUTES.LOGIN, ROUTES.SIGNUP, ROUTES.FORGOT_PASSWORD, ROUTES.PROFILE_SETUP].includes(
+        redirect as (typeof ROUTES)[keyof typeof ROUTES],
+      ),
   );
 }
 

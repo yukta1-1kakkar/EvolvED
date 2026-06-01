@@ -34,9 +34,9 @@ function ProgressPage() {
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-3xl" />)
         ) : (
           <>
-            <Stat icon={Flame} k={currentUser?.fullName?.split(" ")[0] ?? "Learner"} v="active learner" tone="gold" />
+            <Stat icon={Flame} k={`${progress.data?.learning_streak ?? 0} days`} v="learning streak" tone="gold" />
             <Stat icon={TrendingUp} k={`${Math.round(averageMastery * 100)}%`} v="average mastery" tone="plum" />
-            <Stat icon={Clock} k={`${progress.data?.history.length ?? 0}`} v="progress events" />
+            <Stat icon={Clock} k={`${progress.data?.completed_lessons ?? 0}`} v="completed lessons" />
             <Stat icon={Award} k={String(masteredCount)} v="concepts mastered" />
           </>
         )}
@@ -70,9 +70,9 @@ function ProgressPage() {
         <div className="flex items-baseline justify-between mb-6">
           <div>
             <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Mastery by topic</div>
-            <h3 className="font-display text-xl mt-1">Calculus I</h3>
+            <h3 className="font-display text-xl mt-1">{currentUser?.learningTopic ?? "Your learning topics"}</h3>
           </div>
-          <span className="text-xs text-muted-foreground">8 topics · 3 active</span>
+          <span className="text-xs text-muted-foreground">{masteryByTopic.length} tracked concepts</span>
         </div>
         <div className="grid sm:grid-cols-2 gap-x-10 gap-y-4">
           {progress.isLoading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-8 rounded-xl" />)}

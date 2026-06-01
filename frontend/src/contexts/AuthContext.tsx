@@ -2,6 +2,7 @@ import { createContext, useEffect, useMemo, useState, type ReactNode } from "rea
 
 import {
   clearStoredUser,
+  completeStoredProfile,
   getStoredUser,
   mockForgotPassword,
   mockLogin,
@@ -10,7 +11,6 @@ import {
   type LoginCredentials,
   type SignupCredentials,
 } from "@/lib/auth";
-import { createLearnerProfile } from "@/lib/api";
 
 interface AuthContextValue {
   currentUser: AuthUser | null;
@@ -18,6 +18,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (credentials: LoginCredentials) => Promise<AuthUser>;
   signup: (credentials: SignupCredentials) => Promise<AuthUser>;
+  completeProfile: (learningTopic: string, learningProject: string) => void;
   forgotPassword: (email: string) => Promise<void>;
   logout: () => void;
 }
@@ -52,21 +53,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(true);
         try {
           const user = await mockSignup(credentials);
-          await createLearnerProfile({
-            learner_id: user.id,
-            age_group: getAgeGroup(credentials.age),
-            education_level: null,
-            learning_goal: null,
-            pace_preference: null,
-            preferred_modality: [],
-            topic: null,
-            topic_familiarity: null,
-            accessibility: {},
-          });
           setCurrentUser(user);
           return user;
         } finally {
           setLoading(false);
+        }
+      },
+      completeProfile: (learningTopic, learningProject) => {
+        if (currentUser) {
+          setCurrentUser(completeStoredProfile(currentUser, learningTopic, learningProject));
         }
       },
       forgotPassword: async (email) => {
@@ -86,10 +81,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-function getAgeGroup(age: number) {
-  if (age < 13) return "child";
-  if (age < 18) return "teen";
-  return "adult";
 }

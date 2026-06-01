@@ -6,7 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { currentUser, isAuthenticated, loading } = useAuth();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
   if (loading) {
@@ -22,6 +22,10 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (!isAuthenticated) {
     return <Navigate to={ROUTES.LOGIN} search={{ redirect: pathname }} replace />;
+  }
+
+  if (!currentUser?.profileComplete) {
+    return <Navigate to={ROUTES.PROFILE_SETUP} replace />;
   }
 
   return children;

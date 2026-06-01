@@ -31,6 +31,16 @@ Backend:
 1. Run `python -m pip install -r backend/requirements.txt`.
 2. From `backend/`, run `python -m alembic -c alembic.ini upgrade head`.
 3. From `backend/`, run `python -m uvicorn app.main:app --reload --port 8000`.
+4. Run the real lifecycle integration check against a running backend:
+   `EVOLVED_E2E_BASE_URL=http://127.0.0.1:8000 python tests/integration_lifecycle.py`.
+
+Adaptive lifecycle:
+
+- Signup and login persist learner accounts in Neon.
+- Onboarding initializes curriculum progress and the learner model.
+- Lesson generation persists sessions and stores lesson memory in Chroma.
+- Tutor interactions, adaptive quizzes, assessments, adaptations, and evolved learner-model state feed the next lesson.
+- Routed OpenRouter models remain the primary path. Profile-derived fallbacks keep the learning loop available when a configured paid route is unavailable.
 
 Frontend:
 

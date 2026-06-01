@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as ProgressRouteImport } from './routes/progress'
+import { Route as ProfileSetupRouteImport } from './routes/profile-setup'
 import { Route as PedagogyRouteImport } from './routes/pedagogy'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LessonRouteImport } from './routes/lesson'
@@ -28,6 +29,11 @@ const SignupRoute = SignupRouteImport.update({
 const ProgressRoute = ProgressRouteImport.update({
   id: '/progress',
   path: '/progress',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileSetupRoute = ProfileSetupRouteImport.update({
+  id: '/profile-setup',
+  path: '/profile-setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PedagogyRoute = PedagogyRouteImport.update({
@@ -80,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/lesson': typeof LessonRoute
   '/login': typeof LoginRoute
   '/pedagogy': typeof PedagogyRoute
+  '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
   '/signup': typeof SignupRoute
 }
@@ -92,6 +99,7 @@ export interface FileRoutesByTo {
   '/lesson': typeof LessonRoute
   '/login': typeof LoginRoute
   '/pedagogy': typeof PedagogyRoute
+  '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
   '/signup': typeof SignupRoute
 }
@@ -105,6 +113,7 @@ export interface FileRoutesById {
   '/lesson': typeof LessonRoute
   '/login': typeof LoginRoute
   '/pedagogy': typeof PedagogyRoute
+  '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
   '/signup': typeof SignupRoute
 }
@@ -119,6 +128,7 @@ export interface FileRouteTypes {
     | '/lesson'
     | '/login'
     | '/pedagogy'
+    | '/profile-setup'
     | '/progress'
     | '/signup'
   fileRoutesByTo: FileRoutesByTo
@@ -131,6 +141,7 @@ export interface FileRouteTypes {
     | '/lesson'
     | '/login'
     | '/pedagogy'
+    | '/profile-setup'
     | '/progress'
     | '/signup'
   id:
@@ -143,6 +154,7 @@ export interface FileRouteTypes {
     | '/lesson'
     | '/login'
     | '/pedagogy'
+    | '/profile-setup'
     | '/progress'
     | '/signup'
   fileRoutesById: FileRoutesById
@@ -156,6 +168,7 @@ export interface RootRouteChildren {
   LessonRoute: typeof LessonRoute
   LoginRoute: typeof LoginRoute
   PedagogyRoute: typeof PedagogyRoute
+  ProfileSetupRoute: typeof ProfileSetupRoute
   ProgressRoute: typeof ProgressRoute
   SignupRoute: typeof SignupRoute
 }
@@ -174,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/progress'
       fullPath: '/progress'
       preLoaderRoute: typeof ProgressRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile-setup': {
+      id: '/profile-setup'
+      path: '/profile-setup'
+      fullPath: '/profile-setup'
+      preLoaderRoute: typeof ProfileSetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pedagogy': {
@@ -244,6 +264,7 @@ const rootRouteChildren: RootRouteChildren = {
   LessonRoute: LessonRoute,
   LoginRoute: LoginRoute,
   PedagogyRoute: PedagogyRoute,
+  ProfileSetupRoute: ProfileSetupRoute,
   ProgressRoute: ProgressRoute,
   SignupRoute: SignupRoute,
 }

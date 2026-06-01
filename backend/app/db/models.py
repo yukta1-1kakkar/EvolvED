@@ -20,6 +20,11 @@ class Learner(Base):
     __tablename__ = "learners"
     id = Column(Integer, primary_key=True, index=True)
     learner_id = Column(String(128), unique=True, index=True, nullable=False)
+    full_name = Column(String(160), nullable=True)
+    email = Column(String(320), unique=True, index=True, nullable=True)
+    password_hash = Column(String(512), nullable=True)
+    age = Column(Integer, nullable=True)
+    onboarding_status = Column(String(64), nullable=False, default="profile_pending")
     age_group = Column(String(64), nullable=True)
     education_level = Column(String(128), nullable=True)
     learning_goal = Column(String(256), nullable=True)
@@ -28,6 +33,9 @@ class Learner(Base):
     topic = Column(String(128), nullable=True)
     topic_familiarity = Column(String(64), nullable=True)
     accessibility = Column(JSON, default=dict)
+    learning_availability = Column(String(64), nullable=True)
+    learning_project = Column(String(512), nullable=True)
+    learner_model = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -91,3 +99,26 @@ class CurriculumProgress(Base):
     progress_metadata = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Interaction(Base):
+    __tablename__ = "interactions"
+    id = Column(Integer, primary_key=True, index=True)
+    interaction_id = Column(String(128), unique=True, index=True, nullable=False)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    session_id = Column(String(128), nullable=True)
+    kind = Column(String(64), nullable=False, default="tutor_question")
+    request = Column(JSON, default=dict)
+    response = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Quiz(Base):
+    __tablename__ = "quizzes"
+    id = Column(Integer, primary_key=True, index=True)
+    quiz_id = Column(String(128), unique=True, index=True, nullable=False)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    session_id = Column(String(128), nullable=False)
+    topic = Column(String(128), nullable=True)
+    questions = Column(JSON, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

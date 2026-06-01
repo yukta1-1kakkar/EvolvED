@@ -12,6 +12,8 @@ export interface LearnerProfile {
   topic?: string | null;
   topic_familiarity?: string | null;
   accessibility: Record<string, boolean>;
+  learning_availability?: string | null;
+  learning_project?: string | null;
 }
 
 export interface LearnerState {
@@ -24,6 +26,8 @@ export interface LearnerState {
   confidence_score: number;
   engagement_score: number;
   cognitive_load_estimate: number;
+  misconception_registry: string[];
+  adaptation_history: ApiRecord[];
 }
 
 export interface TeachingStrategy {
@@ -36,6 +40,10 @@ export interface TeachingStrategy {
 
 export interface LessonBlueprint {
   lesson_id: string;
+  topic: string;
+  project_context: string;
+  learning_objective: string;
+  lesson_summary: string;
   lesson_structure: ApiRecord[];
   modality_sequence: string[];
   interaction_points: ApiRecord[];
@@ -55,6 +63,7 @@ export interface GeneratedContent {
 export interface GenerateLessonRequest {
   learner_id: string;
   topic: string;
+  project_context?: string;
   constraints?: ApiRecord;
 }
 
@@ -62,6 +71,7 @@ export interface AssessmentSubmission {
   learner_id: string;
   session_id: string;
   answers: ApiRecord;
+  confidence?: Record<string, number>;
 }
 
 export interface AssessmentResult {
@@ -69,6 +79,12 @@ export interface AssessmentResult {
   session_id: string;
   quiz_scores: Record<string, number>;
   mastery_estimates: Record<string, number>;
+  score: number;
+  strengths: string[];
+  weaknesses: string[];
+  misconceptions: string[];
+  detailed_feedback: string;
+  adaptation: ApiRecord;
 }
 
 export interface AdaptationRequest {
@@ -84,6 +100,7 @@ export interface AdaptationDecision {
 }
 
 export interface RetrieveMemoryRequest {
+  learner_id: string;
   query: string;
 }
 
@@ -117,10 +134,37 @@ export interface ProgressResponse {
   learner_id: string;
   mastery: Record<string, number>;
   history: ApiRecord[];
+  completed_lessons: number;
+  learning_streak: number;
 }
 
 export interface AnalyticsResponse {
   learner_id: string;
   engagement_trends: ApiRecord;
   performance_trends: ApiRecord;
+  learner_model: ApiRecord;
+  insights: string[];
+}
+
+export interface QuizResponse {
+  quiz_id: string;
+  session_id: string;
+  questions: ApiRecord[];
+}
+
+export interface GenerateQuizRequest {
+  learner_id: string;
+  session_id: string;
+}
+
+export interface TutorInteractionRequest {
+  learner_id: string;
+  session_id: string;
+  question: string;
+  action?: string;
+}
+
+export interface TutorInteractionResponse {
+  interaction_id: string;
+  answer: string;
 }

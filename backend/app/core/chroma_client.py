@@ -80,7 +80,7 @@ class ChromaClient:
 
         return await asyncio.to_thread(_add)
 
-    async def semantic_search(self, collection_name: str, query: str, top_k: int = 5, namespace: str = "evolved") -> List[Dict[str, Any]]:
+    async def semantic_search(self, collection_name: str, query: str, top_k: int = 5, namespace: str = "evolved", where: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
         if not self._ensure_client():
             return []
 
@@ -89,7 +89,22 @@ class ChromaClient:
 
         def _query():
             coll = self._get_or_create_collection(cloud_collection_name)
-            res = coll.query(query_embeddings=query_emb, n_results=top_k)
-            return res
+            kwargs = {"query_embeddings": query_emb, "n_results": top_k}
+            if where:
+                kwargs["where"] = where
+            res = coll.query(**kwargs)
+            documents = (res.get("documents") or [[]])[0]
+            metadatas = (res.get("metadatas") or [[]])[0]
+            ids = (res.get("ids") or [[]])[0]
+            distances = (res.get("distances") or [[]])[0]
+            return [
+                {
+                    "id": document_id,
+                    "content": documents[index] if index < len(documents) else "",
+                    "metadata": metadatas[index] if index < len(metadatas) else {},
+                    "distance": distances[index] if index < len(distances) else None,
+                }
+                for index, document_id in enumerate(ids)
+            ]
 
         return await asyncio.to_thread(_query)

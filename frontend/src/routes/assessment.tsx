@@ -1,154 +1,81 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/app/AppShell";
-import { motion, AnimatePresence } from "framer-motion";
+import { Loader2, Sparkles } from "lucide-react";
 import { useState } from "react";
-import { Check, X, ArrowRight, Sparkles } from "lucide-react";
-import { useSubmitAssessment } from "@/hooks/useAssessment";
+
+import { AppShell } from "@/components/app/AppShell";
+import { useGenerateQuiz, useSubmitAssessment } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
+import { useLesson } from "@/hooks/useLesson";
+import type { ApiRecord } from "@/types/api";
 
-export const Route = createFileRoute("/assessment")({
-  head: () => ({
-    meta: [
-      { title: "Assessment — EvolvED" },
-      { name: "description", content: "Adaptive quizzes that listen to how confident you feel, not just whether you're right." },
-    ],
-  }),
-  component: AssessPage,
-});
+export const Route = createFileRoute("/assessment")({ component: AssessmentPage });
 
-const questions = [
-  {
-    q: "If f(x) = x², what is f′(2)?",
-    options: ["2", "4", "x²", "2x"],
-    correct: 1,
-    explain: "f′(x) = 2x, so f′(2) = 4. The derivative at a point is a number; the derivative as a function is 2x.",
-  },
-  {
-    q: "Which strategy best fits a 'rate of change' word problem?",
-    options: ["Substitute and simplify", "Set up f(x), differentiate, evaluate", "Integrate first, then solve", "Use the chain rule directly"],
-    correct: 1,
-    explain: "Translate the situation into a function, differentiate, then evaluate at the requested instant.",
-  },
-];
-
-function AssessPage() {
-  const [i, setI] = useState(0);
-  const [picked, setPicked] = useState<number | null>(null);
-  const [conf, setConf] = useState(70);
+function AssessmentPage() {
   const { currentUser } = useAuth();
-  const submitAssessment = useSubmitAssessment();
-  const q = questions[i];
+  const lesson = useLesson({
+    learner_id: currentUser?.id ?? "",
+    topic: currentUser?.learningTopic ?? "",
+    project_context: currentUser?.learningProject ?? defaultProject(currentUser?.learningTopic),
+  });
+  const quiz = useGenerateQuiz({ learner_id: currentUser?.id ?? "", session_id: lesson.data?.lesson_id ?? "" });
+  const submit = useSubmitAssessment();
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [confidence, setConfidence] = useState<Record<string, number>>({});
 
-  const next = () => { setPicked(null); setI((i + 1) % questions.length); };
-  const answer = (idx: number) => {
-    setPicked(idx);
-    submitAssessment.mutate({
-      learner_id: currentUser?.id ?? "",
-      session_id: "frontend-checkpoint",
-      answers: {
-        question: q.q,
-        selected_answer: q.options[idx],
-        selected_index: idx,
-        correct_index: q.correct,
-        confidence: conf,
-      },
-    });
-  };
+  function submitQuiz() {
+    if (!currentUser || !quiz.data) return;
+    submit.mutate({ learner_id: currentUser.id, session_id: quiz.data.session_id, answers, confidence });
+  }
 
+  const questions = quiz.data?.questions ?? [];
   return (
-    <AppShell title="Checkpoint" subtitle="Adaptive · weighted by confidence" accent={submitAssessment.isPending ? "Submitting" : "Calibrating"}>
-      <div className="grid lg:grid-cols-[1fr_300px] gap-8">
-        <div>
-          {/* progress */}
-          <div className="flex gap-1.5 mb-8">
-            {[...Array(5)].map((_, k) => (
-              <div key={k} className={`h-1 flex-1 rounded-full ${k <= i ? "bg-foreground" : "bg-border"}`} />
-            ))}
-          </div>
-
-          <motion.div key={i} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="rounded-3xl border border-border bg-card p-8 md:p-10">
-            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-4">Question {i + 1} · Derivatives</div>
-            <h2 className="font-display text-2xl md:text-3xl leading-snug mb-8 text-balance">{q.q}</h2>
-
-            <div className="space-y-2.5">
-              {q.options.map((opt, idx) => {
-                const isPicked = picked === idx;
-                const showResult = picked !== null;
-                const isCorrect = idx === q.correct;
-                return (
-                  <button key={opt} disabled={picked !== null || submitAssessment.isPending} onClick={() => answer(idx)}
-                    className={`group w-full text-left px-5 py-4 rounded-2xl border transition-all flex items-center gap-3 ${
-                      showResult && isCorrect ? "border-emerald-500/40 bg-emerald-500/5" :
-                      showResult && isPicked && !isCorrect ? "border-rose/40 bg-rose/5" :
-                      isPicked ? "border-foreground bg-foreground/5" :
-                      "border-border hover:border-plum/50"
-                    }`}>
-                    <span className="size-7 rounded-full border border-border grid place-items-center text-xs font-mono">{String.fromCharCode(65 + idx)}</span>
-                    <span className="font-display flex-1">{opt}</span>
-                    {showResult && isCorrect && <Check className="size-4 text-emerald-600" />}
-                    {showResult && isPicked && !isCorrect && <X className="size-4 text-rose" />}
-                  </button>
-                );
-              })}
+    <AppShell title="Adaptive assessment" subtitle="A generated quiz that updates your learner model and shapes the next lesson." accent={submit.isPending ? "Evolving" : "Adaptive"}>
+      {(lesson.isLoading || quiz.isLoading) && <p className="text-sm text-muted-foreground">Generating a quiz from your current lesson...</p>}
+      {(lesson.isError || quiz.isError) && <p className="text-sm text-destructive">{lesson.error?.message ?? quiz.error?.message}</p>}
+      {questions.length > 0 && (
+        <div className="max-w-4xl space-y-4">
+          {questions.map((question, index) => (
+            <QuestionCard key={questionId(question, index)} question={question} index={index} answer={answers[questionId(question, index)] ?? ""} confidence={confidence[questionId(question, index)] ?? 70} onAnswer={(value) => setAnswers((current) => ({ ...current, [questionId(question, index)]: value }))} onConfidence={(value) => setConfidence((current) => ({ ...current, [questionId(question, index)]: value }))} />
+          ))}
+          <button onClick={submitQuiz} disabled={submit.isPending || questions.some((question, index) => !(answers[questionId(question, index)] ?? "").trim())} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+            {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            Submit and evolve my next lesson
+          </button>
+          {submit.isError && <p className="text-sm text-destructive">{submit.error.message}</p>}
+          {submit.data && (
+            <div className="rounded-3xl border border-plum/20 bg-plum/[0.04] p-6">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-plum">Learner model updated</div>
+              <div className="mt-2 font-display text-4xl">{Math.round(submit.data.score * 100)}%</div>
+              <p className="mt-3 text-sm leading-relaxed">{submit.data.detailed_feedback}</p>
+              <p className="mt-3 text-sm text-muted-foreground">Next-lesson adaptation: {textValue(submit.data.adaptation.action) || "Teaching strategy recalibrated from this result."}</p>
             </div>
-
-            <div className="mt-8 rounded-2xl bg-muted/40 px-5 py-4">
-              <div className="flex items-center justify-between text-xs mb-2">
-                <span className="text-muted-foreground">How confident are you?</span>
-                <span className="font-mono tabular-nums">{conf}%</span>
-              </div>
-              <input type="range" min={0} max={100} value={conf} onChange={(e) => setConf(+e.target.value)}
-                className="w-full accent-plum" />
-              <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                <span>guessing</span><span>sure</span>
-              </div>
-            </div>
-
-            <AnimatePresence>
-              {picked !== null && (
-                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                  <div className="mt-6 rounded-2xl p-5 border border-border bg-gradient-to-br from-orchid/5 to-gold/5">
-                    <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-2 flex items-center gap-2">
-                      <Sparkles className="size-3 text-gold" /> Why this matters
-                    </div>
-                    <p className="text-sm leading-relaxed">{q.explain}</p>
-                    <button onClick={next} className="mt-4 inline-flex items-center gap-1.5 text-sm rounded-full bg-foreground text-background px-4 py-2 hover:opacity-90">
-                      Next question <ArrowRight className="size-3.5" />
-                    </button>
-                    {submitAssessment.isError && (
-                      <div className="mt-3 rounded-xl border border-rose/30 bg-rose/5 p-3 text-xs text-muted-foreground">
-                        {submitAssessment.error.message}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
+          )}
         </div>
-
-        <aside className="space-y-4">
-          <div className="rounded-3xl border border-border p-5">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground mb-3">Live mastery delta</div>
-            {[
-              ["Derivatives", "+0.06", true],
-              ["Limits", "+0.02", true],
-              ["Chain rule", "−0.01", false],
-            ].map(([k, v, up]) => (
-              <div key={k as string} className="flex items-center justify-between py-1.5 text-sm">
-                <span>{k}</span>
-                <span className={`font-mono tabular-nums ${up ? "text-emerald-600" : "text-rose"}`}>{v}</span>
-              </div>
-            ))}
-          </div>
-          <div className="rounded-3xl border border-border p-5 bg-card">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground mb-2">Adaptation</div>
-            <p className="text-sm text-foreground/85 leading-relaxed">
-              {submitAssessment.data ? "Assessment submitted to the backend. Mastery estimates are reflected as they return." : "Your answer will be sent to the backend assessment endpoint."}
-            </p>
-          </div>
-        </aside>
-      </div>
+      )}
     </AppShell>
   );
+}
+
+function QuestionCard({ question, index, answer, confidence, onAnswer, onConfidence }: { question: ApiRecord; index: number; answer: string; confidence: number; onAnswer: (value: string) => void; onConfidence: (value: number) => void }) {
+  return (
+    <section className="rounded-3xl border border-border bg-card p-6">
+      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Question {index + 1} · {textValue(question.type) || "Reasoning"}</div>
+      <h2 className="mt-3 font-display text-xl">{textValue(question.prompt)}</h2>
+      {Array.isArray(question.options) && <div className="mt-4 grid gap-2 sm:grid-cols-2">{question.options.map((option) => <button key={String(option)} type="button" onClick={() => onAnswer(String(option))} className={`rounded-xl border px-4 py-3 text-left text-sm ${answer === String(option) ? "border-plum bg-plum/[0.06]" : "border-border"}`}>{String(option)}</button>)}</div>}
+      {!Array.isArray(question.options) && <textarea value={answer} onChange={(event) => onAnswer(event.target.value)} className="mt-4 min-h-28 w-full rounded-2xl border border-input bg-background p-4 text-sm outline-none focus:border-plum" placeholder="Write your answer and reasoning" />}
+      <label className="mt-4 flex items-center gap-3 text-xs text-muted-foreground">Confidence <input type="range" min="0" max="100" value={confidence} onChange={(event) => onConfidence(Number(event.target.value))} className="accent-plum" /><span>{confidence}%</span></label>
+    </section>
+  );
+}
+
+function questionId(question: ApiRecord, index: number) {
+  return textValue(question.id) || `question-${index + 1}`;
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function defaultProject(topic?: string) {
+  return topic ? `Build a practical ${topic} mini project` : "";
 }

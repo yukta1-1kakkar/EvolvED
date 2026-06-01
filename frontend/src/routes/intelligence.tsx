@@ -21,7 +21,7 @@ export const Route = createFileRoute("/intelligence")({
 function IntelligencePage() {
   const { currentUser } = useAuth();
   const analytics = useAnalytics(currentUser?.id);
-  const memory = useMemory("current learner model misconceptions pedagogy");
+  const memory = useMemory(currentUser?.id, "current learner model misconceptions pedagogy");
   const engagement = analytics.data?.engagement_trends ?? {};
   const performance = analytics.data?.performance_trends ?? {};
 
@@ -41,7 +41,7 @@ function IntelligencePage() {
         <div className="rounded-3xl border border-border bg-card p-6 relative overflow-hidden">
           <div className="absolute -top-32 -right-32 size-80 rounded-full opacity-30" style={{ backgroundImage: "var(--gradient-aurora)", filter: "blur(60px)" }} />
           <div className="relative">
-            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground flex items-center gap-2"><Brain className="size-3" /> Learner model · v384</div>
+            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground flex items-center gap-2"><Brain className="size-3" /> Learner model</div>
             <h3 className="font-display text-2xl mt-1 mb-6">A picture of how you think</h3>
             {analytics.isLoading ? <Skeleton className="mx-auto h-80 w-80 rounded-full" /> : <Radar data={{ ...engagement, ...performance }} />}
           </div>
@@ -49,8 +49,8 @@ function IntelligencePage() {
 
         {/* Reasoning pipeline */}
         <div className="rounded-3xl border border-border bg-card p-6">
-          <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground flex items-center gap-2"><GitBranch className="size-3" /> Reasoning trace · today's lesson</div>
-          <h3 className="font-display text-2xl mt-1 mb-5">Why "worked example", why now</h3>
+          <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground flex items-center gap-2"><GitBranch className="size-3" /> Backend analytics trace</div>
+          <h3 className="font-display text-2xl mt-1 mb-5">Returned learner signals</h3>
           <ol className="space-y-3 text-sm">
             {analyticsPairs({ ...engagement, ...performance }).map(([k, v], i) => (
               <motion.li key={k} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 }} className="flex gap-3">
@@ -99,9 +99,12 @@ function IntelligencePage() {
       </div>
 
       <div className="rounded-3xl border border-border bg-card p-6">
-        <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-4">Decision tree · this session</div>
-        <DecisionTree />
+        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">AI insights</div>
+        <ul className="mt-4 space-y-3 text-sm">
+          {(analytics.data?.insights ?? []).map((insight) => <li key={insight} className="rounded-2xl bg-muted/35 p-4">{insight}</li>)}
+        </ul>
       </div>
+
     </AppShell>
   );
 }
@@ -178,36 +181,4 @@ function valueToText(value: ApiJson): string {
 function recordSummary(record: ApiRecord) {
   const preferred = record.text ?? record.content ?? record.document ?? record.page_content;
   return typeof preferred === "string" ? preferred : valueToText(record);
-}
-
-function DecisionTree() {
-  const nodes = [
-    { id: "root", x: 50, y: 10, label: "Lesson goal" },
-    { id: "a", x: 20, y: 40, label: "Confident & correct" },
-    { id: "b", x: 50, y: 40, label: "Hesitant" },
-    { id: "c", x: 80, y: 40, label: "Incorrect" },
-    { id: "a1", x: 20, y: 75, label: "↑ Difficulty" },
-    { id: "b1", x: 50, y: 75, label: "Scaffold" },
-    { id: "c1", x: 80, y: 75, label: "Worked ex. ← here", active: true },
-  ];
-  const edges: [string,string][] = [["root","a"],["root","b"],["root","c"],["a","a1"],["b","b1"],["c","c1"]];
-  const find = (id: string) => nodes.find(n => n.id === id)!;
-  return (
-    <svg viewBox="0 0 100 90" className="w-full">
-      {edges.map(([a,b],i) => {
-        const A = find(a), B = find(b);
-        return <motion.line key={i} x1={A.x} y1={A.y+1.5} x2={B.x} y2={B.y-1.5} stroke="oklch(0.88 0.012 75)" strokeWidth={0.3}
-          initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.6, delay: 0.1 * i }} />;
-      })}
-      {nodes.map((n,i) => (
-        <g key={n.id}>
-          <motion.rect x={n.x-14} y={n.y-3} width="28" height="6" rx="3"
-            fill={n.active ? "oklch(0.22 0.025 270)" : "oklch(0.99 0.006 80)"}
-            stroke={n.active ? "oklch(0.22 0.025 270)" : "oklch(0.88 0.012 75)"} strokeWidth="0.3"
-            initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 * i }} />
-          <text x={n.x} y={n.y+0.8} textAnchor="middle" fontSize="2.4" fill={n.active ? "oklch(0.96 0.008 80)" : "oklch(0.22 0.025 270)"}>{n.label}</text>
-        </g>
-      ))}
-    </svg>
-  );
 }
