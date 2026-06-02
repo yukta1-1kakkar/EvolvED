@@ -72,7 +72,14 @@ function ProfileSetupPage() {
         accessibility: { additional_support: values.accessibility },
         learning_availability: values.learningAvailability,
       });
-      completeProfile(values.interests);
+      completeProfile(values.interests, "", {
+        educationLevel: values.educationLevel,
+        pacePreference: values.pacePreference,
+        preferredModality: values.preferredModality,
+        topicFamiliarity: values.topicFamiliarity,
+        learningAvailability: values.learningAvailability,
+        accessibilitySupport: values.accessibility,
+      });
       await navigate({ to: ROUTES.LESSON, replace: true });
     } catch (error) {
       setError("root", {

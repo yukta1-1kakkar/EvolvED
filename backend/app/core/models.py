@@ -47,7 +47,18 @@ class LessonBlueprint(BaseModel):
     selected_lesson: Optional[Dict[str, Any]] = None
     learning_objective: str
     lesson_summary: str
+    learning_style: Optional[str] = None
     lesson_structure: List[Dict[str, Any]] = Field(default_factory=list)
+    visualElements: List[Dict[str, Any]] = Field(default_factory=list)
+    conceptMaps: List[Dict[str, Any]] = Field(default_factory=list)
+    diagramDescriptions: List[Dict[str, Any]] = Field(default_factory=list)
+    flowDiagrams: List[Dict[str, Any]] = Field(default_factory=list)
+    graphData: List[Dict[str, Any]] = Field(default_factory=list)
+    audioNarration: Optional[str] = None
+    audioSections: List[Dict[str, Any]] = Field(default_factory=list)
+    ttsContent: Optional[str] = None
+    practiceExercises: List[Dict[str, Any]] = Field(default_factory=list)
+    interactiveQuestions: List[Dict[str, Any]] = Field(default_factory=list)
     modality_sequence: List[str] = Field(default_factory=list)
     interaction_points: List[Dict[str, Any]] = Field(default_factory=list)
     assessment_points: List[Dict[str, Any]] = Field(default_factory=list)

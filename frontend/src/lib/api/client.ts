@@ -113,3 +113,42 @@ export async function apiRequest<TResponse, TBody extends ApiJson | undefined = 
     globalThis.clearTimeout(timeout);
   }
 }
+
+export async function apiBlobRequest<TBody extends ApiJson | undefined = undefined>(
+  path: string,
+  options: ApiRequestOptions<TBody> = {},
+): Promise<Blob> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(buildUrl(path, options.query), {
+      method: options.method ?? (options.body === undefined ? "GET" : "POST"),
+      headers: {
+        Accept: "audio/mpeg",
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const payload = await parseResponse(response);
+      throw new ApiError(getErrorMessage(payload, `Request failed with status ${response.status}.`), response.status, payload);
+    }
+
+    return response.blob();
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError("The server took too long to respond. Please try again.", 408);
+    }
+
+    throw new ApiError("We could not reach EvolvED services. Check that the backend is running.", 0);
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}

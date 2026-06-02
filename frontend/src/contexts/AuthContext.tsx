@@ -9,6 +9,7 @@ import {
   mockSignup,
   type AuthUser,
   type LoginCredentials,
+  type ProfilePreferences,
   type SignupCredentials,
 } from "@/lib/auth";
 
@@ -18,7 +19,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (credentials: LoginCredentials) => Promise<AuthUser>;
   signup: (credentials: SignupCredentials) => Promise<AuthUser>;
-  completeProfile: (learningTopic: string, learningProject?: string) => void;
+  completeProfile: (learningTopic: string, learningProject?: string, preferences?: ProfilePreferences) => void;
   forgotPassword: (email: string) => Promise<void>;
   logout: () => void;
 }
@@ -59,9 +60,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setLoading(false);
         }
       },
-      completeProfile: (learningTopic, learningProject) => {
+      completeProfile: (learningTopic, learningProject, preferences) => {
         if (currentUser) {
-          setCurrentUser(completeStoredProfile(currentUser, learningTopic, learningProject));
+          setCurrentUser(completeStoredProfile(currentUser, learningTopic, learningProject, preferences));
         }
       },
       forgotPassword: async (email) => {

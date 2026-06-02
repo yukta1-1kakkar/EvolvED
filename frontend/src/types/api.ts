@@ -45,7 +45,18 @@ export interface LessonBlueprint {
   selected_lesson?: ApiRecord | null;
   learning_objective: string;
   lesson_summary: string;
+  learning_style?: string | null;
   lesson_structure: ApiRecord[];
+  visualElements?: ApiRecord[];
+  conceptMaps?: ApiRecord[];
+  diagramDescriptions?: ApiRecord[];
+  flowDiagrams?: ApiRecord[];
+  graphData?: ApiRecord[];
+  audioNarration?: string | null;
+  audioSections?: ApiRecord[];
+  ttsContent?: string | null;
+  practiceExercises?: ApiRecord[];
+  interactiveQuestions?: ApiRecord[];
   modality_sequence: string[];
   interaction_points: ApiRecord[];
   assessment_points: ApiRecord[];

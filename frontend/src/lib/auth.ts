@@ -8,6 +8,12 @@ export interface AuthUser {
   profileComplete?: boolean;
   learningTopic?: string;
   learningProject?: string;
+  educationLevel?: string;
+  pacePreference?: string;
+  preferredModality?: string;
+  topicFamiliarity?: string;
+  learningAvailability?: string;
+  accessibilitySupport?: boolean;
 }
 
 export interface LoginCredentials {
@@ -56,8 +62,22 @@ export function persistUser(user: AuthUser, rememberMe = true) {
   window.localStorage.setItem(AUTH_REMEMBER_KEY, String(rememberMe));
 }
 
-export function completeStoredProfile(user: AuthUser, learningTopic: string, learningProject = ""): AuthUser {
-  const updatedUser = { ...user, profileComplete: true, learningTopic, learningProject };
+export interface ProfilePreferences {
+  educationLevel?: string;
+  pacePreference?: string;
+  preferredModality?: string;
+  topicFamiliarity?: string;
+  learningAvailability?: string;
+  accessibilitySupport?: boolean;
+}
+
+export function completeStoredProfile(
+  user: AuthUser,
+  learningTopic: string,
+  learningProject = "",
+  preferences: ProfilePreferences = {},
+): AuthUser {
+  const updatedUser = { ...user, profileComplete: true, learningTopic, learningProject, ...preferences };
   persistUser(updatedUser, window.localStorage.getItem(AUTH_REMEMBER_KEY) !== "false");
   return updatedUser;
 }
