@@ -110,6 +110,55 @@ async def pedagogy_agent(state: Dict[str, Any]) -> models.TeachingStrategy:
         raise RuntimeError(f"Pedagogy agent returned invalid JSON: {exc}") from exc
 
 
+def _lesson_generation_prompt(
+    req: models.GenerateLessonRequest,
+    learner_state: models.LearnerState,
+    teaching_strategy: models.TeachingStrategy,
+    selected_lesson: Dict[str, Any],
+    lesson_title: str,
+    lesson_objectives: list[Any],
+) -> str:
+    constraints = req.constraints or {}
+    return (
+        f"Create a complete learner-facing lesson for learner {req.learner_id}.\n"
+        f"Overall topic: {req.topic}\n"
+        f"Selected roadmap lesson: {json.dumps(selected_lesson) if selected_lesson else lesson_title}\n"
+        f"Roadmap objectives: {json.dumps(lesson_objectives)}\n"
+        f"Learner state: {learner_state.model_dump_json()}\n"
+        f"Teaching strategy: {teaching_strategy.model_dump_json()}\n"
+        f"Additional constraints: {json.dumps(constraints)}\n\n"
+        "Return ONLY a JSON object with these fields: lesson_id, topic, selected_lesson, learning_objective, "
+        "lesson_summary, lesson_structure, modality_sequence, interaction_points, assessment_points, "
+        "estimated_lesson_duration.\n\n"
+        "Teaching quality requirements:\n"
+        "- The lesson must be directly studyable by a person. It should explain, demonstrate, coach practice, "
+        "and check understanding without relying on a human teacher to fill gaps.\n"
+        "- Use a concrete throughline example that fits the topic. Reuse it across sections, then add a fresh "
+        "practice case near the end.\n"
+        "- Start from intuition and vocabulary, then move to procedure, then interpretation, then independent practice.\n"
+        "- Name common misconceptions and show how to avoid them.\n"
+        "- Use plain language first, then introduce notation or formal terms after the idea is clear.\n"
+        "- If the topic is mathematical, include symbols, units or quantities, and at least one worked example with "
+        "numbered steps and a final interpretation.\n"
+        "- If the topic is not mathematical, include a realistic scenario, decision points, and an applied example.\n"
+        "- Adapt difficulty, pacing, examples, and cognitive load to education level, familiarity, learning style, "
+        "availability, and accessibility needs.\n\n"
+        "lesson_structure requirements:\n"
+        "- Return 5 or 6 sections.\n"
+        "- Each section must contain title, explanation, example, concept_connection, checkpoint.\n"
+        "- Each explanation must be 120 to 260 words and include the actual lesson concept, not meta-instructions.\n"
+        "- Each example must be a worked example or modeled answer, not a prompt. Use numbered steps when useful.\n"
+        "- Each concept_connection must explain why this section matters and how it connects to the lesson objective.\n"
+        "- Each checkpoint must ask the learner to do a small task and include enough details to be answerable.\n\n"
+        "interaction_points and assessment_points requirements:\n"
+        "- interaction_points should include 3 to 5 learner prompts for retrieval, self-explanation, and error checking.\n"
+        "- assessment_points should include 3 to 5 checks with expected_answer or success_criteria when possible.\n\n"
+        "Hard constraints: Do not use projects, project goals, applied projects, or project context. Never emit "
+        "placeholders such as [Topic], [Concept], TODO, or template text. Do not tell the learner to 'state the "
+        "central idea' unless the central idea has already been taught in the lesson."
+    )
+
+
 async def lesson_planning_agent(
     req: models.GenerateLessonRequest,
     learner_state: models.LearnerState,
@@ -120,34 +169,27 @@ async def lesson_planning_agent(
     lesson_objectives = selected_lesson.get("objectives") or []
     learning_style = _lesson_learning_style(req, learner_state, teaching_strategy)
     modality_contract = _modality_contract(learning_style)
+    prompt = _lesson_generation_prompt(req, learner_state, teaching_strategy, selected_lesson, lesson_title, lesson_objectives)
     prompt = (
-        f"Create learner-facing lesson content for learner {req.learner_id}."
-        f" Overall topic: {req.topic}. Selected lesson: {json.dumps(selected_lesson) if selected_lesson else lesson_title}."
-        f" Lesson objectives: {json.dumps(lesson_objectives)}."
-        f" Learning style is a first-class delivery constraint: {learning_style}."
-        f" Learner state: {learner_state.model_dump_json()}."
-        f" Teaching strategy selected by the pedagogy agent: {teaching_strategy.model_dump_json()}."
-        f" Additional constraints: {json.dumps(req.constraints or {})}."
-        f" Modality-specific contract: {json.dumps(modality_contract)}."
-        " Return ONLY a JSON object with these fields: 'lesson_id', 'topic', 'learning_style', 'selected_lesson',"
-        " 'learning_objective', 'lesson_summary', 'lesson_structure' (list of dicts),"
-        " 'modality_sequence' (list of strings), 'interaction_points' (list of dicts),"
-        " 'assessment_points' (list of dicts), and 'estimated_lesson_duration' (int)."
-        " Include optional modality fields only when relevant: 'visualElements', 'conceptMaps',"
-        " 'diagramDescriptions', 'flowDiagrams', 'graphData', 'audioNarration', 'audioSections', 'ttsContent',"
-        " 'practiceExercises', and 'interactiveQuestions'."
-        " Return 4 to 6 lesson_structure items. Each item must contain 'title', 'explanation',"
-        " 'example', 'concept_connection', and 'checkpoint'. The lesson_structure must change by learning style:"
-        " visual lessons use short captions paired with visual data, audio lessons use concise reading text plus narration,"
-        " practice-first lessons begin with worked examples and exercises, detailed-written lessons use longer explanations,"
-        " and balanced lessons mix concise text, visuals, examples, practice, and optional narration."
-        " Adapt examples to the learner's level,"
-        " pace, modality, education level, availability, and accessibility needs. Include learner-facing prompts"
-        " in interaction_points and assessment_points."
-        " Do not use projects, project goals, applied projects, or project context to plan or teach this lesson."
-        " Never emit placeholders such as [Topic], [Concept], TODO, or template text. Use the literal topic everywhere it is needed."
+        f"{prompt}\n\nLearning style is a first-class delivery constraint: {learning_style}.\n"
+        f"Modality-specific contract: {json.dumps(modality_contract)}\n"
+        "Include optional modality fields only when relevant: visualElements, conceptMaps, diagramDescriptions, "
+        "flowDiagrams, graphData, audioNarration, audioSections, ttsContent, practiceExercises, and interactiveQuestions. "
+        "The lesson_structure must change by learning style: visual lessons pair concise text with visual data, "
+        "audio lessons use concise reading text plus narration, practice-first lessons begin with worked examples "
+        "and exercises, detailed-written lessons use richer explanations, and balanced lessons mix text, visuals, "
+        "examples, practice, and optional narration."
     )
-    messages = [{"role": "user", "content": prompt}]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a master teacher and curriculum designer. Produce lessons that can teach a real learner "
+                "without requiring a separate instructor. Be concrete, accurate, warm, and step-by-step."
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
     blueprint = None
     for attempt in range(2):
         try:
@@ -170,7 +212,9 @@ async def lesson_planning_agent(
                     "role": "user",
                     "content": (
                         f"The previous blueprint was unusable: {exc}. Regenerate complete JSON for the literal topic "
-                        f"{req.topic} and selected lesson {lesson_title}. Replace every placeholder with learner-facing content."
+                        f"{req.topic} and selected lesson {lesson_title}. Replace every placeholder with learner-facing content. "
+                        "Every explanation must teach the idea, every example must be worked with numbered steps, "
+                        "and every checkpoint must have enough context for a learner to answer it."
                     ),
                 }
             )
@@ -206,6 +250,9 @@ async def lesson_roadmap_agent(
         "Return JSON only with a 'lessons' list of 4 to 8 items. Every item must include id, title, "
         "description, difficulty, estimated_duration as minutes, and objectives as a list of strings. "
         "Sequence prerequisites before advanced material and adapt the roadmap to this learner context. "
+        "Make every lesson title specific enough that a teacher could teach from it; avoid vague titles such as "
+        "'Core operations' unless the exact operations are named. Descriptions must say what the learner will "
+        "understand, what they will practice, and how the lesson prepares the next lesson. "
         "Do not hardcode a generic plan. Do not use project context, project goals, or applied projects. "
         f"Learner roadmap context: {json.dumps(planning_context)}"
     )
@@ -232,10 +279,17 @@ def _validate_blueprint(blueprint: models.LessonBlueprint):
         missing = required_section_fields.difference(section)
         if missing:
             raise ValueError(f"lesson_structure item {index + 1} is missing {sorted(missing)}")
-        if len(str(section.get("explanation", "")).strip()) < 35:
+        explanation = str(section.get("explanation", "")).strip()
+        example = str(section.get("example", "")).strip()
+        checkpoint = str(section.get("checkpoint", "")).strip()
+        if len(explanation) < 80:
             raise ValueError(f"lesson_structure item {index + 1} needs a complete explanation")
+        if len(example) < 60:
+            raise ValueError(f"lesson_structure item {index + 1} needs a worked example")
+        if len(checkpoint) < 30:
+            raise ValueError(f"lesson_structure item {index + 1} needs an answerable checkpoint")
     serialized = json.dumps(blueprint.model_dump()).lower()
-    placeholders = ["[topic]", "[concept]", "todo", "insert topic", "placeholder"]
+    placeholders = ["[topic]", "[concept]", "todo", "insert topic", "placeholder", "state the central idea of"]
     found = next((placeholder for placeholder in placeholders if placeholder in serialized), None)
     if found:
         raise ValueError(f"blueprint contains unresolved placeholder {found}")
@@ -355,7 +409,7 @@ async def interactive_agent(req: models.TutorInteractionRequest, session_state: 
         f"Action: {req.action}. Lesson: {json.dumps(lesson)}. Learner question: {req.question}"
     )
     try:
-        resp = await _call_layer("quiz", [{"role": "user", "content": prompt}], temperature=0.2)
+        resp = await _call_layer("tutor", [{"role": "user", "content": prompt}], temperature=0.2)
         answer = resp["choices"][0]["message"]["content"].strip()
     except Exception as exc:
         logger.warning("Tutor model unavailable; using lesson-grounded response: %s", exc)
@@ -496,19 +550,103 @@ def _fallback_roadmap(req: models.GenerateLessonRequest, context: Dict[str, Any]
     learning_style = str(context.get("learning_style") or "Balanced Mix")
     style_key = _style_key(learning_style)
     duration = 25 if "fast" in pace else 45 if "gentle" in pace else 35
-    if "advanced" in familiarity:
+    topic_lower = topic.lower()
+    if "calculus" in topic_lower and "advanced" not in familiarity:
         stages = [
-            ("Diagnostic refresh", "Identify what you already know and surface subtle gaps.", "advanced"),
-            ("Deeper structure", f"Study the formal structure and edge cases behind {topic}.", "advanced"),
-            ("Challenging applications", f"Solve multi-step {topic} problems with increasing independence.", "advanced"),
-            ("Transfer and proof", f"Explain, justify, and transfer {topic} to unfamiliar problems.", "advanced"),
+            (
+                "Limits as predictable change",
+                "Build the idea of approaching a value, read limit notation, and estimate limits from tables, graphs, and simple formulas.",
+                "beginner",
+                [
+                    "Explain a limit as the value a function approaches.",
+                    "Estimate a limit from numeric and visual evidence.",
+                    "Recognize when a two-sided limit does not exist.",
+                ],
+            ),
+            (
+                "Derivatives as instant rate of change",
+                "Turn average speed into instantaneous rate, connect slopes to derivatives, and compute first derivatives from simple rules.",
+                "beginner",
+                [
+                    "Connect secant slopes, tangent slopes, and derivatives.",
+                    "Differentiate simple power functions.",
+                    "Interpret a derivative in words and units.",
+                ],
+            ),
+            (
+                "Using derivatives to understand functions",
+                "Use signs of derivatives to identify increasing, decreasing, and turning behavior in functions.",
+                "intermediate",
+                [
+                    "Use f'(x) to reason about a graph.",
+                    "Find and interpret critical points.",
+                    "Separate calculation from interpretation.",
+                ],
+            ),
+            (
+                "Integrals as accumulated change",
+                "Read area under a curve as accumulation, estimate totals from rectangles, and connect accumulation back to rates.",
+                "intermediate",
+                [
+                    "Explain definite integrals as accumulated change.",
+                    "Estimate area using rectangles.",
+                    "Describe how derivatives and integrals are related.",
+                ],
+            ),
+        ]
+    elif "advanced" in familiarity:
+        stages = [
+            (
+                "Diagnostic refresh",
+                f"Identify what you already know about {topic}, then surface subtle gaps before moving quickly.",
+                "advanced",
+                [f"Explain the core definitions used in {topic}.", "Identify one common edge case.", "Choose a strategy for a mixed problem."],
+            ),
+            (
+                "Formal structure and edge cases",
+                f"Study the definitions, assumptions, and boundary cases that make {topic} methods valid.",
+                "advanced",
+                [f"Justify a method used in {topic}.", "Check assumptions before calculating.", "Explain what can fail and why."],
+            ),
+            (
+                "Challenging mixed problems",
+                f"Solve multi-step {topic} problems that require choosing and combining methods.",
+                "advanced",
+                ["Select a method from problem evidence.", "Carry out a multi-step solution.", "Interpret the result against the original question."],
+            ),
+            (
+                "Transfer and explanation",
+                f"Explain, justify, and transfer {topic} to unfamiliar problems with increasing independence.",
+                "advanced",
+                ["Teach the method back in your own words.", "Adapt it to a new case.", "Compare two possible solution paths."],
+            ),
         ]
     else:
         stages = [
-            ("Intuition and vocabulary", f"Build the meaning, notation, and basic language of {topic}.", "beginner"),
-            ("Core operations", f"Practice the essential moves used when working with {topic}.", "beginner"),
-            ("Guided examples", f"Work through scaffolded {topic} examples step by step.", "intermediate"),
-            ("Independent practice", f"Check understanding with fresh {topic} problems.", "intermediate"),
+            (
+                f"Core meaning and vocabulary of {topic}",
+                f"Build the plain-language meaning, notation, and basic vocabulary needed to study {topic}.",
+                "beginner",
+                [f"Define the key vocabulary of {topic}.", "Connect each term to a simple example.", "Notice what information the notation gives you."],
+            ),
+            (
+                f"Essential procedures in {topic}",
+                f"Practice the main moves used when solving beginner {topic} problems and explain why each move is valid.",
+                "beginner",
+                ["Follow a worked example step by step.", "Name the reason for each step.", "Avoid the most common beginner error."],
+            ),
+            (
+                f"Guided {topic} examples",
+                f"Work through scaffolded examples that connect the concept, procedure, and interpretation.",
+                "intermediate",
+                ["Solve with guidance.", "Check the answer against the original question.", "Explain the result in words."],
+            ),
+            (
+                f"Independent {topic} practice",
+                f"Check understanding with fresh problems, self-explanations, and error correction.",
+                "intermediate",
+                ["Solve a new problem independently.", "Find and correct a likely mistake.", "Summarize when to use the method."],
+            ),
         ]
 
     style_rewrites = {
@@ -552,9 +690,9 @@ def _fallback_roadmap(req: models.GenerateLessonRequest, context: Dict[str, Any]
             description=description,
             difficulty=difficulty,
             estimated_duration=duration,
-            objectives=[description],
+            objectives=objectives,
         )
-        for index, (title, description, difficulty) in enumerate(stages)
+        for index, (title, description, difficulty, objectives) in enumerate(stages)
     ]
 
 
@@ -563,62 +701,33 @@ def _fallback_blueprint(req: models.GenerateLessonRequest, learning_style: str =
     selected_lesson = req.selected_lesson or {}
     lesson_title = selected_lesson.get("title") or topic
     style_key = _style_key(learning_style)
-    if style_key == "visual":
-        sections = [
-            ("Map the big idea", f"Start with a visual map: place {lesson_title} at the center, then connect inputs, changes, rules, and outputs.", "Sketch the map and label one relationship."),
-            ("Follow the flow", f"Trace the process as arrows from what is known to what must be found, keeping each arrow as one visible reasoning move.", "Point to the arrow where the main transformation happens."),
-            ("Compare views", f"Look at {topic} as a diagram, a table, and a compact formula so the same idea is visible in multiple forms.", "Match each visual feature to the symbol it represents."),
-            ("Use the picture", f"Solve a fresh case by reading the diagram first, then use symbols only to confirm what the visual already suggests.", "Name the visual clue that guided your answer."),
-        ]
-        modality_sequence = ["concept_map", "flow_diagram", "visual_example", "checkpoint"]
-    elif style_key == "audio":
-        sections = [
-            ("Listen for the core idea", f"Hear {lesson_title} as a short spoken story: what changes, why it changes, and what result to listen for.", "Say the core idea aloud in one sentence."),
-            ("Spoken walkthrough", f"Follow a narrated example where each step explains what to notice before naming the formal move.", "Pause and predict the next spoken step."),
-            ("Memory cue", f"Use a repeatable phrase for {topic} so the method is easy to recall without rereading a paragraph.", "Repeat the cue and explain when it applies."),
-            ("Listening check", f"Answer a short oral checkpoint, then compare your response with the summary.", "Record or say the answer before looking back."),
-        ]
-        modality_sequence = ["audio_narration", "spoken_example", "listening_check", "reflection"]
-    elif style_key == "practice":
-        sections = [
-            ("Worked example first", f"Begin with a complete {lesson_title} example and observe each decision before studying the rule.", "Identify the first decision in the example."),
-            ("Guided practice", f"Try a similar case with hints after each move, then compare your step with the worked path.", "Complete the next step before reading the hint."),
-            ("Feedback and fix", f"Check the answer, name the mistake that would most likely happen, and correct it immediately.", "Explain one correction in your own words."),
-            ("Mini explanation", f"Now summarize the rule behind the practice so the method connects back to the concept.", "State the rule and solve one fresh case."),
-        ]
-        modality_sequence = ["worked_example", "practice", "feedback", "mini_explanation"]
-    elif style_key == "written":
-        sections = [
-            ("Build the core idea", f"{lesson_title} starts with the meaning behind the notation and the reason each step is valid. Define the quantities, describe what changes, and connect the idea to the broader structure of {topic}.", f"State the central idea of {lesson_title} in your own words."),
-            ("Reason step by step", f"Work through the logic carefully: begin from known definitions, justify each transformation, and explain why no step changes the meaning of the expression or situation.", f"Justify one step without using a shortcut."),
-            ("Derive through an example", f"Use a representative example of {lesson_title}, label each quantity, show the formal reasoning, and explain how the method generalizes beyond this single case.", f"Solve a simple {lesson_title} example step by step."),
-            ("Check and extend understanding", f"Summarize the lesson, test it with a fresh case, and name a condition that would change the method, interpretation, or result.", f"Explain when this {topic} method should be used."),
-        ]
-        modality_sequence = ["detailed_explanation", "derivation", "worked_example", "assessment"]
-    else:
-        sections = [
-            ("Build the core idea", f"Start with a concise explanation of {lesson_title}, then anchor it with one visual relationship and one plain-language example.", f"State the central idea of {lesson_title} in your own words."),
-            ("See and try", f"Compare a small diagram with a worked example so the visual pattern and the symbolic step support each other.", f"Match the visual cue to the example step."),
-            ("Practice with support", f"Try a short exercise, use feedback to repair the first mistake, and connect the move back to the concept.", f"Solve a simple {lesson_title} example step by step."),
-            ("Wrap and check", f"Summarize the idea, listen to or read a quick recap, and answer one checkpoint to confirm transfer.", f"Explain when this {topic} method should be used."),
-        ]
-        modality_sequence = ["explanation", "visual", "practice", "recap"]
-
+    profile = _fallback_lesson_profile(topic, lesson_title)
+    sections = _fallback_lesson_sections(topic, lesson_title, profile)
     blueprint = models.LessonBlueprint(
         lesson_id=f"lesson:{req.learner_id}:{uuid4()}",
         topic=topic,
         selected_lesson=selected_lesson or None,
-        learning_objective=f"Understand {lesson_title} as part of {topic}.",
-        lesson_summary=f"This lesson teaches {lesson_title} through a {learning_style.lower()} experience.",
+        learning_objective=profile["objective"],
+        lesson_summary=profile["summary"],
         learning_style=learning_style,
-        lesson_structure=[
-            {"title": title, "explanation": explanation, "example": example, "concept_connection": concept, "checkpoint": checkpoint}
-            for title, explanation, checkpoint in sections
-            for example, concept in [(checkpoint, f"This step supports the lesson objective: understand {lesson_title}.")]
+        lesson_structure=sections,
+        modality_sequence=["concept", "worked example", "error check", "guided practice", "reflection"],
+        interaction_points=[
+            {"prompt": profile["retrieval_prompt"]},
+            {"prompt": f"Before looking back, explain why the worked example uses {profile['key_action']}."},
+            {"prompt": f"Find one step in the lesson where a beginner might make a mistake, then explain the safer move."},
+            {"prompt": f"Create a one-sentence summary of {lesson_title} that includes both the idea and when to use it."},
         ],
-        modality_sequence=modality_sequence,
-        interaction_points=[{"prompt": f"Explain the hardest part of {topic} in your own words."}],
-        assessment_points=[{"prompt": f"Explain the key idea from {lesson_title} and solve a short example."}],
+        assessment_points=[
+            {
+                "prompt": profile["assessment_prompt"],
+                "success_criteria": "The answer should define the idea, show the calculation or reasoning steps, and interpret the result in context.",
+            },
+            {
+                "prompt": f"Explain one common misconception about {lesson_title} and how to avoid it.",
+                "success_criteria": "The response should name the misconception and give a concrete correction strategy.",
+            },
+        ],
         estimated_lesson_duration=35,
     )
     _apply_fallback_modalities(blueprint, lesson_title, style_key)
@@ -780,6 +889,182 @@ def _compress_text(text: str, max_chars: int) -> str:
     if trimmed:
         return trimmed
     return f"{content[: max_chars - 1].rstrip()}…"
+
+
+def _fallback_lesson_profile(topic: str, lesson_title: str) -> Dict[str, str]:
+    title_lower = lesson_title.lower()
+    topic_lower = topic.lower()
+    if "derivative" in title_lower or ("calculus" in topic_lower and "rate" in title_lower):
+        return {
+            "concept": "derivative",
+            "objective": "Understand derivatives as instantaneous rates of change and tangent slopes.",
+            "summary": "You will learn what a derivative measures, how it grows out of average rate of change, how to compute a simple derivative, and how to interpret the answer in words and units.",
+            "throughline": "A car's position after t seconds is s(t) = t^2 meters.",
+            "worked_problem": "Estimate and compute the car's speed at t = 3 seconds.",
+            "key_action": "a smaller and smaller time interval to move from average speed toward instant speed",
+            "retrieval_prompt": "Without using a formula first, explain the difference between average speed over an interval and speed at one instant.",
+            "assessment_prompt": "For h(t) = t^2 + 2t, find the derivative at t = 4 and explain what the value means.",
+        }
+    if "integral" in title_lower or "accumulated" in title_lower:
+        return {
+            "concept": "definite integral",
+            "objective": "Understand integrals as accumulated change and area under a rate graph.",
+            "summary": "You will learn how an integral adds small pieces of change, why area under a curve can represent a total amount, and how to estimate accumulation before using formal notation.",
+            "throughline": "Water flows into a tank at r(t) liters per minute.",
+            "worked_problem": "Estimate the total water added from 0 to 4 minutes when the rate is about 2, 3, 5, and 6 liters per minute across four one-minute intervals.",
+            "key_action": "adding rate times time for each small interval",
+            "retrieval_prompt": "Explain why multiplying a rate by a time interval gives an amount accumulated during that interval.",
+            "assessment_prompt": "A machine fills boxes at rates 4, 6, and 5 boxes per minute over three one-minute intervals. Estimate the total boxes filled and explain the integral idea.",
+        }
+    if "limit" in title_lower or ("calculus" in topic_lower and "predictable" in title_lower):
+        return {
+            "concept": "limit",
+            "objective": "Understand limits as the value a function approaches, even before or without using the exact input.",
+            "summary": "You will learn how limits describe approaching behavior, how to read limit notation, how to estimate a limit from nearby values, and how to spot when a two-sided limit does not exist.",
+            "throughline": "The function f(x) = (x^2 - 1)/(x - 1) is undefined at x = 1 but has predictable nearby values.",
+            "worked_problem": "Find what f(x) approaches as x gets close to 1.",
+            "key_action": "checking nearby inputs from both sides instead of only substituting the exact input",
+            "retrieval_prompt": "Explain why a limit can exist even when the function value at that exact input is missing.",
+            "assessment_prompt": "For g(x) = (x^2 - 4)/(x - 2), estimate the limit as x approaches 2 and explain why direct substitution is not the main idea.",
+        }
+    return {
+        "concept": lesson_title,
+        "objective": f"Understand {lesson_title} well enough to explain it, follow a worked example, and solve a similar problem independently.",
+        "summary": f"You will build the core meaning of {lesson_title}, learn the procedure one step at a time, study a modeled example, and check your understanding with a fresh case.",
+        "throughline": f"A simple {topic} situation where each quantity is named before any method is used.",
+        "worked_problem": f"Solve a beginner-friendly {lesson_title} problem and explain each step.",
+        "key_action": "the main method from the lesson only after the meaning is clear",
+        "retrieval_prompt": f"Explain what {lesson_title} is trying to find or describe before naming any formula.",
+        "assessment_prompt": f"Solve a short {lesson_title} problem and explain why each step is valid.",
+    }
+
+
+def _fallback_lesson_sections(topic: str, lesson_title: str, profile: Dict[str, str]) -> list[Dict[str, str]]:
+    concept = profile["concept"]
+    return [
+        {
+            "title": "Start with the meaning",
+            "explanation": (
+                f"The first job in {lesson_title} is to know what question the idea answers. In this lesson, the "
+                f"central idea is {concept}. Think of it as a tool for describing behavior, not as a symbol to "
+                f"memorize. We will use this throughline: {profile['throughline']} Before calculating, name the "
+                "quantities, ask what is changing, and decide what the answer should describe. This lowers the "
+                "chance of treating notation like a magic trick. If a formula appears later, it should feel like a "
+                "compressed version of reasoning you already understand."
+            ),
+            "example": (
+                f"Modeled thinking: 1. Read the situation: {profile['throughline']} 2. Name the input and output. "
+                "The input is the variable we are allowed to change; the output is the value that responds. "
+                f"3. Ask the lesson question: what does {concept} tell us about this situation? 4. Predict the "
+                "kind of answer before calculating, such as a value approached, a rate of change, or an accumulated total."
+            ),
+            "concept_connection": (
+                f"This section anchors {lesson_title} in meaning. Learners who can say what the concept measures "
+                "are much more likely to choose the right method and catch unreasonable answers."
+            ),
+            "checkpoint": (
+                f"In the throughline situation, identify the input, the output, and what {concept} is supposed to "
+                "tell you. Write one sentence before using any formula."
+            ),
+        },
+        {
+            "title": "Build the method from intuition",
+            "explanation": (
+                f"Now connect the meaning to a method. The key move is {profile['key_action']}. Do this slowly: "
+                "start with a rough idea, make the comparison or calculation more precise, then interpret the result. "
+                "A common mistake is to jump straight to a rule and lose track of what the numbers mean. Instead, "
+                "treat each line of work as an answer to a small question: What do I know? What changes? What am I "
+                "trying to estimate or compute? When the method is built this way, the final answer is not just a "
+                "number; it is a statement about the original situation."
+            ),
+            "example": (
+                f"Worked setup for the lesson problem: {profile['worked_problem']} 1. Write down the known function "
+                "or quantities. 2. Choose the input or interval the question cares about. 3. Apply the key move: "
+                f"{profile['key_action']}. 4. Keep units or context attached to the result. 5. Ask whether the "
+                "answer matches the behavior described in the situation."
+            ),
+            "concept_connection": (
+                f"This turns {lesson_title} from a definition into a usable process. The learner sees why the "
+                "procedure follows from the idea instead of memorizing an isolated rule."
+            ),
+            "checkpoint": (
+                f"Use the key move for this lesson, {profile['key_action']}, on the throughline example. Explain "
+                "what each step is doing in plain language."
+            ),
+        },
+        {
+            "title": "Study a worked example",
+            "explanation": (
+                "A worked example should show both calculation and judgment. Read each step as a reasoned choice. "
+                "If a line changes the expression, ask why that change is allowed. If a number appears, ask what it "
+                "means in the original setting. Good studying is active: cover the next step, predict it, then check. "
+                "If your prediction differs, the gap tells you exactly what to review. The goal is not to copy the "
+                f"example; the goal is to learn how an expert thinks through {lesson_title}."
+            ),
+            "example": (
+                f"Worked example: {profile['worked_problem']} 1. Restate the goal in your own words. 2. Identify "
+                f"the expression or data connected to {concept}. 3. Perform the method carefully, one small step at "
+                "a time. 4. Simplify only after the meaning is clear. 5. Final answer: give the computed result, "
+                "then add one sentence interpreting it in the situation. If the answer has units, include them."
+            ),
+            "concept_connection": (
+                "This section models the full study routine: understand the question, execute the method, and "
+                "interpret the answer. That is the pattern the learner should imitate on new problems."
+            ),
+            "checkpoint": (
+                "Rework the example with the notes hidden. After each line, say why that line follows from the "
+                "previous one. Mark the first step that feels unclear."
+            ),
+        },
+        {
+            "title": "Avoid common mistakes",
+            "explanation": (
+                f"Most confusion in {lesson_title} comes from mixing up the object being studied with the tool used "
+                "to study it. Another common mistake is treating notation as instructions without checking meaning. "
+                "A safer habit is to pause after every result and ask: What does this number or expression describe? "
+                "Does it answer the original question? Are there restrictions, missing values, units, or assumptions "
+                "that matter? This habit catches many errors before they become habits."
+            ),
+            "example": (
+                "Error check: Suppose a learner gets a final number but cannot say what it means. That answer is not "
+                "finished. 1. Return to the problem statement. 2. Name the quantity the answer represents. 3. Check "
+                "whether the sign, size, and units make sense. 4. If something conflicts with the situation, revisit "
+                "the step where the method was chosen or simplified."
+            ),
+            "concept_connection": (
+                f"Error checking is part of learning {lesson_title}, not an extra step. It protects understanding "
+                "and prepares the learner for independent practice."
+            ),
+            "checkpoint": (
+                f"Name one mistake someone might make while using {lesson_title}. Then write the question you would "
+                "ask yourself to catch that mistake."
+            ),
+        },
+        {
+            "title": "Try a fresh problem",
+            "explanation": (
+                "Independent practice should be close enough to the example to feel possible, but different enough "
+                "to require thinking. Start by restating the problem, then choose the method, then solve. Do not look "
+                "back until you have made a genuine attempt. If you get stuck, identify the exact decision point: "
+                "Was it understanding the question, choosing the method, doing the algebra or procedure, or "
+                "interpreting the answer? That diagnosis makes review efficient."
+            ),
+            "example": (
+                f"Practice model: {profile['assessment_prompt']} 1. Restate what is being asked. 2. List the known "
+                f"quantities. 3. Apply the {concept} idea using the lesson method. 4. Write the final result. "
+                "5. Add a one-sentence interpretation. 6. Compare your work with the success criteria in the "
+                "assessment panel."
+            ),
+            "concept_connection": (
+                f"This final section moves {lesson_title} from recognition to usable skill. The learner practices "
+                "choosing and explaining the method, which is what makes the lesson teachable."
+            ),
+            "checkpoint": (
+                f"Complete the fresh problem: {profile['assessment_prompt']} Include the method, the answer, and a "
+                "plain-language interpretation."
+            ),
+        },
+    ]
 
 
 def _fallback_questions(lesson: Dict[str, Any], learning_style: str) -> list[Dict[str, Any]]:

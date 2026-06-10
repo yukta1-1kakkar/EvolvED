@@ -1,9 +1,25 @@
 import asyncio
 import json
+import random
 from typing import Any, Dict, List
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.config import Config
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    PartialCredentialsError,
+    ReadTimeoutError,
+)
+
+import os
+
+print("REGION =", os.getenv("AWS_REGION"))
+print("ACCESS KEY =", os.getenv("AWS_ACCESS_KEY_ID"))
+print("SECRET EXISTS =", bool(os.getenv("AWS_SECRET_ACCESS_KEY")))
 
 from app.ai.base import LLMProvider
 from app.core.config import settings
@@ -11,12 +27,56 @@ from app.core.config import settings
 class BedrockProvider(LLMProvider):
     def __init__(self):
         self.region = settings.aws_region
+        self.config = Config(
+            connect_timeout=settings.bedrock_connect_timeout_seconds,
+            read_timeout=settings.bedrock_read_timeout_seconds,
+            retries={
+                "max_attempts": settings.bedrock_max_attempts,
+                "mode": "adaptive",
+            },
+        )
 
     def _bedrock_runtime_client(self):
-        return boto3.client("bedrock-runtime", region_name=self.region)
+        return boto3.client("bedrock-runtime", region_name=self.region, config=self.config)
 
     def _polly_client(self):
-        return boto3.client("polly", region_name=self.region)
+        return boto3.client("polly", region_name=self.region, config=self.config)
+
+    def _is_retryable(self, exc: Exception) -> bool:
+        if isinstance(exc, (NoCredentialsError, PartialCredentialsError)):
+            return False
+        if isinstance(exc, (ConnectTimeoutError, EndpointConnectionError, ReadTimeoutError)):
+            return True
+        if isinstance(exc, ClientError):
+            code = exc.response.get("Error", {}).get("Code", "")
+            return code in {
+                "ThrottlingException",
+                "TooManyRequestsException",
+                "RequestLimitExceeded",
+                "ServiceQuotaExceededException",
+                "ModelTimeoutException",
+                "ModelNotReadyException",
+                "InternalServerException",
+                "ServiceUnavailableException",
+            }
+        return isinstance(exc, BotoCoreError)
+
+    async def _run_with_retries(self, operation_name: str, invoke):
+        last_exc: Exception | None = None
+        attempts = max(1, settings.bedrock_max_attempts)
+        attempts_run = 0
+        for attempt in range(attempts):
+            attempts_run = attempt + 1
+            try:
+                return await asyncio.to_thread(invoke)
+            except Exception as exc:
+                last_exc = exc
+                if attempt == attempts - 1 or not self._is_retryable(exc):
+                    break
+                jitter = random.uniform(0, settings.bedrock_retry_base_delay_seconds)
+                delay = settings.bedrock_retry_base_delay_seconds * (2**attempt) + jitter
+                await asyncio.sleep(delay)
+        raise RuntimeError(f"Bedrock {operation_name} failed after {attempts_run} attempt(s): {last_exc}") from last_exc
 
     def _normalise_messages(self, messages: List[Dict[str, str]]) -> tuple[str | None, List[Dict[str, str]]]:
         system_parts: list[str] = []
@@ -66,8 +126,10 @@ class BedrockProvider(LLMProvider):
             return {"choices": [{"message": {"content": text}}], "raw": raw}
 
         try:
-            return await asyncio.to_thread(_invoke)
+            return await self._run_with_retries(f"Claude invocation for {model_id}", _invoke)
         except (BotoCoreError, ClientError) as exc:
+            raise RuntimeError(f"Bedrock Claude invocation failed for {model_id}: {exc}") from exc
+        except RuntimeError as exc:
             raise RuntimeError(f"Bedrock Claude invocation failed for {model_id}: {exc}") from exc
 
     async def create_embedding(self, texts: List[str], model: str | None = None) -> List[List[float]]:
@@ -91,8 +153,13 @@ class BedrockProvider(LLMProvider):
             return raw["embedding"]
 
         try:
-            return [await asyncio.to_thread(_embed_one, text) for text in texts]
+            return [
+                await self._run_with_retries(f"Titan embedding for {model_id}", lambda text=text: _embed_one(text))
+                for text in texts
+            ]
         except (BotoCoreError, ClientError, KeyError) as exc:
+            raise RuntimeError(f"Bedrock Titan embedding failed for {model_id}: {exc}") from exc
+        except RuntimeError as exc:
             raise RuntimeError(f"Bedrock Titan embedding failed for {model_id}: {exc}") from exc
 
     async def synthesize_speech(self, text: str, model: str | None = None, voice: str = "Joanna") -> bytes:
@@ -112,6 +179,8 @@ class BedrockProvider(LLMProvider):
             return stream.read()
 
         try:
-            return await asyncio.to_thread(_synthesize)
+            return await self._run_with_retries("Polly speech synthesis", _synthesize)
         except (BotoCoreError, ClientError) as exc:
+            raise RuntimeError(f"Polly speech synthesis failed: {exc}") from exc
+        except RuntimeError as exc:
             raise RuntimeError(f"Polly speech synthesis failed: {exc}") from exc

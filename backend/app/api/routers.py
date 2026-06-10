@@ -194,13 +194,9 @@ class TTSRequest(BaseModel):
 @router.post("/tts")
 async def tts(req: TTSRequest):
     try:
-        # Note: This assumes the provider has a synthesize_speech method.
-        # If using Gemini (which doesn't have TTS), we might need to handle this
-        # or use the BedrockProvider explicitly if the active provider is Gemini.
         if hasattr(provider, "synthesize_speech"):
             audio = await provider.synthesize_speech(req.text, voice=req.voice or "Joanna")
         else:
-            # Fallback or error handling
             from app.ai.bedrock_provider import BedrockProvider
             fallback_provider = BedrockProvider()
             audio = await fallback_provider.synthesize_speech(req.text, voice=req.voice or "Joanna")
