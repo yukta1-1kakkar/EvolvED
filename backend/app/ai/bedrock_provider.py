@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import random
 from typing import Any, Dict, List
 
@@ -15,18 +16,24 @@ from botocore.exceptions import (
     ReadTimeoutError,
 )
 
-import os
-
-print("REGION =", os.getenv("AWS_REGION"))
-print("ACCESS KEY =", os.getenv("AWS_ACCESS_KEY_ID"))
-print("SECRET EXISTS =", bool(os.getenv("AWS_SECRET_ACCESS_KEY")))
-
 from app.ai.base import LLMProvider
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
 
 class BedrockProvider(LLMProvider):
     def __init__(self):
         self.region = settings.aws_region
+        self.client_kwargs = {
+            key: value
+            for key, value in {
+                "aws_access_key_id": settings.aws_access_key_id,
+                "aws_secret_access_key": settings.aws_secret_access_key,
+                "aws_session_token": settings.aws_session_token,
+            }.items()
+            if value
+        }
         self.config = Config(
             connect_timeout=settings.bedrock_connect_timeout_seconds,
             read_timeout=settings.bedrock_read_timeout_seconds,
@@ -37,10 +44,10 @@ class BedrockProvider(LLMProvider):
         )
 
     def _bedrock_runtime_client(self):
-        return boto3.client("bedrock-runtime", region_name=self.region, config=self.config)
+        return boto3.client("bedrock-runtime", region_name=self.region, config=self.config, **self.client_kwargs)
 
     def _polly_client(self):
-        return boto3.client("polly", region_name=self.region, config=self.config)
+        return boto3.client("polly", region_name=self.region, config=self.config, **self.client_kwargs)
 
     def _is_retryable(self, exc: Exception) -> bool:
         if isinstance(exc, (NoCredentialsError, PartialCredentialsError)):
@@ -73,6 +80,13 @@ class BedrockProvider(LLMProvider):
                 last_exc = exc
                 if attempt == attempts - 1 or not self._is_retryable(exc):
                     break
+                logger.warning(
+                    "Bedrock %s attempt %s/%s failed; retrying: %s",
+                    operation_name,
+                    attempts_run,
+                    attempts,
+                    exc,
+                )
                 jitter = random.uniform(0, settings.bedrock_retry_base_delay_seconds)
                 delay = settings.bedrock_retry_base_delay_seconds * (2**attempt) + jitter
                 await asyncio.sleep(delay)

@@ -25,7 +25,7 @@ EvolvED is an adaptive learning platform that generates personalized curriculum 
 
 ### Backend Architecture
 - **Web API**: Built using FastAPI (`backend/app/main.py`), exposing endpoints for curriculum retrieval, lesson generation, assessment grading, speech synthesis (TTS), and progress analytics (`backend/app/api/routers.py`).
-- **AI Service client**: Integrates with AWS Bedrock to call Claude (using version `anthropic.claude-3-7-sonnet-20250219-v1:0` by default) and Amazon Titan Text Embeddings, plus Amazon Polly for Text-to-Speech (`backend/app/ai/bedrock_client.py`).
+- **AI Service client**: Integrates with AWS Bedrock to call Claude Sonnet 4.6 and Claude Haiku 4.5 by default, Amazon Titan Text Embeddings V2, and Amazon Polly for Text-to-Speech (`backend/app/ai/bedrock_provider.py`).
 - **Orchestration**: Orchestrates learner state analysis, pedagogical strategy, lesson planning, and content generation using an agentic LangGraph pattern (`backend/app/langgraph/graph.py` and `backend/app/core/langgraph_nodes.py`). Falls back to a sequential async runner if LangGraph SDK is absent.
 - **Database / ORM**: Utilizes SQLAlchemy with `asyncio` and `asyncpg` connected to a PostgreSQL database (`backend/app/core/db.py`), with schema definitions in `backend/app/db/models.py` and Alembic migrations.
 - **Vector Search / Memory**: Incorporates ChromaDB (`backend/app/core/chroma_client.py`) to persist and retrieve embeddings of generated lesson structures and assets.

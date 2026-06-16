@@ -11,15 +11,15 @@ from app.core.config import settings
 
 
 EXPECTED_ROUTES = {
-    "learner": "anthropic.claude-sonnet-4-6",
+    "learner": "us.anthropic.claude-sonnet-4-6",
     "pedagogy": "us.anthropic.claude-sonnet-4-6",
-    "planning": "anthropic.claude-sonnet-4-6",
-    "content": "anthropic.claude-sonnet-4-6",
-    "quiz": "anthropic.claude-haiku-4-5-20251001-v1:0",
-    "assessment": "anthropic.claude-haiku-4-5-20251001-v1:0",
-    "adaptation": "anthropic.claude-sonnet-4-6",
-    "evolution": "anthropic.claude-sonnet-4-6",
-    "tutor": "anthropic.claude-haiku-4-5-20251001-v1:0",
+    "planning": "us.anthropic.claude-sonnet-4-6",
+    "content": "us.anthropic.claude-sonnet-4-6",
+    "quiz": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "assessment": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "adaptation": "us.anthropic.claude-sonnet-4-6",
+    "evolution": "us.anthropic.claude-sonnet-4-6",
+    "tutor": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
 EXPECTED_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
 

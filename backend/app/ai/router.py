@@ -1,5 +1,6 @@
 from app.core.config import settings
 
+
 class ModelRouter:
     BEDROCK_PROVIDER = "bedrock"
     LAYER_DESCRIPTIONS = {
@@ -32,6 +33,17 @@ class ModelRouter:
     @staticmethod
     def get_embedding_model() -> str:
         return settings.embedding_model
+
+    @classmethod
+    def startup_summary(cls) -> dict:
+        return {
+            "selected_provider": settings.active_provider,
+            "selected_pedagogy_model": cls.get_model("pedagogy"),
+            "selected_lesson_planning_model": cls.get_model("planning"),
+            "selected_content_generation_model": cls.get_model("content"),
+            "selected_assessment_model": cls.get_model("assessment"),
+            "selected_embedding_model": cls.get_embedding_model(),
+        }
 
     @classmethod
     def validation_report(cls) -> dict:

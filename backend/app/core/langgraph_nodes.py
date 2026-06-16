@@ -27,8 +27,12 @@ async def _call_layer(layer: str, messages: list[Dict[str, str]], **kwargs):
         fallback = settings.reasoning_model
         if fallback == primary:
             raise
-        logger.warning("%s model %s failed; retrying with %s: %s", layer, primary, fallback, exc)
-        return await provider.call_chat_model(messages, model=fallback, **kwargs)
+        logger.warning("%s model unavailable: %s; retrying with fallback %s: %s", layer, primary, fallback, exc)
+        try:
+            return await provider.call_chat_model(messages, model=fallback, **kwargs)
+        except Exception as fallback_exc:
+            logger.error("%s fallback model unavailable: %s: %s", layer, fallback, fallback_exc)
+            raise
 
 
 async def _persist_lesson_embedding(blueprint: models.LessonBlueprint, learner_id: str, topic: str):
@@ -46,13 +50,22 @@ def _json_from_model_text(text: str) -> Dict[str, Any]:
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
         cleaned = re.sub(r"\s*```$", "", cleaned)
 
+    def _loads_lenient_json(candidate: str) -> Dict[str, Any]:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            if "Invalid \\escape" not in str(exc):
+                raise
+            escaped = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", candidate)
+            return json.loads(escaped)
+
     try:
-        return json.loads(cleaned)
+        return _loads_lenient_json(cleaned)
     except Exception:
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start >= 0 and end > start:
-            return json.loads(cleaned[start : end + 1])
+            return _loads_lenient_json(cleaned[start : end + 1])
         raise
 
 
@@ -82,7 +95,7 @@ async def pedagogy_agent(state: Dict[str, Any]) -> models.TeachingStrategy:
     ]
 
     try:
-        resp = await provider.call_chat_model(messages, model=ModelRouter.get_model("pedagogy"), temperature=0.0)
+        resp = await _call_layer("pedagogy", messages, temperature=0.0)
         text = resp["choices"][0]["message"]["content"]
     except Exception as exc:
         logger.warning("Pedagogy model unavailable; using profile-derived strategy: %s", exc)
@@ -193,7 +206,7 @@ async def lesson_planning_agent(
     blueprint = None
     for attempt in range(2):
         try:
-            resp = await provider.call_chat_model(messages, model=ModelRouter.get_model("planning"))
+            resp = await _call_layer("planning", messages)
             text = resp["choices"][0]["message"]["content"]
             payload = _json_from_model_text(text)
             candidate = models.LessonBlueprint(**payload)

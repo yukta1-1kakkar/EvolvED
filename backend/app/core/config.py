@@ -3,26 +3,32 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+BEDROCK_REASONING_MODEL = "us.anthropic.claude-sonnet-4-6"
+BEDROCK_FAST_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+BEDROCK_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
     active_provider: str = "bedrock"
-    reasoning_model: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    fast_model: str = "anthropic.claude-3-5-haiku-20241022-v1:0"
-    learner_model: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    pedagogy_model: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    lesson_planning_model: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    content_generation_model: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    quiz_model: str = "anthropic.claude-3-5-haiku-20241022-v1:0"
-    assessment_model: str = "anthropic.claude-3-5-haiku-20241022-v1:0"
-    adaptation_model: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    evolution_model: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    fast_interaction_model: str = "anthropic.claude-haiku-4-5-20251001-v1:0"
-    embedding_model: str = "amazon.titan-embed-text-v2:0"
+    reasoning_model: str = BEDROCK_REASONING_MODEL
+    fast_model: str = BEDROCK_FAST_MODEL
+    learner_model: str = BEDROCK_REASONING_MODEL
+    pedagogy_model: str = BEDROCK_REASONING_MODEL
+    lesson_planning_model: str = BEDROCK_REASONING_MODEL
+    content_generation_model: str = BEDROCK_REASONING_MODEL
+    quiz_model: str = BEDROCK_FAST_MODEL
+    assessment_model: str = BEDROCK_FAST_MODEL
+    adaptation_model: str = BEDROCK_REASONING_MODEL
+    evolution_model: str = BEDROCK_REASONING_MODEL
+    fast_interaction_model: str = BEDROCK_FAST_MODEL
+    embedding_model: str = BEDROCK_EMBEDDING_MODEL
     aws_region: str = "us-east-1"
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_session_token: str | None = None
     database_url: str | None = None
     database_pool_size: int = 10
     database_max_overflow: int = 20
