@@ -43,6 +43,8 @@ class TeachingStrategy(BaseModel):
 class LessonBlueprint(BaseModel):
     lesson_id: str
     topic: str
+    generation_source: str = "unknown"
+    generation_model: Optional[str] = None
     project_context: Optional[str] = None
     selected_lesson: Optional[Dict[str, Any]] = None
     learning_objective: str
@@ -126,6 +128,8 @@ class LessonRoadmapItem(BaseModel):
 class LessonRoadmapResponse(BaseModel):
     learner_id: str
     topic: str
+    generation_source: str = "unknown"
+    generation_model: Optional[str] = None
     lessons: List[LessonRoadmapItem] = Field(default_factory=list)
 
 

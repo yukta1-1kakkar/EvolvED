@@ -13,7 +13,7 @@ import {
   Target,
   Volume2,
 } from "lucide-react";
-import { useEffect, useState, type ElementType, type FormEvent, type SelectHTMLAttributes } from "react";
+import { useEffect, useRef, useState, type ElementType, type FormEvent, type SelectHTMLAttributes } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { Input } from "@/components/ui/input";
@@ -135,6 +135,8 @@ function LessonPage() {
           selectedId={selectedLesson?.id}
           onSelect={chooseLesson}
           loading={lesson.isFetching}
+          generationSource={roadmap.data.generation_source}
+          generationModel={roadmap.data.generation_model}
         />
       )}
 
@@ -153,6 +155,9 @@ function LessonPage() {
                     {lesson.data.learning_style}
                   </div>
                 )}
+                <div className="mt-3">
+                  <SourceBadge source={lesson.data.generation_source} model={lesson.data.generation_model} inverse />
+                </div>
               </div>
               <div className="grid gap-4 px-6 py-5 md:grid-cols-[1fr_auto] md:items-center">
                 <div>
@@ -308,20 +313,33 @@ function LessonBriefForm({
 
 function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
   const hasAudio = Boolean(lesson.audioNarration || lesson.ttsContent || lesson.audioSections?.length);
-  const visuals = [
+  const mediaCandidates = [
     ...(lesson.visualElements ?? []),
     ...(lesson.graphData ?? []),
     ...(lesson.diagramDescriptions ?? []),
   ];
+  const videos = mediaCandidates.filter((item) => item.type === "video" && isValidMediaUrl(stringValue(item.videoUrl), "video"));
+  const audioAssets = mediaCandidates.filter((item) => item.type === "audio" && isValidMediaUrl(stringValue(item.audioUrl), "audio"));
+  const visualCandidates = mediaCandidates.filter((item) => item.type !== "video" && item.type !== "audio");
+  const visuals = Array.from(
+    new Map(
+      visualCandidates.map((item, index) => [
+        stringValue(item.id) || stringValue(item.imageUrl) || `${recordTitle(item, index)}-${index}`,
+        item,
+      ]),
+    ).values(),
+  );
   const hasVisuals = visuals.length > 0 || Boolean(lesson.conceptMaps?.length || lesson.flowDiagrams?.length);
   const practiceItems = [...(lesson.practiceExercises ?? []), ...(lesson.interactiveQuestions ?? [])];
 
   return (
     <div className="space-y-5">
+      {videos.map((video, index) => <VideoLesson key={recordKey(video, index)} video={video} index={index} />)}
       {hasAudio && (
         <AudioLesson
           narration={lesson.ttsContent || lesson.audioNarration || ""}
           sections={lesson.audioSections ?? []}
+          audioAsset={audioAssets[0]}
         />
       )}
       {hasVisuals && (
@@ -336,29 +354,65 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
   );
 }
 
-function AudioLesson({ narration, sections }: { narration: string; sections: ApiRecord[] }) {
-  const [audioUrl, setAudioUrl] = useState("");
-  const [status, setStatus] = useState(narration ? "Preparing narration..." : "Narration script ready");
+function AudioLesson({ narration, sections, audioAsset }: { narration: string; sections: ApiRecord[]; audioAsset?: ApiRecord }) {
+  const storedAudioUrl = resolveMediaUrl(stringValue(audioAsset?.audioUrl));
+  const [audioUrl, setAudioUrl] = useState(storedAudioUrl);
+  const [status, setStatus] = useState(storedAudioUrl ? "Narration ready" : narration ? "Preparing narration..." : "Narration script ready");
+  const [useBrowserNarration, setUseBrowserNarration] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
-    if (!narration) return;
+    if (!narration || storedAudioUrl) return;
     let cancelled = false;
     let objectUrl = "";
 
     synthesizeLessonAudio(narration)
       .then((blob) => {
         if (cancelled) return;
+        if (!blob.size || !["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"].includes(blob.type)) {
+          throw new Error(`Invalid lesson audio response: type=${blob.type || "unknown"} size=${blob.size}`);
+        }
         objectUrl = URL.createObjectURL(blob);
         setAudioUrl(objectUrl);
         setStatus("Narration ready");
       })
-      .catch(() => setStatus("Narration script ready"));
+      .catch((error) => {
+        console.error("Lesson audio generation/playback failed", error);
+        const browserSpeechAvailable = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+        setUseBrowserNarration(browserSpeechAvailable);
+        setStatus(browserSpeechAvailable ? "Browser narration ready" : "Narration script ready");
+      });
 
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
     };
-  }, [narration]);
+  }, [narration, storedAudioUrl]);
+
+  function playBrowserNarration() {
+    if (!narration || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(narration);
+    utterance.onstart = () => {
+      console.info("Lesson browser narration playback started", { characters: narration.length });
+      setSpeaking(true);
+      setStatus("Playing narration");
+    };
+    utterance.onend = () => {
+      console.info("Lesson browser narration playback completed");
+      setSpeaking(false);
+      setStatus("Browser narration ready");
+    };
+    utterance.onerror = (event) => {
+      console.error("Lesson browser narration playback failed", event);
+      setSpeaking(false);
+      setStatus("Narration script ready");
+    };
+    window.speechSynthesis.speak(utterance);
+  }
 
   return (
     <section className="rounded-3xl border border-border bg-card p-6">
@@ -367,13 +421,43 @@ function AudioLesson({ narration, sections }: { narration: string; sections: Api
       </div>
       <div className="mt-4 rounded-2xl bg-muted/35 p-4">
         {audioUrl ? (
-          <audio controls src={audioUrl} className="w-full" />
+          <audio
+            ref={audioRef}
+            controls
+            src={audioUrl}
+            className="w-full"
+            preload="metadata"
+            onRateChange={(event) => setPlaybackRate(event.currentTarget.playbackRate)}
+            onCanPlay={() => console.info("Lesson audio URL verified and ready", { audioUrl })}
+            onPlay={() => console.info("Lesson audio playback started", { audioUrl })}
+            onError={(event) => console.error("Lesson audio player failed", event.currentTarget.error)}
+          />
+        ) : useBrowserNarration ? (
+          <button type="button" onClick={playBrowserNarration} disabled={speaking} className="flex items-center gap-2 text-sm text-muted-foreground disabled:opacity-60">
+            <Play className="size-4 text-plum" /> {status}
+          </button>
         ) : (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Play className="size-4 text-plum" /> {status}
           </div>
         )}
       </div>
+      {audioUrl && (
+        <label className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+          Playback speed
+          <select
+            value={playbackRate}
+            onChange={(event) => {
+              const rate = Number(event.target.value);
+              setPlaybackRate(rate);
+              if (audioRef.current) audioRef.current.playbackRate = rate;
+            }}
+            className="rounded-lg border border-border bg-background px-2 py-1"
+          >
+            {[0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}x</option>)}
+          </select>
+        </label>
+      )}
       {sections.length > 0 && (
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {sections.map((section, index) => (
@@ -413,6 +497,17 @@ function VisualLesson({
           {visualElements.map((item, index) => (
             <div key={recordKey(item, index)} className="rounded-2xl border border-border bg-muted/20 p-4">
               <div className="text-sm font-medium">{recordTitle(item, index)}</div>
+              {isValidMediaUrl(stringValue(item.imageUrl), "image") && (
+                <img
+                  src={stringValue(item.imageUrl)}
+                  alt={stringValue(item.description) || recordTitle(item, index)}
+                  className="mt-3 aspect-video w-full rounded-xl border border-border bg-background object-contain"
+                  onError={(event) => {
+                    console.error("Lesson visual failed to render", { title: recordTitle(item, index), url: event.currentTarget.src });
+                    event.currentTarget.hidden = true;
+                  }}
+                />
+              )}
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{stringValue(item.caption) || stringValue(item.description) || recordBody(item)}</p>
               {recordsFrom(item.items).length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -512,17 +607,24 @@ function RoadmapCards({
   selectedId,
   onSelect,
   loading,
+  generationSource,
+  generationModel,
 }: {
   lessons: LessonRoadmapItem[];
   selectedId?: string;
   onSelect: (item: LessonRoadmapItem) => void;
   loading: boolean;
+  generationSource?: string;
+  generationModel?: string | null;
 }) {
   return (
     <section className="mb-7">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Personalized roadmap</div>
-        {loading && <div className="text-xs text-muted-foreground">Generating selected lesson...</div>}
+        <div className="flex items-center gap-2">
+          <SourceBadge source={generationSource} model={generationModel} />
+          {loading && <div className="text-xs text-muted-foreground">Generating selected lesson...</div>}
+        </div>
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {lessons.map((item) => (
@@ -542,6 +644,111 @@ function RoadmapCards({
         ))}
       </div>
     </section>
+  );
+}
+
+function VideoLesson({ video, index }: { video: ApiRecord; index: number }) {
+  const videoUrl = resolveMediaUrl(stringValue(video.videoUrl));
+  const thumbnailUrl = resolveMediaUrl(stringValue(video.thumbnailUrl));
+  const captionsUrl = resolveMediaUrl(stringValue(video.captionsUrl));
+  const narration = stringValue(video.narration);
+  const script = typeof video.videoScript === "object" && video.videoScript !== null && !Array.isArray(video.videoScript) ? video.videoScript : {};
+  const scenes = recordArray(script.scenes);
+  const lastNarratedScene = useRef(-1);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const sourceType = stringValue(video.contentType) || (videoUrl.endsWith(".mp4") ? "video/mp4" : "video/webm");
+
+  useEffect(() => {
+    const player = videoRef.current;
+    if (!player || !videoUrl) return;
+    console.info("Lesson video player initialization", { videoId: video.videoId, videoUrl, sourceType, canPlayType: player.canPlayType(sourceType) });
+    player.load();
+  }, [sourceType, video.videoId, videoUrl]);
+
+  function narrateAt(currentTime: number) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const sceneIndex = scenes.length ? Math.min(Math.floor(currentTime / 4), scenes.length - 1) : 0;
+    if (sceneIndex === lastNarratedScene.current) return;
+    lastNarratedScene.current = sceneIndex;
+    const sceneNarration = stringValue(scenes[sceneIndex]?.narration) || narration;
+    if (!sceneNarration) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(sceneNarration);
+    utterance.onerror = (event) => console.error("Lesson video narration failed", event);
+    window.speechSynthesis.speak(utterance);
+  }
+
+  return (
+    <section className="overflow-hidden rounded-3xl border border-border bg-card p-6">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+        <Play className="size-3.5 text-plum" /> Visual lesson video
+      </div>
+      <h3 className="mt-2 text-lg font-medium">{recordTitle(video, index)}</h3>
+      <video
+        ref={videoRef}
+        controls
+        playsInline
+        preload="metadata"
+        poster={isValidMediaUrl(stringValue(video.thumbnailUrl), "image") ? thumbnailUrl : undefined}
+        className="mt-4 aspect-video w-full rounded-2xl border border-border bg-black"
+        onLoadStart={() => console.info("Lesson video load started", { videoId: video.videoId, videoUrl, sourceType })}
+        onLoadedMetadata={(event) => console.info("Video render request verified", { videoId: video.videoId, duration: event.currentTarget.duration, videoUrl })}
+        onCanPlay={(event) => console.info("Lesson video can play", { videoId: video.videoId, duration: event.currentTarget.duration, readyState: event.currentTarget.readyState, networkState: event.currentTarget.networkState })}
+        onPlaying={(event) => console.info("Lesson video playback active", { videoId: video.videoId, currentTime: event.currentTarget.currentTime })}
+        onWaiting={(event) => console.warn("Lesson video waiting for data", { videoId: video.videoId, currentTime: event.currentTarget.currentTime, readyState: event.currentTarget.readyState })}
+        onStalled={(event) => console.warn("Lesson video network stalled", { videoId: video.videoId, networkState: event.currentTarget.networkState })}
+        onPlay={(event) => {
+          console.info("Lesson video playback result: started", { videoId: video.videoId, videoUrl });
+          lastNarratedScene.current = -1;
+          narrateAt(event.currentTarget.currentTime);
+        }}
+        onTimeUpdate={(event) => narrateAt(event.currentTarget.currentTime)}
+        onSeeked={(event) => {
+          lastNarratedScene.current = -1;
+          narrateAt(event.currentTarget.currentTime);
+        }}
+        onPause={() => typeof window !== "undefined" && "speechSynthesis" in window && window.speechSynthesis.cancel()}
+        onEnded={() => typeof window !== "undefined" && "speechSynthesis" in window && window.speechSynthesis.cancel()}
+        onError={(event) => {
+          const error = event.currentTarget.error;
+          const labels: Record<number, string> = { 1: "MEDIA_ERR_ABORTED", 2: "MEDIA_ERR_NETWORK", 3: "MEDIA_ERR_DECODE", 4: "MEDIA_ERR_SRC_NOT_SUPPORTED" };
+          console.error("Lesson video playback failed", {
+            videoId: video.videoId,
+            videoUrl,
+            sourceType,
+            code: error?.code,
+            category: error?.code ? labels[error.code] : "UNKNOWN_MEDIA_ERROR",
+            message: error?.message,
+            networkState: event.currentTarget.networkState,
+            readyState: event.currentTarget.readyState,
+          });
+        }}
+      >
+        <source key={videoUrl} src={videoUrl} type={sourceType} />
+        {isValidMediaUrl(stringValue(video.captionsUrl), "video") && <track kind="captions" src={captionsUrl} srcLang="en" label="English" default />}
+      </video>
+      <p className="mt-3 text-sm text-muted-foreground">{stringValue(video.description)}</p>
+    </section>
+  );
+}
+
+function SourceBadge({ source, model, inverse = false }: { source?: string; model?: string | null; inverse?: boolean }) {
+  const isAi = source === "ai";
+  const label = isAi ? "AI generated" : "Generation pending";
+  const title = model ? `${label}: ${model}` : label;
+  return (
+    <span
+      title={title}
+      className={`inline-flex rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.16em] ${
+        inverse
+          ? "border-background/30 text-background/80"
+          : isAi
+            ? "border-plum/25 bg-plum/[0.06] text-plum"
+            : "border-border bg-muted/35 text-muted-foreground"
+      }`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -659,6 +866,32 @@ function recordBody(record: ApiRecord) {
 
 function stringValue(value: ApiJson | undefined) {
   return typeof value === "string" ? value : "";
+}
+
+function isValidMediaUrl(value: string, kind: "image" | "video" | "audio") {
+  if (!value) return false;
+  if (value.startsWith("/")) return true;
+  if (value.startsWith(`data:${kind}/`)) return true;
+  if (kind === "image" && value.startsWith("data:image/")) return true;
+  if (value.startsWith("blob:")) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (error) {
+    console.error("Invalid lesson media URL", { kind, value, error });
+    return false;
+  }
+}
+
+function resolveMediaUrl(value: string) {
+  if (!value || value.startsWith("data:") || value.startsWith("blob:") || /^https?:\/\//i.test(value)) return value;
+  const apiBase = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").trim();
+  const mediaPath = value.startsWith("/") ? value : `/${value}`;
+  if (/^https?:\/\//i.test(apiBase)) {
+    return new URL(mediaPath, apiBase).toString();
+  }
+  const origin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  return new URL(`${apiBase.replace(/\/$/, "")}${mediaPath}`, origin).toString();
 }
 
 function recordsFrom(value: ApiJson | undefined): ApiJson[] {

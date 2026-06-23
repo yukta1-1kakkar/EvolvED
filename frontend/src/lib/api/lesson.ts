@@ -16,7 +16,7 @@ export function generateLesson(request: GenerateLessonRequest) {
   return apiRequest<LessonBlueprint, ApiJson>("/generate-lesson", {
     method: "POST",
     body: request as unknown as ApiJson,
-    timeoutMs: 60000,
+    timeoutMs: 180000,
   });
 }
 
@@ -24,7 +24,7 @@ export function generateRoadmap(request: GenerateLessonRequest) {
   return apiRequest<LessonRoadmapResponse, ApiJson>("/generate-roadmap", {
     method: "POST",
     body: request as unknown as ApiJson,
-    timeoutMs: 60000,
+    timeoutMs: 180000,
   });
 }
 

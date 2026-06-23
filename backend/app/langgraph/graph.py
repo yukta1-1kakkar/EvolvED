@@ -94,7 +94,7 @@ class Orchestrator:
             learner_id=learner_profile.learner_id,
             topic=topic,
             selected_lesson=(constraints or {}).get("selected_lesson"),
-            constraints=constraints or {},
+            constraints={**(constraints or {}), "learner_profile": learner_profile.model_dump()},
         )
         lesson = await langgraph_nodes.lesson_planning_agent(request, learner_state, teaching_strategy)
         asyncio.create_task(_enrich_lesson_content(lesson))

@@ -21,14 +21,19 @@ export interface ApiRequestOptions<TBody extends ApiJson | undefined = undefined
   timeoutMs?: number;
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_URL;
+const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").trim();
 
 if (!apiBaseUrl) {
   throw new Error("Missing VITE_API_URL. Add it to frontend/.env.");
 }
 
 function buildUrl(path: string, query?: Record<string, ApiPrimitive | undefined>) {
-  const url = new URL(path, apiBaseUrl);
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const isAbsoluteBase = /^https?:\/\//i.test(apiBaseUrl);
+  const origin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  const url = isAbsoluteBase
+    ? new URL(`${new URL(apiBaseUrl).pathname.replace(/\/$/, "")}${normalizedPath}`, apiBaseUrl)
+    : new URL(`${apiBaseUrl.replace(/\/$/, "")}${normalizedPath}`, origin);
 
   Object.entries(query ?? {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null) {

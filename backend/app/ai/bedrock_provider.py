@@ -37,6 +37,7 @@ class BedrockProvider(LLMProvider):
         self.config = Config(
             connect_timeout=settings.bedrock_connect_timeout_seconds,
             read_timeout=settings.bedrock_read_timeout_seconds,
+            proxies={},
             retries={
                 "max_attempts": settings.bedrock_max_attempts,
                 "mode": "adaptive",
@@ -68,9 +69,9 @@ class BedrockProvider(LLMProvider):
             }
         return isinstance(exc, BotoCoreError)
 
-    async def _run_with_retries(self, operation_name: str, invoke):
+    async def _run_with_retries(self, operation_name: str, invoke, max_attempts: int | None = None):
         last_exc: Exception | None = None
-        attempts = max(1, settings.bedrock_max_attempts)
+        attempts = max(1, max_attempts or settings.bedrock_max_attempts)
         attempts_run = 0
         for attempt in range(attempts):
             attempts_run = attempt + 1
@@ -114,6 +115,7 @@ class BedrockProvider(LLMProvider):
         model: str | None = None,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        max_attempts: int | None = None,
     ) -> Dict[str, Any]:
         system, anthropic_messages = self._normalise_messages(messages)
         payload: dict[str, Any] = {
@@ -140,7 +142,7 @@ class BedrockProvider(LLMProvider):
             return {"choices": [{"message": {"content": text}}], "raw": raw}
 
         try:
-            return await self._run_with_retries(f"Claude invocation for {model_id}", _invoke)
+            return await self._run_with_retries(f"Claude invocation for {model_id}", _invoke, max_attempts=max_attempts)
         except (BotoCoreError, ClientError) as exc:
             raise RuntimeError(f"Bedrock Claude invocation failed for {model_id}: {exc}") from exc
         except RuntimeError as exc:

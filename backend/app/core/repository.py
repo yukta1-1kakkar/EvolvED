@@ -112,6 +112,20 @@ class AsyncRepository:
             await session.refresh(record)
         return {"session_id": record.session_id, "updated_at": record.updated_at.isoformat()}
 
+    async def persist_roadmap(self, learner_id: str, roadmap: models.LessonRoadmapResponse) -> Dict[str, Any]:
+        async with AsyncSessionLocal() as session:
+            learner = await self._learner(session, learner_id, create=True)
+            roadmap_id = f"roadmap:{learner_id}:{uuid4()}"
+            record = db_models.Session(
+                session_id=roadmap_id,
+                learner_id=learner.id,
+                state={"roadmap": roadmap.model_dump(), "status": "roadmap_ready"},
+            )
+            session.add(record)
+            await session.commit()
+            await session.refresh(record)
+        return {"session_id": record.session_id, "updated_at": record.updated_at.isoformat()}
+
     async def get_session_state(self, learner_id: str, session_id: str) -> Dict[str, Any]:
         async with AsyncSessionLocal() as session:
             learner = await self._learner(session, learner_id)

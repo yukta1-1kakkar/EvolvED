@@ -41,6 +41,8 @@ export interface TeachingStrategy {
 export interface LessonBlueprint {
   lesson_id: string;
   topic: string;
+  generation_source?: string;
+  generation_model?: string | null;
   project_context?: string | null;
   selected_lesson?: ApiRecord | null;
   learning_objective: string;
@@ -92,6 +94,8 @@ export interface LessonRoadmapItem {
 export interface LessonRoadmapResponse {
   learner_id: string;
   topic: string;
+  generation_source?: string;
+  generation_model?: string | null;
   lessons: LessonRoadmapItem[];
 }
 
