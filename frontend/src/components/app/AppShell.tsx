@@ -17,8 +17,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
 
 const nav = [
-  { to: ROUTES.LESSON, label: "Lesson", icon: BookOpen, kbd: "L" },
   { to: ROUTES.KNOWLEDGE, label: "Knowledge", icon: Network, kbd: "K" },
+  { to: ROUTES.LESSON, label: "Lesson", icon: BookOpen, kbd: "L" },
   { to: ROUTES.ASSESSMENT, label: "Assessment", icon: Target, kbd: "A" },
   { to: ROUTES.PROGRESS, label: "Progress", icon: LineChart, kbd: "P" },
   { to: ROUTES.INTELLIGENCE, label: "Intelligence", icon: Brain, kbd: "I" },

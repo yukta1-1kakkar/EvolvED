@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ArrowRight,
   BookMarked,
@@ -26,9 +26,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { synthesizeLessonAudio } from "@/lib/api";
+import { ROUTES } from "@/lib/routes";
 import type { ApiJson, ApiRecord, LessonBlueprint, LessonRoadmapItem } from "@/types/api";
 
 export const Route = createFileRoute("/lesson")({
+  validateSearch: (search): LessonSearch => ({
+    topic: typeof search.topic === "string" ? search.topic : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Lesson - EvolvED" },
@@ -39,6 +43,11 @@ export const Route = createFileRoute("/lesson")({
 });
 
 export const LESSON_CONTEXT_STORAGE_KEY = "evolved.pendingLessonContext";
+export const LESSON_ROADMAP_TOPIC_STORAGE_KEY = "evolved.pendingRoadmapTopic";
+
+type LessonSearch = {
+  topic?: string;
+};
 
 export type LessonBrief = {
   topic: string;
@@ -73,7 +82,8 @@ type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 function LessonPage() {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
-  const initialBrief = makeInitialBrief(currentUser);
+  const { topic: searchTopic } = Route.useSearch();
+  const initialBrief = makeInitialBrief(currentUser, searchTopic);
   const [draft, setDraft] = useState<LessonBrief>(initialBrief);
   const [brief, setBrief] = useState<LessonBrief>(initialBrief);
   const roadmapConstraints = constraintsFromBrief(brief);
@@ -93,7 +103,7 @@ function LessonPage() {
   }
 
   function chooseLesson(item: LessonRoadmapItem) {
-    const launchContext: LessonLaunchContext = { brief, selectedLesson: item };
+    const launchContext: LessonLaunchContext = { brief: launchBriefFromPreferences(brief, draft), selectedLesson: item };
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem(LESSON_CONTEXT_STORAGE_KEY, JSON.stringify(launchContext));
     }
@@ -101,7 +111,9 @@ function LessonPage() {
   }
 
   useEffect(() => {
-    const nextBrief = makeInitialBrief(currentUser);
+    const nextBrief = makeInitialBrief(currentUser, searchTopic);
+    const pendingTopic = consumePendingRoadmapTopic();
+    if (pendingTopic) nextBrief.topic = pendingTopic;
     setDraft(nextBrief);
     setBrief(nextBrief);
   }, [
@@ -113,6 +125,7 @@ function LessonPage() {
     currentUser?.preferredModality,
     currentUser?.learningAvailability,
     currentUser?.accessibilitySupport,
+    searchTopic,
   ]);
 
   return (
@@ -121,6 +134,14 @@ function LessonPage() {
       subtitle="Choose a topic and preferences, then pick a roadmap lesson to open it on its own page."
       accent={roadmap.isFetching ? "Planning" : "Roadmap ready"}
     >
+      <div className="mb-4 flex justify-end">
+        <Link
+          to={ROUTES.KNOWLEDGE}
+          className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <Network className="size-4" /> Open knowledge map
+        </Link>
+      </div>
       <LessonBriefForm draft={draft} onChange={setDraft} onSubmit={regenerate} loading={roadmap.isFetching} />
 
       {roadmap.isLoading && <RoadmapSkeleton />}
@@ -885,15 +906,15 @@ function FlowDiagram({ flow, index }: { flow: ApiRecord; index: number }) {
   const steps = recordsFrom(flow.steps);
 
   return (
-    <div className="mt-5 rounded-3xl border border-border p-5 animate-in fade-in-0 slide-in-from-bottom-2 duration-500">
-      <div className="flex items-center gap-2 text-base font-medium">
+    <div className="mt-5 rounded-3xl border border-border p-6 animate-in fade-in-0 slide-in-from-bottom-2 duration-500">
+      <div className="flex items-center gap-2 text-lg font-medium">
         <GitBranch className="size-4 text-plum" /> {recordTitle(flow, index)}
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         {steps.map((step, stepIndex) => (
           <div
             key={`${recordKey(flow, index)}-${stepIndex}`}
-            className="min-h-24 break-words rounded-xl bg-muted/35 p-4 text-base leading-7 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
+            className="min-h-28 break-words rounded-xl bg-muted/35 p-5 text-lg leading-8 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
             style={{ animationDelay: `${stepIndex * 80}ms` }}
           >
             <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Step {stepIndex + 1}</div>
@@ -1183,15 +1204,35 @@ function makeInitialBrief(
     learningAvailability?: string;
     accessibilitySupport?: boolean;
   } | null | undefined,
+  topicOverride?: string,
 ): LessonBrief {
   return {
-    topic: user?.learningTopic ?? "",
+    topic: topicOverride?.trim() || (user?.learningTopic ?? ""),
     education_level: toEducationLabel(user?.educationLevel),
     familiarity_level: toFamiliarityLabel(user?.topicFamiliarity),
     pace: toPaceLabel(user?.pacePreference),
     learning_style: toLearningStyleLabel(user?.preferredModality),
     availability: toAvailabilityLabel(user?.learningAvailability),
     accessibility_support: Boolean(user?.accessibilitySupport),
+  };
+}
+
+function consumePendingRoadmapTopic() {
+  if (typeof window === "undefined") return "";
+  const topic = window.sessionStorage.getItem(LESSON_ROADMAP_TOPIC_STORAGE_KEY)?.trim() ?? "";
+  if (topic) window.sessionStorage.removeItem(LESSON_ROADMAP_TOPIC_STORAGE_KEY);
+  return topic;
+}
+
+function launchBriefFromPreferences(roadmapBrief: LessonBrief, currentDraft: LessonBrief): LessonBrief {
+  return {
+    ...roadmapBrief,
+    education_level: currentDraft.education_level,
+    familiarity_level: currentDraft.familiarity_level,
+    pace: currentDraft.pace,
+    learning_style: currentDraft.learning_style,
+    availability: currentDraft.availability,
+    accessibility_support: currentDraft.accessibility_support,
   };
 }
 

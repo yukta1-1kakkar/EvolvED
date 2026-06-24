@@ -349,23 +349,24 @@ def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
     elif asset_type in {"flowchart", "process", "timeline"}:
         labels = [str(item) for item in data[:6]]
         columns = min(3, max(len(labels), 1))
-        box_width = 300
-        box_height = 150
-        x_gap = 95
-        y_gap = 95
+        box_width = 330
+        box_height = 160
+        x_gap = 72
+        y_gap = 86
         start_y = 175
         marker = (
-            '<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto">'
-            '<path d="M0,0 L0,8 L11,4 z" fill="#7c3aed"/></marker></defs>'
+            '<defs><marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">'
+            '<path d="M0,0 L0,10 L13,5 z" fill="#7c3aed"/></marker></defs>'
         )
         boxes = []
         centers = []
         for index, label in enumerate(labels):
             row = index // columns
-            col = index % columns
+            sequence_col = index % columns
             row_count = min(columns, len(labels) - row * columns)
             row_start_x = (width - ((row_count * box_width) + ((row_count - 1) * x_gap))) / 2
-            x = row_start_x + col * (box_width + x_gap)
+            display_col = sequence_col if row % 2 == 0 else row_count - 1 - sequence_col
+            x = row_start_x + display_col * (box_width + x_gap)
             y = start_y + row * (box_height + y_gap)
             centers.append((x + box_width / 2, y + box_height / 2, x, y))
             boxes.append(f'<g class="node"><rect x="{x:.1f}" y="{y:.1f}" width="{box_width}" height="{box_height}" rx="18" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5"/>')
@@ -373,10 +374,10 @@ def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
                 _svg_multiline_text(
                     str(label),
                     x + box_width / 2,
-                    y + 48,
-                    19,
+                    y + 52,
                     24,
-                    4,
+                    28,
+                    3,
                     "#30263b",
                     font,
                     anchor="middle",
@@ -390,8 +391,16 @@ def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
             next_cx, next_cy, next_x, next_y = centers[index + 1]
             same_row = index // columns == (index + 1) // columns
             if same_row:
-                start = (current_x + box_width + 18, current_cy)
-                end = (next_x - 18, next_cy)
+                if next_x > current_x:
+                    start = (current_x + box_width + 18, current_cy)
+                    end = (next_x - 18, next_cy)
+                else:
+                    start = (current_x - 18, current_cy)
+                    end = (next_x + box_width + 18, next_cy)
+                arrows.append(f'<line class="connector" x1="{start[0]:.1f}" y1="{start[1]:.1f}" x2="{end[0]:.1f}" y2="{end[1]:.1f}" stroke="#7c3aed" stroke-width="4" marker-end="url(#arrow)"/>')
+            elif abs(current_cx - next_cx) < 1:
+                start = (current_cx, current_y + box_height + 18)
+                end = (next_cx, next_y - 18)
                 arrows.append(f'<line class="connector" x1="{start[0]:.1f}" y1="{start[1]:.1f}" x2="{end[0]:.1f}" y2="{end[1]:.1f}" stroke="#7c3aed" stroke-width="4" marker-end="url(#arrow)"/>')
             else:
                 start_y_arrow = current_y + box_height + 18
