@@ -843,7 +843,6 @@ function VisualLesson({
                   }}
                 />
               )}
-              <p className="mt-3 text-base leading-8 text-muted-foreground">{stringValue(item.caption) || stringValue(item.description) || recordBody(item)}</p>
               {recordsFrom(item.items).length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {recordsFrom(item.items).map((entry, itemIndex) => (
