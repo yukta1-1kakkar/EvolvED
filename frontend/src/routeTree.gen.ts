@@ -14,6 +14,7 @@ import { Route as ProgressRouteImport } from './routes/progress'
 import { Route as ProfileSetupRouteImport } from './routes/profile-setup'
 import { Route as PedagogyRouteImport } from './routes/pedagogy'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as LessonViewRouteImport } from './routes/lesson-view'
 import { Route as LessonRouteImport } from './routes/lesson'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as IntelligenceRouteImport } from './routes/intelligence'
@@ -44,6 +45,11 @@ const PedagogyRoute = PedagogyRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LessonViewRoute = LessonViewRouteImport.update({
+  id: '/lesson-view',
+  path: '/lesson-view',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LessonRoute = LessonRouteImport.update({
@@ -84,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/intelligence': typeof IntelligenceRoute
   '/knowledge': typeof KnowledgeRoute
   '/lesson': typeof LessonRoute
+  '/lesson-view': typeof LessonViewRoute
   '/login': typeof LoginRoute
   '/pedagogy': typeof PedagogyRoute
   '/profile-setup': typeof ProfileSetupRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/intelligence': typeof IntelligenceRoute
   '/knowledge': typeof KnowledgeRoute
   '/lesson': typeof LessonRoute
+  '/lesson-view': typeof LessonViewRoute
   '/login': typeof LoginRoute
   '/pedagogy': typeof PedagogyRoute
   '/profile-setup': typeof ProfileSetupRoute
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/intelligence': typeof IntelligenceRoute
   '/knowledge': typeof KnowledgeRoute
   '/lesson': typeof LessonRoute
+  '/lesson-view': typeof LessonViewRoute
   '/login': typeof LoginRoute
   '/pedagogy': typeof PedagogyRoute
   '/profile-setup': typeof ProfileSetupRoute
@@ -126,6 +135,7 @@ export interface FileRouteTypes {
     | '/intelligence'
     | '/knowledge'
     | '/lesson'
+    | '/lesson-view'
     | '/login'
     | '/pedagogy'
     | '/profile-setup'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/intelligence'
     | '/knowledge'
     | '/lesson'
+    | '/lesson-view'
     | '/login'
     | '/pedagogy'
     | '/profile-setup'
@@ -152,6 +163,7 @@ export interface FileRouteTypes {
     | '/intelligence'
     | '/knowledge'
     | '/lesson'
+    | '/lesson-view'
     | '/login'
     | '/pedagogy'
     | '/profile-setup'
@@ -166,6 +178,7 @@ export interface RootRouteChildren {
   IntelligenceRoute: typeof IntelligenceRoute
   KnowledgeRoute: typeof KnowledgeRoute
   LessonRoute: typeof LessonRoute
+  LessonViewRoute: typeof LessonViewRoute
   LoginRoute: typeof LoginRoute
   PedagogyRoute: typeof PedagogyRoute
   ProfileSetupRoute: typeof ProfileSetupRoute
@@ -208,6 +221,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lesson-view': {
+      id: '/lesson-view'
+      path: '/lesson-view'
+      fullPath: '/lesson-view'
+      preLoaderRoute: typeof LessonViewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/lesson': {
@@ -262,6 +282,7 @@ const rootRouteChildren: RootRouteChildren = {
   IntelligenceRoute: IntelligenceRoute,
   KnowledgeRoute: KnowledgeRoute,
   LessonRoute: LessonRoute,
+  LessonViewRoute: LessonViewRoute,
   LoginRoute: LoginRoute,
   PedagogyRoute: PedagogyRoute,
   ProfileSetupRoute: ProfileSetupRoute,

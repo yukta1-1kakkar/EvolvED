@@ -1437,18 +1437,68 @@ async def content_generation_agent(blueprint: models.LessonBlueprint) -> models.
 
 async def interactive_agent(req: models.TutorInteractionRequest, session_state: Dict[str, Any]) -> models.TutorInteractionResponse:
     lesson = session_state.get("lesson", {})
+    selected_lesson = lesson.get("selected_lesson") or {}
     prompt = (
-        "You are a concise AI tutor inside an active lesson. Answer the learner's request directly, "
-        "use the lesson context, and teach rather than merely reveal an answer. "
-        f"Action: {req.action}. Lesson: {json.dumps(lesson)}. Learner question: {req.question}"
+        "You are the AI tutor inside an active EvolvED lesson. Answer only from the selected lesson context. "
+        "If the learner asks something broad, connect it back to this selected lesson instead of drifting to the roadmap topic. "
+        "Return a neat learner-facing answer in this exact structure, with no markdown table and no extra preamble:\n"
+        "Answer: one clear sentence that directly answers the question.\n"
+        "Why it matters: one short sentence grounded in the selected lesson.\n"
+        "Steps:\n"
+        "1. first concrete step or idea.\n"
+        "2. second concrete step or idea.\n"
+        "Example: one compact example from the lesson.\n"
+        "Check yourself: one short question the learner can answer.\n"
+        "Keep the whole answer under 170 words. Use plain language, correct terminology, and clean line breaks. "
+        f"Action: {req.action}. "
+        f"Selected lesson: {json.dumps(selected_lesson)}. "
+        f"Lesson objective: {lesson.get('learning_objective')}. "
+        f"Lesson summary: {lesson.get('lesson_summary')}. "
+        f"Lesson sections: {json.dumps(lesson.get('lesson_structure', [])[:4])}. "
+        f"Learner question: {req.question}"
     )
     try:
         resp = await _call_layer("tutor", [{"role": "user", "content": prompt}], temperature=0.2)
-        answer = resp["choices"][0]["message"]["content"].strip()
+        answer = _format_tutor_answer(resp["choices"][0]["message"]["content"], lesson, req.question)
     except Exception as exc:
         logger.warning("Tutor model unavailable; using lesson-grounded response: %s", exc)
-        answer = f"Here is a simpler way to think about it: {lesson.get('lesson_summary', '')} Focus on the objective: {lesson.get('learning_objective', '')}."
+        answer = _format_tutor_answer("", lesson, req.question)
     return models.TutorInteractionResponse(interaction_id=f"interaction:{uuid4()}", answer=answer)
+
+
+def _format_tutor_answer(raw_answer: str, lesson: Dict[str, Any], question: str) -> str:
+    text = re.sub(r"\n{3,}", "\n\n", str(raw_answer or "")).strip()
+    required_labels = ("Answer:", "Why it matters:", "Steps:", "Example:", "Check yourself:")
+    if text and all(label in text for label in required_labels):
+        return text
+
+    summary = str(lesson.get("lesson_summary") or "").strip()
+    objective = str(lesson.get("learning_objective") or "").strip()
+    sections = lesson.get("lesson_structure") or []
+    first_section = sections[0] if sections and isinstance(sections[0], dict) else {}
+    first_example = str(first_section.get("example") or "").strip()
+    first_checkpoint = str(first_section.get("checkpoint") or "").strip()
+    answer = text or summary or objective or "This question is about the selected lesson concept."
+    return "\n".join(
+        [
+            f"Answer: {_first_sentence(answer, 34)}",
+            f"Why it matters: {_first_sentence(objective or summary, 28)}",
+            "Steps:",
+            f"1. {_first_sentence(str(first_section.get('explanation') or summary), 24)}",
+            f"2. {_first_sentence(str(first_section.get('concept_connection') or objective), 24)}",
+            f"Example: {_first_sentence(first_example or summary, 30)}",
+            f"Check yourself: {_first_sentence(first_checkpoint or question, 24)}",
+        ]
+    )
+
+
+def _first_sentence(value: str, max_words: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.split(r"(?<=[.!?])\s+", text)[0].strip()
+    words = text.split()
+    if len(words) > max_words:
+        text = " ".join(words[:max_words]).rstrip(".,;:") + "."
+    return text or "Review the selected lesson idea and explain it in your own words."
 
 
 async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, Any]) -> models.QuizResponse:

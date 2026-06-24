@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ArrowRight,
   BookMarked,
@@ -6,10 +6,13 @@ import {
   GitBranch,
   ListChecks,
   MessageCircle,
+  Mic,
+  MicOff,
   Network,
   Play,
   Pause,
   RefreshCw,
+  Send,
   Sparkles,
   Target,
   Volume2,
@@ -35,7 +38,9 @@ export const Route = createFileRoute("/lesson")({
   component: LessonPage,
 });
 
-type LessonBrief = {
+export const LESSON_CONTEXT_STORAGE_KEY = "evolved.pendingLessonContext";
+
+export type LessonBrief = {
   topic: string;
   education_level: string;
   familiarity_level: string;
@@ -45,36 +50,38 @@ type LessonBrief = {
   accessibility_support: boolean;
 };
 
+export type LessonLaunchContext = {
+  brief: LessonBrief;
+  selectedLesson: LessonRoadmapItem;
+};
+
+type BrowserSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onresult: ((event: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> }) => void) | null;
+};
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
 function LessonPage() {
   const { currentUser } = useAuth();
+  const navigate = useNavigate();
   const initialBrief = makeInitialBrief(currentUser);
   const [draft, setDraft] = useState<LessonBrief>(initialBrief);
   const [brief, setBrief] = useState<LessonBrief>(initialBrief);
-  const [selectedLesson, setSelectedLesson] = useState<LessonRoadmapItem | null>(null);
   const roadmapConstraints = constraintsFromBrief(brief);
-  const lessonConstraints = constraintsFromBrief({
-    ...brief,
-    education_level: draft.education_level,
-    familiarity_level: draft.familiarity_level,
-    pace: draft.pace,
-    learning_style: draft.learning_style,
-    availability: draft.availability,
-    accessibility_support: draft.accessibility_support,
-  });
   const roadmap = useRoadmap({
     learner_id: currentUser?.id ?? "",
     topic: brief.topic,
     constraints: roadmapConstraints,
   });
-  const lesson = useLesson({
-    learner_id: currentUser?.id ?? "",
-    topic: brief.topic,
-    selected_lesson: selectedLesson ? roadmapItemToRecord(selectedLesson) : undefined,
-    constraints: lessonConstraints,
-  });
-  const tutor = useTutorInteraction();
-  const [question, setQuestion] = useState("");
-  const [tutorOpen, setTutorOpen] = useState(false);
 
   function regenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -82,14 +89,81 @@ function LessonPage() {
     if (!topic) return;
     const nextBrief = { ...draft, topic };
     setBrief(nextBrief);
-    setSelectedLesson(null);
     if (JSON.stringify(nextBrief) === JSON.stringify(brief)) void roadmap.refetch();
   }
 
   function chooseLesson(item: LessonRoadmapItem) {
-    setSelectedLesson(item);
-    if (selectedLesson?.id === item.id) void lesson.refetch();
+    const launchContext: LessonLaunchContext = { brief, selectedLesson: item };
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(LESSON_CONTEXT_STORAGE_KEY, JSON.stringify(launchContext));
+    }
+    void navigate({ to: "/lesson-view" });
   }
+
+  useEffect(() => {
+    const nextBrief = makeInitialBrief(currentUser);
+    setDraft(nextBrief);
+    setBrief(nextBrief);
+  }, [
+    currentUser?.id,
+    currentUser?.learningTopic,
+    currentUser?.educationLevel,
+    currentUser?.topicFamiliarity,
+    currentUser?.pacePreference,
+    currentUser?.preferredModality,
+    currentUser?.learningAvailability,
+    currentUser?.accessibilitySupport,
+  ]);
+
+  return (
+    <AppShell
+      title={brief.topic || "Create your lesson"}
+      subtitle="Choose a topic and preferences, then pick a roadmap lesson to open it on its own page."
+      accent={roadmap.isFetching ? "Planning" : "Roadmap ready"}
+    >
+      <LessonBriefForm draft={draft} onChange={setDraft} onSubmit={regenerate} loading={roadmap.isFetching} />
+
+      {roadmap.isLoading && <RoadmapSkeleton />}
+      {roadmap.isError && <ErrorPanel title="Roadmap generation failed" message={roadmap.error.message} onRetry={() => void roadmap.refetch()} />}
+      {roadmap.data && (
+        <RoadmapCards
+          lessons={roadmap.data.lessons}
+          onSelect={chooseLesson}
+          loading={false}
+          generationSource={roadmap.data.generation_source}
+          generationModel={roadmap.data.generation_model}
+        />
+      )}
+
+    </AppShell>
+  );
+}
+
+export function LessonExperience({
+  brief,
+  selectedLesson,
+}: {
+  brief: LessonBrief;
+  selectedLesson: LessonRoadmapItem;
+}) {
+  const { currentUser } = useAuth();
+  const lesson = useLesson({
+    learner_id: currentUser?.id ?? "",
+    topic: brief.topic,
+    selected_lesson: roadmapItemToRecord(selectedLesson),
+    constraints: constraintsFromBrief(brief),
+  });
+  const tutor = useTutorInteraction();
+  const [question, setQuestion] = useState("");
+  const [tutorOpen, setTutorOpen] = useState(false);
+  const [tutorAudioUrl, setTutorAudioUrl] = useState("");
+  const [tutorAudioStatus, setTutorAudioStatus] = useState("");
+  const [tutorAudioPlaying, setTutorAudioPlaying] = useState(false);
+  const [tutorResponseMode, setTutorResponseMode] = useState<"text" | "audio">("text");
+  const [recordingQuestion, setRecordingQuestion] = useState(false);
+  const [recordingStatus, setRecordingStatus] = useState("");
+  const tutorAudioRef = useRef<HTMLAudioElement>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
 
   function askTutor(action = "question") {
     if (!currentUser || !lesson.data || !question.trim()) return;
@@ -113,134 +187,277 @@ function LessonPage() {
   }, [lesson.data?.lesson_id]);
 
   useEffect(() => {
-    const nextBrief = makeInitialBrief(currentUser);
-    setDraft(nextBrief);
-    setBrief(nextBrief);
-    setSelectedLesson(null);
-  }, [
-    currentUser?.id,
-    currentUser?.learningTopic,
-    currentUser?.educationLevel,
-    currentUser?.topicFamiliarity,
-    currentUser?.pacePreference,
-    currentUser?.preferredModality,
-    currentUser?.learningAvailability,
-    currentUser?.accessibilitySupport,
-  ]);
+    setTutorAudioUrl("");
+    setTutorAudioStatus("");
+    setTutorAudioPlaying(false);
+  }, [tutor.data?.answer]);
+
+  useEffect(() => {
+    return () => {
+      if (tutorAudioUrl) URL.revokeObjectURL(tutorAudioUrl);
+    };
+  }, [tutorAudioUrl]);
+
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.abort();
+    };
+  }, []);
+
+  function toggleQuestionRecording() {
+    if (recordingQuestion) {
+      recognitionRef.current?.stop();
+      setRecordingQuestion(false);
+      setRecordingStatus("Recording stopped");
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const SpeechRecognition =
+      (window as unknown as { SpeechRecognition?: BrowserSpeechRecognitionConstructor; webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor }).SpeechRecognition ||
+      (window as unknown as { SpeechRecognition?: BrowserSpeechRecognitionConstructor; webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor }).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setRecordingStatus("Voice input is not supported in this browser");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onstart = () => {
+      setRecordingQuestion(true);
+      setRecordingStatus("Listening...");
+    };
+    recognition.onend = () => {
+      setRecordingQuestion(false);
+      setRecordingStatus((current) => current === "Listening..." ? "Voice captured" : current);
+    };
+    recognition.onerror = (event) => {
+      setRecordingQuestion(false);
+      setRecordingStatus(event.error ? `Voice input failed: ${event.error}` : "Voice input failed");
+    };
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        transcript += event.results[index][0].transcript;
+      }
+      setQuestion(transcript.trim());
+      setRecordingStatus("Voice captured");
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch (error) {
+      console.error("Voice question recording failed to start", error);
+      setRecordingQuestion(false);
+      setRecordingStatus("Voice input failed to start");
+    }
+  }
+
+  async function prepareTutorAudio() {
+    const answer = tutor.data?.answer?.trim();
+    if (!answer) return;
+    if (tutorAudioUrl) {
+      const player = tutorAudioRef.current;
+      if (!player) return;
+      if (player.paused) {
+        void player.play();
+      } else {
+        player.pause();
+      }
+      return;
+    }
+    setTutorAudioStatus("Preparing audio...");
+    try {
+      const blob = await synthesizeLessonAudio(answer);
+      if (!blob.size || !["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"].includes(blob.type)) {
+        throw new Error(`Invalid tutor audio response: type=${blob.type || "unknown"} size=${blob.size}`);
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      setTutorAudioUrl(objectUrl);
+      setTutorAudioStatus("Ready");
+      window.setTimeout(() => void tutorAudioRef.current?.play(), 0);
+    } catch (error) {
+      console.error("Tutor audio generation failed", error);
+      setTutorAudioStatus("Audio unavailable");
+    }
+  }
+
+  if (lesson.isLoading) return <LessonSkeleton />;
+  if (lesson.isError) return <ErrorPanel message={lesson.error.message} onRetry={() => void lesson.refetch()} />;
+  if (!lesson.data) return null;
 
   return (
-    <AppShell
-      title={lesson.data?.topic || brief.topic || "Create your lesson"}
-      subtitle="Choose a topic and preferences, then pick a roadmap lesson to generate content."
-      accent={lesson.isFetching ? "Composing" : roadmap.isFetching ? "Planning" : "Lesson ready"}
-    >
-      <LessonBriefForm draft={draft} onChange={setDraft} onSubmit={regenerate} loading={roadmap.isFetching} />
-
-      {roadmap.isLoading && <RoadmapSkeleton />}
-      {roadmap.isError && <ErrorPanel title="Roadmap generation failed" message={roadmap.error.message} onRetry={() => void roadmap.refetch()} />}
-      {roadmap.data && (
-        <RoadmapCards
-          lessons={roadmap.data.lessons}
-          selectedId={selectedLesson?.id}
-          onSelect={chooseLesson}
-          loading={lesson.isFetching}
-          generationSource={roadmap.data.generation_source}
-          generationModel={roadmap.data.generation_model}
-        />
-      )}
-
-      {lesson.isLoading && selectedLesson && <LessonSkeleton />}
-      {lesson.isError && <ErrorPanel message={lesson.error.message} onRetry={() => void lesson.refetch()} />}
-      {lesson.data && (
-        <div className="relative">
-          <article className="space-y-6">
-            <section className="overflow-hidden rounded-3xl border border-border bg-card">
-              <div className="bg-foreground px-6 py-5 text-background">
-                <div className="text-[10px] uppercase tracking-[0.24em] text-background/65">Your lesson</div>
-                <h2 className="mt-2 max-w-5xl font-display text-3xl md:text-4xl">{lesson.data.learning_objective}</h2>
-                <p className="mt-3 max-w-5xl text-base leading-8 text-background/75">{lesson.data.lesson_summary}</p>
-                {lesson.data.learning_style && (
-                  <div className="mt-3 inline-flex rounded-full border border-background/30 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-background/80">
-                    {lesson.data.learning_style}
-                  </div>
-                )}
-                <div className="mt-3">
-                  <SourceBadge source={lesson.data.generation_source} model={lesson.data.generation_model} inverse />
-                </div>
+    <div className="relative">
+      <article className="space-y-6">
+        <section className="overflow-hidden rounded-3xl border border-border bg-card">
+          <div className="bg-foreground px-6 py-5 text-background">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-background/65">Your lesson</div>
+            <h2 className="mt-2 max-w-5xl font-display text-3xl md:text-4xl">{lesson.data.learning_objective}</h2>
+            <p className="mt-3 max-w-5xl text-base leading-8 text-background/75">{lesson.data.lesson_summary}</p>
+            {lesson.data.learning_style && (
+              <div className="mt-3 inline-flex rounded-full border border-background/30 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-background/80">
+                {lesson.data.learning_style}
               </div>
-              <div className="grid gap-4 px-6 py-5 md:grid-cols-[1fr_auto] md:items-center">
-                <div>
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                    <Target className="size-3.5 text-plum" /> Selected lesson
-                  </div>
-                  <p className="mt-2 text-sm font-medium">{selectedLessonTitle(lesson.data.selected_lesson) || selectedLesson?.title || lesson.data.topic}</p>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {lesson.data.estimated_lesson_duration || "Adaptive"} min
-                </div>
-              </div>
-            </section>
-
-            <AdaptiveLessonPayload lesson={lesson.data} />
-
-            {lesson.data.lesson_structure.map((section, index) => (
-              <LessonSection key={recordKey(section, index)} section={section} index={index} />
-            ))}
-
-            <div className="grid gap-4 lg:grid-cols-3">
-              <div className="rounded-3xl border border-border bg-card p-5">
-                <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Lesson path</div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {lesson.data.modality_sequence.map((modality, index) => (
-                    <span key={`${modality}-${index}`} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-                      {humanize(modality)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <AgentList icon={MessageCircle} title="Try as you learn" empty="No practice prompts returned." items={lesson.data.interaction_points} />
-              <AgentList icon={Target} title="Check your understanding" empty="No checkpoints returned." items={lesson.data.assessment_points} />
+            )}
+            <div className="mt-3">
+              <SourceBadge source={lesson.data.generation_source} model={lesson.data.generation_model} inverse />
             </div>
-          </article>
+          </div>
+          <div className="grid gap-4 px-6 py-5 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                <Target className="size-3.5 text-plum" /> Selected lesson
+              </div>
+              <p className="mt-2 text-sm font-medium">{selectedLessonTitle(lesson.data.selected_lesson) || selectedLesson.title || lesson.data.topic}</p>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {lesson.data.estimated_lesson_duration || "Adaptive"} min
+            </div>
+          </div>
+        </section>
 
-          <button
-            type="button"
-            onClick={() => setTutorOpen(true)}
-            className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-plum/25 bg-foreground px-4 py-3 text-sm text-background shadow-xl md:bottom-6 md:right-6"
-          >
-            <Sparkles className="size-4" /> AI tutor
-          </button>
+        <AdaptiveLessonPayload lesson={lesson.data} />
 
-          {tutorOpen && (
-            <div className="fixed inset-0 z-50">
-              <button type="button" aria-label="Close AI tutor" onClick={() => setTutorOpen(false)} className="absolute inset-0 bg-foreground/25" />
-              <aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-card p-5 shadow-2xl">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                    <Sparkles className="size-3.5 text-plum" /> AI tutor
-                  </div>
-                  <button type="button" onClick={() => setTutorOpen(false)} className="rounded-full border border-border p-2 text-muted-foreground hover:text-foreground" aria-label="Close AI tutor">
-                    <X className="size-4" />
+        {lesson.data.lesson_structure.map((section, index) => (
+          <LessonSection key={recordKey(section, index)} section={section} index={index} />
+        ))}
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="rounded-3xl border border-border bg-card p-5">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Lesson path</div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {lesson.data.modality_sequence.map((modality, index) => (
+                <span key={`${modality}-${index}`} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+                  {humanize(modality)}
+                </span>
+              ))}
+            </div>
+          </div>
+          <AgentList icon={MessageCircle} title="Try as you learn" empty="No practice prompts returned." items={lesson.data.interaction_points} />
+          <AgentList icon={Target} title="Check your understanding" empty="No checkpoints returned." items={lesson.data.assessment_points} />
+        </div>
+      </article>
+
+      <button
+        type="button"
+        onClick={() => setTutorOpen(true)}
+        className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-plum/25 bg-foreground px-4 py-3 text-sm text-background shadow-xl md:bottom-6 md:right-6"
+      >
+        <Sparkles className="size-4" /> AI tutor
+      </button>
+
+      {tutorOpen && (
+        <div className="fixed inset-0 z-50">
+          <button type="button" aria-label="Close AI tutor" onClick={() => setTutorOpen(false)} className="absolute inset-0 bg-foreground/25" />
+          <aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-card p-5 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                <Sparkles className="size-3.5 text-plum" /> AI tutor
+              </div>
+              <button type="button" onClick={() => setTutorOpen(false)} className="rounded-full border border-border p-2 text-muted-foreground hover:text-foreground" aria-label="Close AI tutor">
+                <X className="size-4" />
+              </button>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">Ask about this lesson. Your questions become part of your learner memory.</p>
+            <div className="mt-4 grid grid-cols-2 rounded-2xl border border-border bg-muted/25 p-1">
+              {[
+                { value: "text", label: "Text" },
+                { value: "audio", label: "Audio" },
+              ].map((mode) => (
+                <button
+                  key={mode.value}
+                  type="button"
+                  onClick={() => setTutorResponseMode(mode.value as "text" | "audio")}
+                  className={`rounded-xl px-3 py-2 text-xs font-medium ${tutorResponseMode === mode.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            {tutor.data && (
+              <div className="mt-4 rounded-2xl bg-muted/35 p-4">
+                {tutorResponseMode === "text" && <TutorAnswerText answer={tutor.data.answer} />}
+                <div className={`${tutorResponseMode === "audio" ? "" : "mt-3"} flex flex-wrap items-center gap-2`}>
+                  <button
+                    type="button"
+                    onClick={prepareTutorAudio}
+                    className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs ${tutorResponseMode === "audio" ? "bg-foreground text-background" : "border border-border text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {tutorAudioPlaying ? <Pause className="size-3.5" /> : <Volume2 className="size-3.5" />}
+                    {tutorAudioPlaying ? "Pause audio" : tutorAudioUrl ? "Play audio" : "Play answer"}
                   </button>
+                  {tutorAudioStatus && <span className="text-xs text-muted-foreground">{tutorAudioStatus}</span>}
+                  {tutorResponseMode === "audio" && !tutorAudioStatus && <span className="text-xs text-muted-foreground">Listen to the same tutor answer.</span>}
+                  {tutorAudioUrl && (
+                    <audio
+                      ref={tutorAudioRef}
+                      src={tutorAudioUrl}
+                      preload="metadata"
+                      className="hidden"
+                      onPlay={() => setTutorAudioPlaying(true)}
+                      onPause={() => setTutorAudioPlaying(false)}
+                      onEnded={() => setTutorAudioPlaying(false)}
+                      onError={(event) => {
+                        console.error("Tutor audio player failed", event.currentTarget.error);
+                        setTutorAudioStatus("Audio unavailable");
+                      }}
+                    />
+                  )}
                 </div>
-                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">Ask about this lesson. Your questions become part of your learner memory.</p>
-                {tutor.data && <div className="mt-4 rounded-2xl bg-muted/35 p-4 text-sm leading-relaxed">{tutor.data.answer}</div>}
-                {tutor.isError && <p className="mt-3 text-sm text-destructive">{tutor.error.message}</p>}
-                <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask for a hint or a simpler explanation" className="mt-4 min-h-32 w-full rounded-2xl border border-input bg-background p-3 text-sm outline-none focus:border-plum" />
-                {tutor.isPending && <p className="mt-2 text-xs text-muted-foreground">Tutor is thinking...</p>}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {["question", "simpler_explanation", "example", "hint"].map((action) => (
-                    <button key={action} type="button" onClick={() => askTutor(action)} disabled={tutor.isPending || !question.trim()} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground disabled:opacity-50">
-                      {humanize(action)}
-                    </button>
-                  ))}
-                </div>
-              </aside>
-            </div>
-          )}
+                {tutorResponseMode === "audio" && (
+                  <details className="mt-3 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer">Show text version</summary>
+                    <div className="mt-3 rounded-xl bg-background/70 p-3">
+                      <TutorAnswerText answer={tutor.data.answer} />
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
+            {tutor.isError && <p className="mt-3 text-sm text-destructive">{tutor.error.message}</p>}
+            <form
+              className="mt-4 flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                askTutor();
+              }}
+            >
+              <textarea
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    askTutor();
+                  }
+                }}
+                placeholder="Ask for a hint or a simpler explanation"
+                className="min-h-24 flex-1 rounded-2xl border border-input bg-background p-3 text-sm outline-none focus:border-plum"
+              />
+              <button
+                type="button"
+                onClick={toggleQuestionRecording}
+                className={`self-end rounded-full border p-3 transition-colors ${recordingQuestion ? "border-plum bg-plum/10 text-plum" : "border-border text-muted-foreground hover:text-foreground"}`}
+                aria-label={recordingQuestion ? "Stop recording question" : "Record question"}
+                title={recordingQuestion ? "Stop recording" : "Record question"}
+              >
+                {recordingQuestion ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+              </button>
+              <button
+                type="submit"
+                disabled={tutor.isPending || !question.trim()}
+                className="self-end rounded-full bg-foreground p-3 text-background transition-opacity disabled:opacity-50"
+                aria-label="Send question to AI tutor"
+              >
+                <Send className="size-4" />
+              </button>
+            </form>
+            {recordingStatus && <p className="mt-2 text-xs text-muted-foreground">{recordingStatus}</p>}
+            {tutor.isPending && <p className="mt-2 text-xs text-muted-foreground">Tutor is responding...</p>}
+          </aside>
         </div>
       )}
-    </AppShell>
+    </div>
   );
 }
 
@@ -335,6 +552,26 @@ function LessonBriefForm({
         Accessibility support
       </label>
     </form>
+  );
+}
+
+function TutorAnswerText({ answer }: { answer: string }) {
+  const lines = answer.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  return (
+    <div className="space-y-2 text-sm leading-relaxed">
+      {lines.map((line, index) => {
+        const match = line.match(/^([^:]{2,24}):\s*(.*)$/);
+        if (match) {
+          return (
+            <div key={`${line}-${index}`}>
+              <span className="font-medium">{match[1]}:</span>
+              {match[2] && <span className="ml-1 text-foreground/80">{match[2]}</span>}
+            </div>
+          );
+        }
+        return <p key={`${line}-${index}`} className="text-foreground/80">{line}</p>;
+      })}
+    </div>
   );
 }
 
