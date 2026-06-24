@@ -1290,9 +1290,10 @@ async def lesson_roadmap_agent(
         "afterward. Return JSON only with a 'lessons' list of 4 to 8 items. Every item must include id, title, "
         "description, difficulty, estimated_duration as minutes, and objectives as a list of strings. "
         "Sequence prerequisites before advanced material and adapt the roadmap to this learner context. "
-        "Make every lesson title specific enough that a teacher could teach from it; avoid vague titles such as "
-        "'Core operations' unless the exact operations are named. Descriptions must say what the learner will "
-        "understand, what they will practice, and how the lesson prepares the next lesson. "
+        "Keep the roadmap compact for square cards: title 4 to 9 words, description one plain sentence of 10 to 18 "
+        "words, difficulty 1 to 2 words, and exactly 2 objectives of 5 to 10 words each. Make titles specific but "
+        "short; name the exact concept group without listing every subtopic. Descriptions should summarize only the "
+        "core outcome, not a full lesson plan. "
         "Do not hardcode a generic plan. Do not use project context, project goals, or applied projects. "
         f"Learner roadmap context: {json.dumps(planning_context)}"
     )
@@ -1581,14 +1582,24 @@ def _validate_roadmap_item(item: Any, index: int) -> models.LessonRoadmapItem:
         raise ValueError(f"roadmap lesson {index + 1} has an invalid estimated_duration") from exc
     if duration <= 0:
         raise ValueError(f"roadmap lesson {index + 1} estimated_duration must be positive")
+    objectives = [_compact_roadmap_text(value, 10) for value in item["objectives"][:2]]
     return models.LessonRoadmapItem(
         id=item["id"].strip(),
-        title=item["title"].strip(),
-        description=item["description"].strip(),
-        difficulty=item["difficulty"].strip(),
+        title=_compact_roadmap_text(item["title"], 9),
+        description=_compact_roadmap_text(item["description"], 18),
+        difficulty=_compact_roadmap_text(item["difficulty"], 2),
         estimated_duration=duration,
-        objectives=[value.strip() for value in item["objectives"]],
+        objectives=objectives,
     )
+
+
+def _compact_roadmap_text(value: Any, max_words: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.split(r"(?<=[.!?])\s+", text)[0].strip()
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]).rstrip(".,;:")
 
 
 

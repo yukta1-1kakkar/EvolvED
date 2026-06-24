@@ -716,20 +716,27 @@ function RoadmapCards({
           {loading && <div className="text-xs text-muted-foreground">Generating selected lesson...</div>}
         </div>
       </div>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {lessons.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => onSelect(item)}
-            className={`min-h-44 rounded-2xl border p-4 text-left transition ${selectedId === item.id ? "border-plum bg-plum/[0.06]" : "border-border bg-card hover:border-plum/50"}`}
+            title={item.title}
+            className={`flex aspect-square overflow-hidden rounded-2xl border p-4 text-left transition ${selectedId === item.id ? "border-plum bg-plum/[0.06]" : "border-border bg-card hover:border-plum/50"}`}
           >
-            <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              <span>{item.difficulty}</span>
-              <span>{item.estimated_duration} min</span>
+            <div className="flex min-h-0 w-full flex-col">
+              <div className="flex items-center justify-between gap-2 text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+                <span className="min-w-0 truncate">{compactText(item.difficulty, 2, 18)}</span>
+                <span className="shrink-0">{item.estimated_duration} min</span>
+              </div>
+              <h3 className="mt-4 break-words text-base font-semibold leading-6 text-foreground">
+                {compactText(item.title, 8, 76)}
+              </h3>
+              <p className="mt-3 break-words text-xs leading-5 text-muted-foreground">
+                {compactText(item.description, 16, 120)}
+              </p>
             </div>
-            <h3 className="mt-3 font-display text-xl">{item.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.description}</p>
           </button>
         ))}
       </div>
@@ -829,11 +836,11 @@ function LessonSkeleton() {
 
 function RoadmapSkeleton() {
   return (
-    <div className="mb-7 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      <Skeleton className="h-44 rounded-2xl" />
-      <Skeleton className="h-44 rounded-2xl" />
-      <Skeleton className="h-44 rounded-2xl" />
-      <Skeleton className="h-44 rounded-2xl" />
+    <div className="mb-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <Skeleton className="aspect-square rounded-2xl" />
+      <Skeleton className="aspect-square rounded-2xl" />
+      <Skeleton className="aspect-square rounded-2xl" />
+      <Skeleton className="aspect-square rounded-2xl" />
     </div>
   );
 }
@@ -871,6 +878,15 @@ function recordBody(record: ApiRecord) {
 
 function stringValue(value: ApiJson | undefined) {
   return typeof value === "string" ? value : "";
+}
+
+function compactText(value: string, maxWords: number, maxChars: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  const words = normalized.split(" ");
+  let compact = words.length > maxWords ? words.slice(0, maxWords).join(" ") : normalized;
+  if (compact.length > maxChars) compact = compact.slice(0, maxChars).trimEnd();
+  return compact.length < normalized.length ? `${compact.replace(/[.,;:!?-]+$/, "")}...` : compact;
 }
 
 function isValidMediaUrl(value: string, kind: "image" | "audio") {
