@@ -143,9 +143,8 @@ function ProfileSetupPage() {
           <Select id="preferredModality" {...register("preferredModality")}>
             <option value="">Choose a style</option>
             <option value="visual">Visual examples and diagrams</option>
-            <option value="practice">Practice-first learning</option>
+            <option value="audio">Audio learning</option>
             <option value="reading">Detailed written explanations</option>
-            <option value="mixed">A balanced mix</option>
           </Select>
         </Field>
 

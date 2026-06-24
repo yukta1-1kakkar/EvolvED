@@ -130,7 +130,7 @@ export async function apiBlobRequest<TBody extends ApiJson | undefined = undefin
     const response = await fetch(buildUrl(path, options.query), {
       method: options.method ?? (options.body === undefined ? "GET" : "POST"),
       headers: {
-        Accept: "audio/mpeg",
+        Accept: "audio/*",
         ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),

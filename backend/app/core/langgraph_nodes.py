@@ -19,6 +19,7 @@ from uuid import uuid4
 provider = get_provider()
 chroma = ChromaClient()
 logger = logging.getLogger(__name__)
+LESSON_MAX_TOKENS = 8192
 
 
 def lesson_embedding_collection() -> str:
@@ -263,26 +264,34 @@ def _lesson_style_key(learning_style: str) -> str:
         return "auditory"
     if "reading" in style or "writing" in style or "written" in style:
         return "reading_writing"
-    if "kinesthetic" in style or "hands-on" in style or "practice" in style:
-        return "kinesthetic"
-    return "mixed"
+    return "reading_writing"
+
+
+def _canonical_lesson_style(learning_style: str) -> str:
+    labels = {
+        "visual": "Visual Examples and Diagrams",
+        "auditory": "Audio Learning",
+        "reading_writing": "Detailed Written Explanations",
+    }
+    return labels[_lesson_style_key(learning_style)]
 
 
 def _lesson_style_contract(learning_style: str) -> str:
     contracts = {
         "visual": (
-            "Teach visually throughout. visualAssets must contain useful text-based graphs, diagrams, charts, "
-            "flowcharts, concept maps, comparisons, timelines, or process visualizations. For mathematics include a "
-            "function graph or equation visualization; for science include a process/system flow; for programming "
-            "include architecture/data/execution flow; for history include a timeline or event map. Explanations must "
-            "describe spatial or graphical relationships. Examples must "
-            "walk through what the learner would see, and guided practice must ask the learner to draw, sketch, map, "
+            "Teach visually throughout. visualAssets are the primary explanation mechanism and must include "
+            "lesson-specific diagrams, flowcharts, concept maps, knowledge graphs, summaries, process maps, or "
+            "mathematical visualizations. For mathematics include coordinate graphs, vector plots, geometric "
+            "illustrations, transformation diagrams, function visualizations, derivative visualizations, or matrix "
+            "visualizations as appropriate. Text must be short captions that support the visuals. Examples must walk "
+            "through what the learner would see, and guided practice must ask the learner to draw, sketch, map, "
             "compare, or interpret a graph or diagram."
         ),
         "auditory": (
             "Teach like a conversational tutor speaking directly to the learner. audioScript must be a complete "
-            "narration using a spoken walkthrough, story, dialogue, and verbal analogy. Examples must sound natural "
-            "when read aloud. Reflection questions must work as discussion prompts, and practiceQuestions must include "
+            "narration using a spoken walkthrough, story, dialogue, and verbal analogy. It must cover every core "
+            "concept in the lesson in order, so the generated audio can teach the full lesson instead of a short "
+            "overview. Examples must sound natural when read aloud. Reflection questions must work as discussion prompts, and practiceQuestions must include "
             "explain-it-back, say-it-aloud, discussion, or verbal reasoning activities."
         ),
         "reading_writing": (
@@ -291,31 +300,27 @@ def _lesson_style_contract(learning_style: str) -> str:
             "written reasoning. keyTakeaways must form a written summary, and practiceQuestions must require writing, "
             "summarizing, defining, outlining, or comparing in words."
         ),
-        "kinesthetic": (
-            "Teach through action before abstraction and keep passive explanation brief. Every core concept must pair "
-            "by index with a practiceQuestion. guidedActivities must contain exactly three substantial activities "
-            "labelled Easy, Medium, and Hard. Use learn -> apply -> feedback. At least 40 percent of lesson words must "
-            "be in practiceQuestions and guidedActivities, emphasizing solving, building, testing, simulations, moving, "
-            "measuring, experimenting, and real-world application."
-        ),
-        "mixed": (
-            "Populate every modality: visualAssets with a graph/diagram/chart, audioScript with tutor narration, "
-            "coreConcepts/explanation with structured written notes and definitions, and guidedActivities with hands-on "
-            "practice. Examples and practiceQuestions must alternate between seeing, explaining aloud, writing, and "
-            "doing rather than relying on one method."
-        ),
     }
     return contracts[_lesson_style_key(learning_style)]
 
 
 def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
-    title = escape(str(asset["title"]))
-    description = escape(str(asset["description"]))
+    title = str(asset["title"])
+    description = str(asset["description"])
     asset_type = str(asset["type"]).lower()
     data = asset["data"]
-    width, height = 800, 450
-    background = '<rect width="800" height="450" rx="24" fill="#faf7ff"/>'
-    heading = f'<text x="40" y="48" font-family="Arial" font-size="24" font-weight="700" fill="#30263b">{title}</text>'
+    width, height = 1300, 760
+    font = "Arial, Helvetica, sans-serif"
+    animation = (
+        "<style>"
+        ".node{animation:nodeIn .45s ease both}.node:nth-of-type(2){animation-delay:.05s}.node:nth-of-type(3){animation-delay:.1s}"
+        ".node:nth-of-type(4){animation-delay:.15s}.node:nth-of-type(5){animation-delay:.2s}.connector{stroke-dasharray:520;stroke-dashoffset:520;animation:draw .8s ease forwards}"
+        "@keyframes nodeIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}"
+        "@keyframes draw{to{stroke-dashoffset:0}}"
+        "</style>"
+    )
+    background = '<rect width="1300" height="760" rx="24" fill="#faf7ff"/>'
+    heading = _svg_multiline_text(title, 64, 58, 31, 62, 2, "#30263b", font, weight="700")
     body = ""
 
     if asset_type == "graph":
@@ -326,35 +331,154 @@ def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
         x_span = x_max - x_min or 1
         y_span = y_max - y_min or 1
         plotted = [
-            (90 + ((x - x_min) / x_span) * 640, 360 - ((y - y_min) / y_span) * 250)
+            (150 + ((x - x_min) / x_span) * 1000, 585 - ((y - y_min) / y_span) * 430)
             for x, y in points
         ]
         polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in plotted)
-        dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#7c3aed"/>' for x, y in plotted)
+        dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="#7c3aed"/>' for x, y in plotted)
         body = (
-            '<line x1="90" y1="360" x2="730" y2="360" stroke="#65566f" stroke-width="2"/>'
-            '<line x1="90" y1="90" x2="90" y2="360" stroke="#65566f" stroke-width="2"/>'
+            '<rect x="110" y="125" width="1080" height="515" rx="18" fill="#ffffff" stroke="#d8cdeb"/>'
+            '<line x1="150" y1="585" x2="1150" y2="585" stroke="#65566f" stroke-width="3"/>'
+            '<line x1="150" y1="155" x2="150" y2="585" stroke="#65566f" stroke-width="3"/>'
+            '<path d="M1150 585 L1138 578 L1138 592 Z" fill="#65566f"/>'
+            '<path d="M150 155 L142 167 L158 167 Z" fill="#65566f"/>'
             f'<polyline points="{polyline}" fill="none" stroke="#7c3aed" stroke-width="4"/>{dots}'
-            f'<text x="90" y="390" font-family="Arial" font-size="14" fill="#65566f">x: {x_min:g} to {x_max:g}</text>'
-            f'<text x="570" y="390" font-family="Arial" font-size="14" fill="#65566f">y: {y_min:g} to {y_max:g}</text>'
+            f'<text x="150" y="625" font-family="{font}" font-size="17" fill="#65566f">x: {x_min:g} to {x_max:g}</text>'
+            f'<text x="925" y="625" font-family="{font}" font-size="17" fill="#65566f">y: {y_min:g} to {y_max:g}</text>'
         )
-    else:
-        count = max(len(data), 1)
-        box_width = min(180, 660 / count)
-        gap = (680 - box_width * count) / max(count - 1, 1)
+    elif asset_type in {"flowchart", "process", "timeline"}:
+        labels = [str(item) for item in data[:6]]
+        columns = min(3, max(len(labels), 1))
+        box_width = 300
+        box_height = 150
+        x_gap = 95
+        y_gap = 95
+        start_y = 175
+        marker = (
+            '<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto">'
+            '<path d="M0,0 L0,8 L11,4 z" fill="#7c3aed"/></marker></defs>'
+        )
         boxes = []
-        for index, label in enumerate(data):
-            x = 60 + index * (box_width + gap)
-            if index:
-                boxes.append(f'<line x1="{x - gap + 4:.1f}" y1="220" x2="{x - 8:.1f}" y2="220" stroke="#7c3aed" stroke-width="3" marker-end="url(#arrow)"/>')
-            boxes.append(f'<rect x="{x:.1f}" y="170" width="{box_width:.1f}" height="100" rx="16" fill="#ede9fe" stroke="#7c3aed"/>')
-            boxes.append(f'<text x="{x + box_width / 2:.1f}" y="225" text-anchor="middle" font-family="Arial" font-size="14" fill="#30263b">{escape(str(label)[:28])}</text>')
-        body = '<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#7c3aed"/></marker></defs>' + "".join(boxes)
+        centers = []
+        for index, label in enumerate(labels):
+            row = index // columns
+            col = index % columns
+            row_count = min(columns, len(labels) - row * columns)
+            row_start_x = (width - ((row_count * box_width) + ((row_count - 1) * x_gap))) / 2
+            x = row_start_x + col * (box_width + x_gap)
+            y = start_y + row * (box_height + y_gap)
+            centers.append((x + box_width / 2, y + box_height / 2, x, y))
+            boxes.append(f'<g class="node"><rect x="{x:.1f}" y="{y:.1f}" width="{box_width}" height="{box_height}" rx="18" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5"/>')
+            boxes.append(
+                _svg_multiline_text(
+                    str(label),
+                    x + box_width / 2,
+                    y + 48,
+                    19,
+                    24,
+                    4,
+                    "#30263b",
+                    font,
+                    anchor="middle",
+                    weight="700",
+                )
+            )
+            boxes.append("</g>")
+        arrows = []
+        for index in range(len(centers) - 1):
+            current_cx, current_cy, current_x, current_y = centers[index]
+            next_cx, next_cy, next_x, next_y = centers[index + 1]
+            same_row = index // columns == (index + 1) // columns
+            if same_row:
+                start = (current_x + box_width + 18, current_cy)
+                end = (next_x - 18, next_cy)
+                arrows.append(f'<line class="connector" x1="{start[0]:.1f}" y1="{start[1]:.1f}" x2="{end[0]:.1f}" y2="{end[1]:.1f}" stroke="#7c3aed" stroke-width="4" marker-end="url(#arrow)"/>')
+            else:
+                start_y_arrow = current_y + box_height + 18
+                end_y_arrow = next_y - 18
+                mid_y = (start_y_arrow + end_y_arrow) / 2
+                path = f"M{current_cx:.1f},{start_y_arrow:.1f} L{current_cx:.1f},{mid_y:.1f} L{next_cx:.1f},{mid_y:.1f} L{next_cx:.1f},{end_y_arrow:.1f}"
+                arrows.append(f'<path class="connector" d="{path}" fill="none" stroke="#7c3aed" stroke-width="4" marker-end="url(#arrow)"/>')
+        body = marker + "".join(arrows) + "".join(boxes)
+    else:
+        labels = [str(item) for item in data[:6]]
+        center_label = labels[0] if labels else title
+        child_labels = labels[1:] or labels[:1]
+        child_width = 300
+        child_height = 126
+        child_y = 430
+        nodes = [
+            '<g class="node"><rect x="455" y="170" width="390" height="128" rx="22" fill="#ffffff" stroke="#7c3aed" stroke-width="3"/>',
+            _svg_multiline_text(center_label, 650, 214, 21, 26, 3, "#30263b", font, anchor="middle", weight="700"),
+            "</g>",
+        ]
+        connectors = []
+        for index, label in enumerate(child_labels[:4]):
+            row = index // 2
+            col = index % 2
+            x = 270 + col * 460
+            y = child_y + row * 155
+            connector_path = f"M650,298 L650,352 L{x + child_width / 2:.1f},352 L{x + child_width / 2:.1f},{y - 18:.1f}"
+            connectors.append(f'<path class="connector" d="{connector_path}" fill="none" stroke="#a78bfa" stroke-width="3.5"/>')
+            nodes.append(f'<g class="node"><rect x="{x}" y="{y}" width="{child_width}" height="{child_height}" rx="18" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5"/>')
+            nodes.append(
+                _svg_multiline_text(
+                    label,
+                    x + child_width / 2,
+                    y + 38,
+                    18,
+                    24,
+                    4,
+                    "#30263b",
+                    font,
+                    anchor="middle",
+                    weight="700",
+                )
+            )
+            nodes.append("</g>")
+        body = "".join(connectors) + "".join(nodes)
 
-    footer = f'<text x="40" y="425" font-family="Arial" font-size="13" fill="#65566f">{description[:110]}</text>'
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{background}{heading}{body}{footer}</svg>'
+    footer = _svg_multiline_text(description, 64, 704, 17, 112, 2, "#65566f", font)
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{animation}{background}{heading}{body}{footer}</svg>'
     encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _svg_multiline_text(
+    text: str,
+    x: float,
+    y: float,
+    font_size: int,
+    max_chars: int,
+    max_lines: int,
+    fill: str,
+    font_family: str,
+    anchor: str = "start",
+    weight: str = "400",
+) -> str:
+    words = re.sub(r"\s+", " ", text).strip().split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= max_chars or not current:
+            current = candidate
+            continue
+        if len(lines) >= max_lines - 1:
+            break
+        lines.append(current)
+        current = word
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    lines = lines[:max_lines]
+    tspans = []
+    for index, line in enumerate(lines):
+        dy = 0 if index == 0 else font_size + 5
+        tspans.append(f'<tspan x="{x:.1f}" dy="{dy}">{escape(line)}</tspan>')
+    return (
+        f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" font-family="{font_family}" '
+        f'font-size="{font_size}" font-weight="{weight}" fill="{fill}">{"".join(tspans)}</text>'
+    )
 
 
 def _numeric_coordinate(value: Any, path: str) -> float | int:
@@ -412,6 +536,52 @@ def _normalize_visual_assets(raw_assets: list[Any]) -> list[Any]:
     return normalized_assets
 
 
+_BAD_VISUAL_LABELS = {
+    "label",
+    "node",
+    "step",
+    "concept",
+    "topic",
+    "text",
+    "placeholder",
+    "lorem ipsum",
+    "todo",
+    "n/a",
+}
+
+
+def _validate_visual_text(value: Any, field: str, asset_index: int, max_words: int) -> str:
+    normalized = re.sub(r"\s+", " ", str(value or "")).strip()
+    lower = normalized.lower()
+    if not normalized:
+        raise ValueError(f"visualAssets[{asset_index}] {field} is required")
+    if lower in _BAD_VISUAL_LABELS or any(token in lower for token in ("[topic]", "[concept]", "insert ", "placeholder")):
+        raise ValueError(f"visualAssets[{asset_index}] {field} contains placeholder text")
+    if len(normalized.split()) > max_words:
+        raise ValueError(f"visualAssets[{asset_index}] {field} must be concise and readable")
+    if not re.search(r"[A-Za-z0-9]", normalized):
+        raise ValueError(f"visualAssets[{asset_index}] {field} must contain readable text")
+    if re.search(r"[{}<>|`~]{2,}", normalized):
+        raise ValueError(f"visualAssets[{asset_index}] {field} contains malformed text")
+    return normalized
+
+
+def _validate_visual_label(label: str, asset_index: int, label_index: int) -> str:
+    normalized = re.sub(r"\s+", " ", label).strip()
+    lower = normalized.lower()
+    if not normalized:
+        raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] is empty")
+    if lower in _BAD_VISUAL_LABELS or any(token in lower for token in ("[topic]", "[concept]", "insert ", "placeholder")):
+        raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] contains placeholder text")
+    if len(normalized) > 42 or len(normalized.split()) > 6:
+        raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] must be a concise readable label")
+    if not re.search(r"[A-Za-z0-9]", normalized):
+        raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] must contain readable text")
+    if re.search(r"[{}<>|`~]{2,}", normalized):
+        raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] contains malformed text")
+    return normalized
+
+
 def _prepare_visual_assets(raw_assets: list[Any]) -> list[Dict[str, Any]]:
     logger.info("Visual generation request: asset_count=%s", len(raw_assets))
     prepared = []
@@ -439,15 +609,15 @@ def _prepare_visual_assets(raw_assets: list[Any]) -> list[Dict[str, Any]]:
             logger.info("Graph validation result: asset_index=%s valid=true points=%s", index, len(data))
         elif not isinstance(data, list) or len(data) < 2 or any(not isinstance(item, str) or not item.strip() for item in data):
             raise ValueError(f"visualAssets[{index}].data must contain at least two strings")
+        elif asset_type != "graph":
+            data = [_validate_visual_label(item, index, point_index) for point_index, item in enumerate(data)]
         asset = {
             "id": f"visual-{index + 1}",
-            "title": str(raw["title"]).strip(),
-            "description": str(raw["description"]).strip(),
+            "title": _validate_visual_text(raw["title"], "title", index, 10),
+            "description": _validate_visual_text(raw["description"], "description", index, 28),
             "type": asset_type,
             "data": data,
         }
-        if not asset["title"] or not asset["description"]:
-            raise ValueError(f"visualAssets[{index}] title and description are required")
         asset["imageUrl"] = _visual_asset_image_url(asset)
         logger.info(
             "Visual generation response: id=%s type=%s data_count=%s image_url_bytes=%s",
@@ -471,10 +641,14 @@ def _lesson_generation_prompt(
 ) -> str:
     constraints = req.constraints or {}
     learner_profile = constraints.get("learner_profile", {})
+    roadmap_topic = constraints.get("roadmap_topic") or req.topic
     return (
         f"Create a complete learner-facing lesson for learner {req.learner_id}.\n"
         f"Learning goal: {learner_profile.get('learning_goal')}\n"
-        f"Topic: {req.topic}\n"
+        f"Selected lesson title: {lesson_title}\n"
+        f"Selected lesson description: {selected_lesson.get('description')}\n"
+        f"Selected lesson objectives: {json.dumps(lesson_objectives)}\n"
+        f"Roadmap topic for background only: {roadmap_topic}\n"
         f"Current knowledge level: {learner_state.knowledge_level}\n"
         f"Learning style: {learning_style}\n"
         f"Preferred difficulty: {constraints.get('preferred_difficulty') or teaching_strategy.difficulty_level}\n"
@@ -487,7 +661,9 @@ def _lesson_generation_prompt(
         f"Learner state: {learner_state.model_dump_json()}\n"
         f"Teaching strategy: {teaching_strategy.model_dump_json()}\n"
         f"Additional constraints: {json.dumps(constraints)}\n\n"
-        "Use the selected roadmap stage as the lesson's sole curricular scope.\n\n"
+        "Use the selected roadmap stage as the lesson's sole curricular scope. The selected lesson title is the "
+        "canonical topic for every explanation, example, assessment, diagram, flowchart, narration, and media asset. "
+        "Use the broader roadmap topic only as background context; never substitute it for the selected lesson.\n\n"
         "Return ONLY a valid JSON object.\n"
         "Do not wrap in markdown.\n"
         "Do not use code fences.\n"
@@ -504,18 +680,34 @@ def _lesson_generation_prompt(
         "x and y fields. Correct: [{\"x\":0,\"y\":0},{\"x\":1,\"y\":2}]. Incorrect: [\"0,0\",\"1,2\"]. "
         "Never use string coordinates or comma-separated graph values. Graph data must contain 4 to 12 points. "
         "For diagrams, flows, maps, timelines, and processes, data must be 2 to 6 ordered string node labels. "
+        "Each visual label must be educationally correct, readable, 1 to 6 words, and specific to the selected lesson. "
+        "For flowcharts, labels must form the correct learning sequence and arrows will be rendered in array order. "
+        "For diagrams, include named objects from the selected lesson. For example, vector lessons should name Vector A, "
+        "Vector B, Resultant Vector, Triangle Rule, Parallelogram Rule, or Component Addition; eigenvalue lessons should "
+        "name Matrix A, Eigenvector, Eigenvalue, Transformation, or Scaling Direction; derivative lessons should name "
+        "Curve, Tangent Line, Instantaneous Rate of Change, or Slope Interpretation. "
+        "For mathematical topics, include at least one graph asset with numeric points and one lesson-specific diagram "
+        "or process asset. "
+        "For every Visual lesson, return at least three distinct visualAssets with different types whenever possible: "
+        "one flowchart or process map showing the learning sequence, one diagram or concept_map naming lesson-specific "
+        "objects/relationships, and one graph for math topics or one infographic/timeline/process visual for non-math topics. "
+        "Do not repeat the same visual type unless the lesson absolutely requires it. "
+        "Never use placeholder labels, generic labels, random text, malformed text, or labels unrelated to the selected lesson. "
         "Do not generate imageUrl; the verified renderer creates it after validation.\n"
         "Return exactly 4 coreConcepts, 4 examples, 4 practiceQuestions, 2 learningObjectives, 2 reflectionQuestions, "
-        "2 keyTakeaways, and 2 nextSteps. visualAssets may be empty only for non-visual/non-mixed lessons; audioScript "
-        "may be empty only for non-auditory/non-mixed lessons; guidedActivities may be empty only for non-kinesthetic/"
-        "non-mixed lessons. Respect these word limits: title 12 words; overview 50 to 80 words; each learning objective "
-        "at most 20 words; each core concept 40 to 70 words; explanation 80 to 160 words (220 to 300 for Reading/Writing; "
-        "60 to 90 for Kinesthetic); each example 40 to 70 words; each practice question 25 to 50 words; each reflection question "
-        "at most 30 words; each key takeaway 20 to 35 words; each next step 20 to 35 words. For Visual/Mixed return "
-        "2 to 4 visualAssets. For Auditory/Mixed return an audioScript of 120 to 180 words. "
-        "For Kinesthetic return exactly 3 guidedActivities of 90 to 120 words each, labelled Easy, Medium, and Hard. "
+        "2 keyTakeaways, and 2 nextSteps. visualAssets must be populated for Visual lessons and empty for Audio or "
+        "Detailed Written lessons. audioScript must be populated for Audio lessons and empty for Visual or Detailed "
+        "Written lessons. guidedActivities must be an empty array because only Visual, Audio, and Detailed Written "
+        "lesson styles are supported. Respect these word limits: title 12 words; overview 70 to 110 words; each learning objective "
+        "at most 22 words; each core concept 90 to 140 words; explanation 220 to 340 words (320 to 480 for Reading/Writing; "
+        "320 to 480 for Detailed Written); each example 80 to 130 words; each practice question 45 to 90 words; each reflection question "
+        "at most 30 words; each key takeaway 20 to 35 words; each next step 20 to 35 words. For Visual return "
+        "3 to 4 visualAssets with distinct purposes. For Audio return an audioScript of 280 to 420 words with "
+        "one spoken segment for each of the 4 coreConcepts, in the same order, so every concept in the lesson has "
+        "audio coverage. "
+        "For Detailed Written, make explanation and coreConcepts the primary teaching mechanism. "
         "Keep the entire response under "
-        "1,400 words. Use one paragraph per string, with no decorative headings or repeated explanations.\n\n"
+        "3,200 words. Use one paragraph per string, with no decorative headings or repeated explanations.\n\n"
         "Teaching quality requirements:\n"
         "- Act as an expert adaptive educator.\n"
         "- Generate the lesson using the teaching methodology most effective for the specified learning style. "
@@ -530,6 +722,8 @@ def _lesson_generation_prompt(
         "- Use a concrete throughline example that fits the topic. Reuse it across sections, then add a fresh "
         "practice case near the end.\n"
         "- Start from intuition and vocabulary, then move to procedure, then interpretation, then independent practice.\n"
+        "- Ground every generated artifact in the selected lesson title, description, and objectives.\n"
+        "- Visual labels must use correct terminology from the selected lesson, with short node titles that can fit in a diagram.\n"
         "- Name common misconceptions and show how to avoid them.\n"
         "- Use plain language first, then introduce notation or formal terms after the idea is clear.\n"
         "- If the topic is mathematical, include symbols, units or quantities, and at least one worked example with "
@@ -560,6 +754,13 @@ def _parse_lesson_json(text: str) -> tuple[Dict[str, Any], str, str | None]:
             raise parse_error
         repaired = json.dumps(repaired_payload, ensure_ascii=False)
         return repaired_payload, candidate, repaired
+
+
+def _model_stopped_for_length(response: Dict[str, Any]) -> bool:
+    raw = response.get("raw") or {}
+    choice = (response.get("choices") or [{}])[0]
+    stop_reason = raw.get("stop_reason") or raw.get("finish_reason") or choice.get("finish_reason")
+    return str(stop_reason or "").lower() in {"max_tokens", "length"}
 
 
 def _validate_lesson_payload(payload: Dict[str, Any]) -> None:
@@ -600,20 +801,140 @@ def _validate_lesson_payload(payload: Dict[str, Any]) -> None:
         if isinstance(value, list) and len(value) != 4:
             errors.append(f"{field} must contain exactly 4 items; received {len(value)}")
     for index, concept in enumerate(payload.get("coreConcepts") or []):
-        if isinstance(concept, str) and len(concept.strip()) < 80:
+        if isinstance(concept, str) and len(concept.strip()) < 180:
             errors.append(f"coreConcepts[{index}] must contain a complete explanation")
     for index, example in enumerate(payload.get("examples") or []):
-        if isinstance(example, str) and len(example.strip()) < 60:
+        if isinstance(example, str) and len(example.strip()) < 120:
             errors.append(f"examples[{index}] must contain a complete worked example")
     for index, practice in enumerate(payload.get("practiceQuestions") or []):
-        if isinstance(practice, str) and len(practice.strip()) < 30:
+        if isinstance(practice, str) and len(practice.strip()) < 60:
             errors.append(f"practiceQuestions[{index}] must be an answerable activity")
     if errors:
         raise ValueError("; ".join(errors))
 
 
+def _is_mathematical_topic(topic: str) -> bool:
+    math_terms = (
+        "math", "algebra", "calculus", "geometry", "trigonometry", "statistics", "probability",
+        "derivative", "integral", "limit", "function", "graph", "slope", "vector", "matrix",
+        "eigenvalue", "eigenvector", "linear transformation", "coordinate", "equation",
+    )
+    topic_lower = topic.lower()
+    return any(term in topic_lower for term in math_terms)
+
+
+def _compact_visual_label(value: Any, fallback: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        text = fallback
+    text = re.split(r"(?<=[.!?])\s+", text)[0]
+    words = text.split()[:6]
+    return " ".join(words)[:42].strip() or fallback
+
+
+def _lesson_visual_terms(lesson_title: str, lesson_objectives: list[Any], concepts: list[str]) -> list[str]:
+    terms: list[str] = []
+    terms.append(_compact_visual_label(lesson_title, "Lesson focus"))
+    for objective in lesson_objectives:
+        terms.append(_compact_visual_label(objective, "Learning goal"))
+    for concept in concepts:
+        terms.append(_compact_visual_label(concept, "Key concept"))
+    deduped = []
+    seen = set()
+    for term in terms:
+        key = term.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(term)
+    return (deduped + ["Core idea", "Worked example", "Learner check"])[:6]
+
+
+def _fallback_graph_points(lesson_title: str) -> list[Dict[str, int | float]]:
+    title = lesson_title.lower()
+    if "derivative" in title or "slope" in title or "tangent" in title:
+        return [{"x": x, "y": x * x} for x in range(-3, 4)]
+    if "vector" in title:
+        return [{"x": 0, "y": 0}, {"x": 2, "y": 1}, {"x": 4, "y": 3}, {"x": 5, "y": 4}]
+    if "eigen" in title or "matrix" in title or "transformation" in title:
+        return [{"x": -2, "y": -1}, {"x": -1, "y": -0.5}, {"x": 0, "y": 0}, {"x": 1, "y": 0.5}, {"x": 2, "y": 1}]
+    if "function" in title or "graph" in title or "equation" in title:
+        return [{"x": x, "y": (x * x) - 2} for x in range(-3, 4)]
+    return [{"x": 0, "y": 0}, {"x": 1, "y": 1}, {"x": 2, "y": 3}, {"x": 3, "y": 6}, {"x": 4, "y": 10}]
+
+
+def _ensure_visual_asset_mix(
+    assets: list[Dict[str, Any]],
+    lesson_title: str,
+    lesson_objectives: list[Any],
+    concepts: list[str],
+) -> list[Dict[str, Any]]:
+    terms = _lesson_visual_terms(lesson_title, lesson_objectives, concepts)
+    short_title = _compact_visual_label(lesson_title, "Lesson")
+    existing_types = {str(asset.get("type") or "").lower() for asset in assets}
+    additions: list[Dict[str, Any]] = []
+
+    if not existing_types.intersection({"flowchart", "process"}):
+        additions.append(
+            {
+                "title": f"{short_title} flow",
+                "description": f"Shows the ordered reasoning path for {lesson_title}.",
+                "type": "flowchart",
+                "data": terms[:5],
+            }
+        )
+
+    if not existing_types.intersection({"diagram", "concept_map", "illustration"}):
+        additions.append(
+            {
+                "title": f"{short_title} diagram",
+                "description": f"Names the key objects and relationships in {lesson_title}.",
+                "type": "diagram",
+                "data": terms[:6],
+            }
+        )
+
+    if _is_mathematical_topic(lesson_title):
+        if "graph" not in existing_types:
+            additions.append(
+                {
+                    "title": f"{short_title} graph",
+                    "description": f"Plots a representative mathematical relationship for {lesson_title}.",
+                    "type": "graph",
+                    "data": _fallback_graph_points(lesson_title),
+                }
+            )
+    elif not existing_types.intersection({"timeline", "process", "concept_map"}):
+        additions.append(
+            {
+                "title": f"{short_title} map",
+                "description": f"Summarizes the main ideas from the selected lesson.",
+                "type": "concept_map",
+                "data": terms[:5],
+            }
+        )
+
+    prepared_additions = _prepare_visual_assets(additions) if additions else []
+    if prepared_additions:
+        repaired = [*assets[: max(0, 4 - len(prepared_additions))], *prepared_additions]
+    else:
+        repaired = [*assets]
+
+    unique: list[Dict[str, Any]] = []
+    seen_titles = set()
+    for asset in repaired:
+        key = (str(asset.get("type")), str(asset.get("title")).lower())
+        if key in seen_titles:
+            continue
+        seen_titles.add(key)
+        unique.append(asset)
+    return unique[:4]
+
+
 def _validate_lesson_style(payload: Dict[str, Any], learning_style: str, topic: str) -> None:
     style_key = _lesson_style_key(learning_style)
+    declared_raw = str(payload["learningStyle"]).lower()
+    if any(term in declared_raw for term in ("balanced", "mixed", "practice first", "kinesthetic", "hands-on")):
+        raise ValueError("learningStyle must be Visual Examples and Diagrams, Audio Learning, or Detailed Written Explanations")
     declared_style = _lesson_style_key(payload["learningStyle"])
     if declared_style != style_key:
         raise ValueError(f"learningStyle must match {learning_style}; received {payload['learningStyle']}")
@@ -642,38 +963,24 @@ def _validate_lesson_style(payload: Dict[str, Any], learning_style: str, topic: 
             (teaching_text, ("definition", "term", "paragraph", "notes", "written", "means", "notation")),
             (practice_text, ("write", "summarize", "define", "outline", "compare in words", "notes")),
         ),
-        "kinesthetic": (
-            (practice_text, ("hands-on", "activity", "experiment", "real-world", "practice-first", "try", "do")),
-            (teaching_text, ("action", "perform", "measure", "test", "solve", "try", "do", "apply")),
-            (practice_text, ("solve", "build", "test", "measure", "experiment", "try", "perform", "act")),
-        ),
     }
-    if style_key == "mixed":
-        if not payload["visualAssets"] or not payload["audioScript"].strip() or not payload["guidedActivities"]:
-            raise ValueError("mixed/adaptive lesson must populate visualAssets, audioScript, and guidedActivities")
-        if len(payload["audioScript"].split()) < 100:
-            raise ValueError("mixed/adaptive lesson requires at least 100 words of audio narration")
-        if len(payload["explanation"].split()) < 100:
-            raise ValueError("mixed/adaptive lesson requires at least 100 words of structured written explanation")
-        if len(payload["guidedActivities"]) < 2:
-            raise ValueError("mixed/adaptive lesson requires at least two guided practice activities")
-        return
-
     labels = {
         "visual": ("visualAssets", "explanations/examples", "practiceQuestions"),
         "auditory": ("audioScript", "explanations/examples", "practiceQuestions"),
         "reading_writing": ("detailed written content", "explanations/examples", "practiceQuestions"),
-        "kinesthetic": ("guidedActivities", "explanations/examples", "practiceQuestions"),
     }[style_key]
     missing = [label for label, (content, terms) in zip(labels, evidence[style_key]) if not any(term in content for term in terms)]
     if missing:
-        raise ValueError(f"{learning_style} methodology is not evident in: {missing}")
+        logger.warning("%s methodology keywords are not explicit in: %s", learning_style, missing)
     if style_key == "visual":
         if not payload["visualAssets"]:
             raise ValueError("visual lesson must populate visualAssets")
         topic_lower = topic.lower()
+        asset_types = {asset["type"] for asset in visual_assets}
+        if _is_mathematical_topic(topic) and ("graph" not in asset_types or not (asset_types - {"graph"})):
+            raise ValueError("visual mathematical lesson requires both graphData and a lesson-specific diagram/process visual")
         domain_rules = {
-            "mathematics": (("math", "calculus", "algebra", "geometry", "statistics"), ("graph", "plot")),
+            "mathematics": (("math", "calculus", "algebra", "geometry", "statistics", "derivative", "function", "vector", "matrix", "eigenvalue"), ("graph", "plot", "vector", "matrix", "curve", "slope", "transformation")),
             "science": (("science", "physics", "chemistry", "biology"), ("process", "system", "cause", "effect", "flow")),
             "programming": (("programming", "code", "software", "computer"), ("architecture", "data flow", "execution flow", "flowchart")),
             "history": (("history", "historical"), ("timeline", "event map")),
@@ -684,29 +991,42 @@ def _validate_lesson_style(payload: Dict[str, Any], learning_style: str, topic: 
     elif style_key == "auditory":
         if not payload["audioScript"].strip():
             raise ValueError("auditory lesson must populate audioScript")
-        if len(payload["audioScript"].split()) < 100:
-            raise ValueError("auditory audioScript must contain at least 100 words of narration")
+        if len(payload["audioScript"].split()) < 120:
+            raise ValueError("auditory audioScript must contain at least 120 words of narration")
     elif style_key == "reading_writing":
         if len(payload["explanation"].split()) < 180:
             raise ValueError("reading/writing lesson requires at least 180 words of detailed explanation")
-    elif style_key == "kinesthetic":
-        activities = payload["guidedActivities"]
-        if len(activities) != 3 or not all(
-            any(label in activity.lower() for label in ("easy", "medium", "hard"))
-            for activity in activities
-        ):
-            raise ValueError("kinesthetic guidedActivities must provide Easy, Medium, and Hard activities")
-        difficulty_labels = {label for label in ("easy", "medium", "hard") if any(label in item.lower() for item in activities)}
-        if len(difficulty_labels) != 3:
-            raise ValueError("kinesthetic guidedActivities must include all three difficulty levels: Easy, Medium, Hard")
-        practice_words = len(practice_text.split())
-        all_text = " ".join(
-            str(value) if isinstance(value, str) else " ".join(value)
-            for value in payload.values()
-            if isinstance(value, (str, list))
+
+
+def _audio_sections_from_payload(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
+    sections: list[Dict[str, Any]] = []
+    title = str(payload["title"]).strip()
+    concepts = payload.get("coreConcepts") or []
+    examples = payload.get("examples") or []
+    practice_questions = payload.get("practiceQuestions") or []
+    takeaways = payload.get("keyTakeaways") or []
+    reflections = payload.get("reflectionQuestions") or []
+
+    for index, concept in enumerate(concepts):
+        example = examples[index] if index < len(examples) else ""
+        practice = practice_questions[index] if index < len(practice_questions) else ""
+        takeaway = takeaways[index % len(takeaways)] if takeaways else ""
+        script_parts = [
+            f"Concept {index + 1}: {concept}",
+            f"Here is the spoken example: {example}" if example else "",
+            f"Listen for this key idea: {takeaway}" if takeaway else "",
+            f"Now say this back in your own words: {practice}" if practice else "",
+        ]
+        if index == len(concepts) - 1 and reflections:
+            script_parts.append("To close, discuss this: " + " ".join(reflections))
+        sections.append(
+            {
+                "title": f"{title} - concept {index + 1}",
+                "script": " ".join(part for part in script_parts if part).strip(),
+                "discussion_prompts": reflections if index == len(concepts) - 1 else [],
+            }
         )
-        if practice_words / max(len(all_text.split()), 1) < 0.4:
-            raise ValueError("kinesthetic lesson must contain at least 40% practice-based content")
+    return sections
 
 
 def _lesson_payload_to_blueprint(
@@ -736,8 +1056,6 @@ def _lesson_payload_to_blueprint(
         "visual": ["visual overview", "diagram or concept map", "visual walkthrough", "guided visual practice"],
         "auditory": ["spoken overview", "conversational explanation", "verbal example", "explain-it-back practice"],
         "reading_writing": ["definitions", "structured notes", "written example", "written synthesis"],
-        "kinesthetic": ["practice-first activity", "hands-on discovery", "applied example", "independent action"],
-        "mixed": ["visual representation", "spoken explanation", "written notes", "hands-on practice", "adaptive reflection"],
     }
     blueprint = models.LessonBlueprint(
         lesson_id=f"lesson:{req.learner_id}:{uuid4()}",
@@ -751,29 +1069,69 @@ def _lesson_payload_to_blueprint(
         assessment_points=[{"prompt": item} for item in payload["nextSteps"]],
         estimated_lesson_duration=int(selected_lesson["estimated_duration"]),
     )
-    if style_key in {"visual", "mixed"}:
-        visual_assets = _prepare_visual_assets(payload["visualAssets"])
+    if style_key == "visual":
+        visual_assets = _ensure_visual_asset_mix(
+            _prepare_visual_assets(payload["visualAssets"]),
+            str(selected_lesson.get("title") or req.topic),
+            selected_lesson.get("objectives") or [],
+            payload["coreConcepts"],
+        )
+        lesson_scope = {
+            "lessonTitle": str(selected_lesson.get("title") or req.topic),
+            "lessonObjectives": selected_lesson.get("objectives") or [],
+            "lessonDescription": selected_lesson.get("description") or "",
+        }
+        for asset in visual_assets:
+            title = str(asset.get("title") or "").strip()
+            lesson_title = lesson_scope["lessonTitle"]
+            if lesson_title.lower() not in title.lower():
+                asset["title"] = f"{lesson_title}: {title}"
+            asset["lessonScope"] = lesson_scope
+            asset["caption"] = f"{asset['description']} Grounded in: {lesson_scope['lessonTitle']}."
+            asset["imageUrl"] = _visual_asset_image_url(asset)
         blueprint.visualElements = visual_assets
         blueprint.diagramDescriptions = [asset for asset in visual_assets if asset["type"] != "graph"]
         blueprint.graphData = [asset for asset in visual_assets if asset["type"] == "graph"]
-    if style_key in {"auditory", "mixed"}:
-        blueprint.audioNarration = payload["audioScript"]
-        blueprint.ttsContent = payload["audioScript"]
-        narration_sentences = re.split(r"(?<=[.!?])\s+", payload["audioScript"].strip())
-        split_at = max(1, (len(narration_sentences) + 1) // 2)
-        narration_parts = [narration_sentences[:split_at], narration_sentences[split_at:]]
-        blueprint.audioSections = [
+        blueprint.conceptMaps = [
             {
-                "title": f"{payload['title']} - narration {index + 1}",
-                "script": " ".join(sentences),
-                "discussion_prompts": payload["reflectionQuestions"] if index == len(narration_parts) - 1 else [],
+                "id": f"concept-map-{blueprint.lesson_id}",
+                "title": f"{payload['title']} concept map",
+                "nodes": [
+                    {"id": f"concept-{index + 1}", "label": _compact_visual_label(concept, f"Concept {index + 1}")}
+                    for index, concept in enumerate(payload["coreConcepts"][:4])
+                ],
+                "edges": [
+                    {
+                        "from": f"concept-{index + 1}",
+                        "to": f"concept-{index + 2}",
+                        "label": "supports",
+                    }
+                    for index in range(min(3, len(payload["coreConcepts"]) - 1))
+                ],
             }
-            for index, sentences in enumerate(narration_parts)
-            if sentences
         ]
-    if style_key in {"kinesthetic", "mixed"}:
-        blueprint.interactiveQuestions = [{"prompt": item} for item in payload["practiceQuestions"]]
-        blueprint.practiceExercises = [{"activity": item} for item in payload["guidedActivities"]]
+        flow_source = next((asset for asset in visual_assets if asset["type"] in {"flowchart", "process", "timeline"}), None)
+        if flow_source:
+            flow_steps = flow_source["data"]
+            flow_title = flow_source["title"]
+        else:
+            flow_steps = [objective.split(".")[0][:64] for objective in payload["learningObjectives"]]
+            flow_steps.extend(takeaway.split(".")[0][:64] for takeaway in payload["keyTakeaways"])
+            flow_title = f"{payload['title']} learning flow"
+        blueprint.flowDiagrams = [
+            {
+                "id": f"flow-{blueprint.lesson_id}",
+                "title": flow_title,
+                "steps": flow_steps[:6],
+            }
+        ]
+    if style_key == "auditory":
+        blueprint.audioSections = _audio_sections_from_payload(payload)
+        section_scripts = [str(section.get("script") or "").strip() for section in blueprint.audioSections if section.get("script")]
+        concept_narration = "\n\n".join(section_scripts)
+        full_narration = "\n\n".join(part for part in (payload["audioScript"].strip(), concept_narration) if part)
+        blueprint.audioNarration = full_narration
+        blueprint.ttsContent = full_narration
     return blueprint
 
 
@@ -785,10 +1143,18 @@ async def lesson_planning_agent(
     selected_lesson = req.selected_lesson or {}
     if not selected_lesson:
         raise ValueError("Lesson generation requires a selected AI-generated roadmap stage")
+    if not isinstance(selected_lesson, dict):
+        raise ValueError("Selected roadmap stage must be an object")
     if "estimated_duration" not in selected_lesson:
         raise ValueError("Selected roadmap stage is missing estimated_duration")
+    if not str(selected_lesson.get("title") or "").strip():
+        raise ValueError("Selected roadmap stage is missing title")
+    if not str(selected_lesson.get("description") or "").strip():
+        raise ValueError("Selected roadmap stage is missing description")
     lesson_title = selected_lesson.get("title") or req.topic
     lesson_objectives = selected_lesson.get("objectives") or []
+    if not lesson_objectives:
+        raise ValueError("Selected roadmap stage is missing objectives")
     learning_style = _lesson_learning_style(req, learner_state, teaching_strategy)
     prompt = _lesson_generation_prompt(
         req, learner_state, teaching_strategy, selected_lesson, lesson_title, lesson_objectives, learning_style
@@ -812,7 +1178,7 @@ async def lesson_planning_agent(
     messages = list(base_messages)
     logger.info(
         "Lesson generation request: lesson_request_id=%s learner_id=%s topic=%s selected_stage=%s prompt_size=%s max_tokens=%s context=%s",
-        lesson_request_id, req.learner_id, req.topic, lesson_title, len(prompt), 4096,
+        lesson_request_id, req.learner_id, req.topic, lesson_title, len(prompt), LESSON_MAX_TOKENS,
         json.dumps({"profile": (req.constraints or {}).get("learner_profile", {}), "state": learner_state.model_dump(), "strategy": teaching_strategy.model_dump()}),
     )
 
@@ -824,15 +1190,15 @@ async def lesson_planning_agent(
         try:
             if attempt:
                 logger.info("Lesson correction retry: lesson_request_id=%s attempt=%s", lesson_request_id, attempt + 1)
-            resp = await _call_layer("planning", messages, temperature=0.2, max_tokens=4096)
+            resp = await _call_layer("planning", messages, temperature=0.2, max_tokens=LESSON_MAX_TOKENS)
             text = resp["choices"][0]["message"]["content"]
             stop_reason = (resp.get("raw") or {}).get("stop_reason")
             logger.info(
                 "Lesson generation response: lesson_request_id=%s attempt=%s stop_reason=%s completion_length=%s response_size=%s max_tokens=%s",
                 lesson_request_id, attempt + 1, stop_reason,
-                len(text), len(text.encode("utf-8")), 4096,
+                len(text), len(text.encode("utf-8")), LESSON_MAX_TOKENS,
             )
-            if stop_reason == "max_tokens":
+            if _model_stopped_for_length(resp):
                 failure_stage = "truncated model output"
                 raise ValueError("completion reached max_tokens before producing a complete lesson JSON object")
             failure_stage = "JSON parsing"
@@ -845,7 +1211,7 @@ async def lesson_planning_agent(
             failure_stage = "lesson payload validation"
             _validate_lesson_payload(payload)
             failure_stage = "learning style validation"
-            _validate_lesson_style(payload, learning_style, req.topic)
+            _validate_lesson_style(payload, learning_style, lesson_title)
             failure_stage = "LessonBlueprint validation"
             blueprint = _lesson_payload_to_blueprint(payload, req, selected_lesson, learning_style)
             _validate_blueprint(blueprint)
@@ -885,7 +1251,7 @@ async def lesson_planning_agent(
                         f"{correction_instruction} Return the complete corrected object with exactly the fourteen required "
                         "fields, no Markdown, no code fences, and no commentary. "
                         "Preserve the lesson meaning, but compact wording as needed to obey every field limit and keep "
-                        "the complete JSON under 1,400 words."
+                        "the complete JSON under 3,200 words."
                     ),
                 },
             ]
@@ -1009,8 +1375,8 @@ def _lesson_learning_style(
         if isinstance(candidate, list) and candidate:
             candidate = candidate[0]
         if isinstance(candidate, str) and candidate.strip():
-            return candidate.strip()
-    return "Balanced Mix"
+            return _canonical_lesson_style(candidate.strip())
+    return "Detailed Written Explanations"
 
 
 def _style_key(learning_style: str) -> str:
@@ -1019,11 +1385,9 @@ def _style_key(learning_style: str) -> str:
         return "visual"
     if "audio" in style or "listen" in style or "narration" in style:
         return "audio"
-    if "practice" in style or "exercise" in style or "problem" in style:
-        return "practice"
     if "written" in style or "detailed" in style or "explanation" in style:
         return "written"
-    return "balanced"
+    return "written"
 
 
 def _modality_contract(learning_style: str) -> Dict[str, Any]:
@@ -1041,23 +1405,11 @@ def _modality_contract(learning_style: str) -> Dict[str, Any]:
             "text_density": "brief notes only",
             "section_pattern": "narration segment, spoken walkthrough, listening checkpoint",
         },
-        "practice": {
-            "primary_experience": "exercise-driven",
-            "required_optional_fields": ["practiceExercises", "interactiveQuestions"],
-            "text_density": "short explanations after practice",
-            "section_pattern": "worked example, practice, feedback, mini explanation",
-        },
         "written": {
             "primary_experience": "detailed written explanation",
             "required_optional_fields": [],
             "text_density": "comprehensive paragraphs with step-by-step reasoning",
             "section_pattern": "concept, derivation, worked example, checkpoint",
-        },
-        "balanced": {
-            "primary_experience": "mixed multimodal",
-            "required_optional_fields": ["visualElements", "practiceExercises"],
-            "text_density": "concise",
-            "section_pattern": "short explanation, visual, example, practice, optional narration",
         },
     }
     return contracts[key]
@@ -1243,17 +1595,12 @@ def _validate_roadmap_item(item: Any, index: int) -> models.LessonRoadmapItem:
 
 def _lesson_style_from_payload(lesson: Dict[str, Any]) -> str:
     if isinstance(lesson.get("learning_style"), str) and lesson.get("learning_style", "").strip():
-        return lesson["learning_style"]
+        return _canonical_lesson_style(lesson["learning_style"])
     if lesson.get("audioNarration") or lesson.get("audioSections") or lesson.get("ttsContent"):
         return "Audio Learning"
     if lesson.get("visualElements") or lesson.get("conceptMaps") or lesson.get("diagramDescriptions"):
         return "Visual Examples and Diagrams"
-    if lesson.get("practiceExercises") or lesson.get("interactiveQuestions"):
-        return "Practice First Learning"
-    sequence = [str(item).lower() for item in (lesson.get("modality_sequence") or [])]
-    if any("written" in item or "derivation" in item for item in sequence):
-        return "Detailed Written Explanations"
-    return "Balanced Mix"
+    return "Detailed Written Explanations"
 
 
 def _assessment_contract(learning_style: str) -> Dict[str, Any]:
@@ -1261,9 +1608,7 @@ def _assessment_contract(learning_style: str) -> Dict[str, Any]:
     contracts = {
         "visual": {"focus": ["diagram interpretation", "visual reasoning"], "question_mix": ["mcq", "conceptual_reasoning"]},
         "audio": {"focus": ["verbal reasoning", "concept narration"], "question_mix": ["short_answer", "conceptual_reasoning"]},
-        "practice": {"focus": ["problem solving", "numerical accuracy"], "question_mix": ["short_answer", "worked_problem"]},
         "written": {"focus": ["theory explanation", "formal reasoning"], "question_mix": ["short_answer", "conceptual_reasoning"]},
-        "balanced": {"focus": ["visual + conceptual + procedural"], "question_mix": ["mcq", "short_answer", "conceptual_reasoning"]},
     }
     return contracts[key]
 
@@ -1315,17 +1660,6 @@ def _fallback_questions(lesson: Dict[str, Any], learning_style: str) -> list[Dic
                     "expected_answer": section.get("explanation", ""),
                     "concept": concept,
                     "explanation": "Audio learners are assessed with verbal explanation prompts.",
-                }
-            )
-        elif style_key == "practice":
-            questions.append(
-                {
-                    "id": f"checkpoint-{index + 1}",
-                    "type": "worked_problem",
-                    "prompt": f"Solve a short {topic} problem using the approach from {concept}. Show steps.",
-                    "expected_answer": section.get("example", section.get("explanation", "")),
-                    "concept": concept,
-                    "explanation": "Practice-first learners are assessed through procedural problem-solving.",
                 }
             )
         elif style_key == "written":

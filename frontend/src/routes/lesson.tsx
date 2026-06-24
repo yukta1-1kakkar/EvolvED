@@ -8,10 +8,12 @@ import {
   MessageCircle,
   Network,
   Play,
+  Pause,
   RefreshCw,
   Sparkles,
   Target,
   Volume2,
+  X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ElementType, type FormEvent, type SelectHTMLAttributes } from "react";
 
@@ -72,6 +74,7 @@ function LessonPage() {
   });
   const tutor = useTutorInteraction();
   const [question, setQuestion] = useState("");
+  const [tutorOpen, setTutorOpen] = useState(false);
 
   function regenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -95,6 +98,8 @@ function LessonPage() {
       session_id: lesson.data.lesson_id,
       question: question.trim(),
       action,
+    }, {
+      onSuccess: () => setQuestion(""),
     });
   }
 
@@ -102,6 +107,10 @@ function LessonPage() {
     if (!lesson.data || typeof window === "undefined") return;
     window.localStorage.setItem("evolved.currentLessonSession", lesson.data.lesson_id);
   }, [lesson.data]);
+
+  useEffect(() => {
+    setTutorOpen(false);
+  }, [lesson.data?.lesson_id]);
 
   useEffect(() => {
     const nextBrief = makeInitialBrief(currentUser);
@@ -143,13 +152,13 @@ function LessonPage() {
       {lesson.isLoading && selectedLesson && <LessonSkeleton />}
       {lesson.isError && <ErrorPanel message={lesson.error.message} onRetry={() => void lesson.refetch()} />}
       {lesson.data && (
-        <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <article className="space-y-5">
+        <div className="relative">
+          <article className="space-y-6">
             <section className="overflow-hidden rounded-3xl border border-border bg-card">
               <div className="bg-foreground px-6 py-5 text-background">
                 <div className="text-[10px] uppercase tracking-[0.24em] text-background/65">Your lesson</div>
-                <h2 className="mt-2 max-w-3xl font-display text-3xl">{lesson.data.learning_objective}</h2>
-                <p className="mt-3 max-w-3xl text-sm leading-relaxed text-background/75">{lesson.data.lesson_summary}</p>
+                <h2 className="mt-2 max-w-5xl font-display text-3xl md:text-4xl">{lesson.data.learning_objective}</h2>
+                <p className="mt-3 max-w-5xl text-base leading-8 text-background/75">{lesson.data.lesson_summary}</p>
                 {lesson.data.learning_style && (
                   <div className="mt-3 inline-flex rounded-full border border-background/30 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-background/80">
                     {lesson.data.learning_style}
@@ -177,38 +186,58 @@ function LessonPage() {
             {lesson.data.lesson_structure.map((section, index) => (
               <LessonSection key={recordKey(section, index)} section={section} index={index} />
             ))}
+
+            <div className="grid gap-4 lg:grid-cols-3">
+              <div className="rounded-3xl border border-border bg-card p-5">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Lesson path</div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {lesson.data.modality_sequence.map((modality, index) => (
+                    <span key={`${modality}-${index}`} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+                      {humanize(modality)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <AgentList icon={MessageCircle} title="Try as you learn" empty="No practice prompts returned." items={lesson.data.interaction_points} />
+              <AgentList icon={Target} title="Check your understanding" empty="No checkpoints returned." items={lesson.data.assessment_points} />
+            </div>
           </article>
 
-          <aside className="space-y-4 xl:sticky xl:top-20 xl:h-fit">
-            <div className="rounded-3xl border border-border bg-card p-5">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                <Sparkles className="size-3.5 text-plum" /> AI tutor
-              </div>
-              <p className="mt-3 text-sm text-muted-foreground">Ask about this lesson. Your questions become part of your learner memory.</p>
-              {tutor.data && <div className="mt-4 rounded-2xl bg-muted/35 p-4 text-sm leading-relaxed">{tutor.data.answer}</div>}
-              {tutor.isError && <p className="mt-3 text-sm text-destructive">{tutor.error.message}</p>}
-              <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask for a hint or a simpler explanation" className="mt-4 min-h-24 w-full rounded-2xl border border-input bg-background p-3 text-sm outline-none focus:border-plum" />
-              <div className="mt-3 flex flex-wrap gap-2">
-                {["question", "simpler_explanation", "example", "hint"].map((action) => (
-                  <button key={action} type="button" onClick={() => askTutor(action)} disabled={tutor.isPending || !question.trim()} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground disabled:opacity-50">
-                    {humanize(action)}
+          <button
+            type="button"
+            onClick={() => setTutorOpen(true)}
+            className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-plum/25 bg-foreground px-4 py-3 text-sm text-background shadow-xl md:bottom-6 md:right-6"
+          >
+            <Sparkles className="size-4" /> AI tutor
+          </button>
+
+          {tutorOpen && (
+            <div className="fixed inset-0 z-50">
+              <button type="button" aria-label="Close AI tutor" onClick={() => setTutorOpen(false)} className="absolute inset-0 bg-foreground/25" />
+              <aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-card p-5 shadow-2xl">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                    <Sparkles className="size-3.5 text-plum" /> AI tutor
+                  </div>
+                  <button type="button" onClick={() => setTutorOpen(false)} className="rounded-full border border-border p-2 text-muted-foreground hover:text-foreground" aria-label="Close AI tutor">
+                    <X className="size-4" />
                   </button>
-                ))}
-              </div>
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">Ask about this lesson. Your questions become part of your learner memory.</p>
+                {tutor.data && <div className="mt-4 rounded-2xl bg-muted/35 p-4 text-sm leading-relaxed">{tutor.data.answer}</div>}
+                {tutor.isError && <p className="mt-3 text-sm text-destructive">{tutor.error.message}</p>}
+                <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask for a hint or a simpler explanation" className="mt-4 min-h-32 w-full rounded-2xl border border-input bg-background p-3 text-sm outline-none focus:border-plum" />
+                {tutor.isPending && <p className="mt-2 text-xs text-muted-foreground">Tutor is thinking...</p>}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {["question", "simpler_explanation", "example", "hint"].map((action) => (
+                    <button key={action} type="button" onClick={() => askTutor(action)} disabled={tutor.isPending || !question.trim()} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground disabled:opacity-50">
+                      {humanize(action)}
+                    </button>
+                  ))}
+                </div>
+              </aside>
             </div>
-            <div className="rounded-3xl border border-border bg-card p-5">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Lesson path</div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {lesson.data.modality_sequence.map((modality, index) => (
-                  <span key={`${modality}-${index}`} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-                    {humanize(modality)}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <AgentList icon={MessageCircle} title="Try as you learn" empty="No practice prompts returned." items={lesson.data.interaction_points} />
-            <AgentList icon={Target} title="Check your understanding" empty="No checkpoints returned." items={lesson.data.assessment_points} />
-          </aside>
+          )}
         </div>
       )}
     </AppShell>
@@ -284,9 +313,7 @@ function LessonBriefForm({
           <Select value={draft.learning_style} onChange={(event) => onChange({ ...draft, learning_style: event.target.value })}>
             <option>Visual Examples and Diagrams</option>
             <option>Audio Learning</option>
-            <option>Practice First Learning</option>
             <option>Detailed Written Explanations</option>
-            <option>Balanced Mix</option>
           </Select>
         </label>
         <label className="text-xs font-medium text-muted-foreground">
@@ -318,9 +345,8 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
     ...(lesson.graphData ?? []),
     ...(lesson.diagramDescriptions ?? []),
   ];
-  const videos = mediaCandidates.filter((item) => item.type === "video" && isValidMediaUrl(stringValue(item.videoUrl), "video"));
   const audioAssets = mediaCandidates.filter((item) => item.type === "audio" && isValidMediaUrl(stringValue(item.audioUrl), "audio"));
-  const visualCandidates = mediaCandidates.filter((item) => item.type !== "video" && item.type !== "audio");
+  const visualCandidates = mediaCandidates.filter((item) => item.type !== "audio");
   const visuals = Array.from(
     new Map(
       visualCandidates.map((item, index) => [
@@ -334,7 +360,6 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
 
   return (
     <div className="space-y-5">
-      {videos.map((video, index) => <VideoLesson key={recordKey(video, index)} video={video} index={index} />)}
       {hasAudio && (
         <AudioLesson
           narration={lesson.ttsContent || lesson.audioNarration || ""}
@@ -357,9 +382,10 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
 function AudioLesson({ narration, sections, audioAsset }: { narration: string; sections: ApiRecord[]; audioAsset?: ApiRecord }) {
   const storedAudioUrl = resolveMediaUrl(stringValue(audioAsset?.audioUrl));
   const [audioUrl, setAudioUrl] = useState(storedAudioUrl);
-  const [status, setStatus] = useState(storedAudioUrl ? "Narration ready" : narration ? "Preparing narration..." : "Narration script ready");
+  const [status, setStatus] = useState(storedAudioUrl ? "Ready" : narration ? "Preparing audio..." : "");
   const [useBrowserNarration, setUseBrowserNarration] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [audioPlaying, setAudioPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -376,13 +402,13 @@ function AudioLesson({ narration, sections, audioAsset }: { narration: string; s
         }
         objectUrl = URL.createObjectURL(blob);
         setAudioUrl(objectUrl);
-        setStatus("Narration ready");
+        setStatus("Ready");
       })
       .catch((error) => {
         console.error("Lesson audio generation/playback failed", error);
         const browserSpeechAvailable = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
         setUseBrowserNarration(browserSpeechAvailable);
-        setStatus(browserSpeechAvailable ? "Browser narration ready" : "Narration script ready");
+        setStatus("");
       });
 
     return () => {
@@ -399,19 +425,36 @@ function AudioLesson({ narration, sections, audioAsset }: { narration: string; s
     utterance.onstart = () => {
       console.info("Lesson browser narration playback started", { characters: narration.length });
       setSpeaking(true);
-      setStatus("Playing narration");
+      setStatus("Playing");
     };
     utterance.onend = () => {
       console.info("Lesson browser narration playback completed");
       setSpeaking(false);
-      setStatus("Browser narration ready");
+      setStatus("Ready");
     };
     utterance.onerror = (event) => {
       console.error("Lesson browser narration playback failed", event);
       setSpeaking(false);
-      setStatus("Narration script ready");
+      setStatus("");
     };
     window.speechSynthesis.speak(utterance);
+  }
+
+  function toggleAudioPlayback() {
+    const player = audioRef.current;
+    if (!player) return;
+    if (player.paused) {
+      void player.play();
+    } else {
+      player.pause();
+    }
+  }
+
+  function pauseBrowserNarration() {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    setSpeaking(false);
+    setStatus("Ready");
   }
 
   return (
@@ -421,25 +464,48 @@ function AudioLesson({ narration, sections, audioAsset }: { narration: string; s
       </div>
       <div className="mt-4 rounded-2xl bg-muted/35 p-4">
         {audioUrl ? (
-          <audio
-            ref={audioRef}
-            controls
-            src={audioUrl}
-            className="w-full"
-            preload="metadata"
-            onRateChange={(event) => setPlaybackRate(event.currentTarget.playbackRate)}
-            onCanPlay={() => console.info("Lesson audio URL verified and ready", { audioUrl })}
-            onPlay={() => console.info("Lesson audio playback started", { audioUrl })}
-            onError={(event) => console.error("Lesson audio player failed", event.currentTarget.error)}
-          />
-        ) : useBrowserNarration ? (
-          <button type="button" onClick={playBrowserNarration} disabled={speaking} className="flex items-center gap-2 text-sm text-muted-foreground disabled:opacity-60">
-            <Play className="size-4 text-plum" /> {status}
-          </button>
-        ) : (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Play className="size-4 text-plum" /> {status}
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={toggleAudioPlayback}
+              className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm text-background"
+            >
+              {audioPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+              {audioPlaying ? "Pause" : "Play"}
+            </button>
+            <audio
+              ref={audioRef}
+              controls
+              src={audioUrl}
+              className="w-full"
+              preload="metadata"
+              onRateChange={(event) => setPlaybackRate(event.currentTarget.playbackRate)}
+              onCanPlay={() => console.info("Lesson audio URL verified and ready", { audioUrl })}
+              onPlay={() => {
+                setAudioPlaying(true);
+                console.info("Lesson audio playback started", { audioUrl });
+              }}
+              onPause={() => setAudioPlaying(false)}
+              onEnded={() => setAudioPlaying(false)}
+              onError={(event) => console.error("Lesson audio player failed", event.currentTarget.error)}
+            />
           </div>
+        ) : useBrowserNarration ? (
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={playBrowserNarration} disabled={speaking} className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm text-background disabled:opacity-60">
+              <Play className="size-4" /> Play
+            </button>
+            <button type="button" onClick={pauseBrowserNarration} disabled={!speaking} className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm text-muted-foreground disabled:opacity-60">
+              <Pause className="size-4" /> Pause
+            </button>
+            {speaking && <span className="self-center text-sm text-muted-foreground">{status}</span>}
+          </div>
+        ) : (
+          status ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Play className="size-4 text-plum" /> {status}
+            </div>
+          ) : null
         )}
       </div>
       {audioUrl && (
@@ -482,7 +548,7 @@ function VisualLesson({
   flowDiagrams: ApiRecord[];
 }) {
   return (
-    <section className="rounded-3xl border border-border bg-card p-6">
+    <section className="rounded-3xl border border-border bg-card p-7">
       <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
         <Network className="size-3.5 text-plum" /> Visual layer
       </div>
@@ -493,22 +559,26 @@ function VisualLesson({
         <FlowDiagram key={recordKey(flow, index)} flow={flow} index={index} />
       ))}
       {visualElements.length > 0 && (
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="mt-6 grid gap-6">
           {visualElements.map((item, index) => (
-            <div key={recordKey(item, index)} className="rounded-2xl border border-border bg-muted/20 p-4">
-              <div className="text-sm font-medium">{recordTitle(item, index)}</div>
+            <div
+              key={recordKey(item, index)}
+              className="rounded-3xl border border-border bg-muted/20 p-6 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
+              style={{ animationDelay: `${index * 90}ms` }}
+            >
+              <div className="text-lg font-medium">{recordTitle(item, index)}</div>
               {isValidMediaUrl(stringValue(item.imageUrl), "image") && (
                 <img
                   src={stringValue(item.imageUrl)}
                   alt={stringValue(item.description) || recordTitle(item, index)}
-                  className="mt-3 aspect-video w-full rounded-xl border border-border bg-background object-contain"
+                  className="mt-4 min-h-[440px] w-full rounded-2xl border border-border bg-background object-contain md:min-h-[620px]"
                   onError={(event) => {
                     console.error("Lesson visual failed to render", { title: recordTitle(item, index), url: event.currentTarget.src });
                     event.currentTarget.hidden = true;
                   }}
                 />
               )}
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{stringValue(item.caption) || stringValue(item.description) || recordBody(item)}</p>
+              <p className="mt-3 text-base leading-8 text-muted-foreground">{stringValue(item.caption) || stringValue(item.description) || recordBody(item)}</p>
               {recordsFrom(item.items).length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {recordsFrom(item.items).map((entry, itemIndex) => (
@@ -529,27 +599,43 @@ function VisualLesson({
 function ConceptMap({ map, index }: { map: ApiRecord; index: number }) {
   const nodes = recordArray(map.nodes);
   const edges = recordArray(map.edges);
+  const nodeLabels = new Map(
+    nodes.map((node, nodeIndex) => [
+      stringValue(node.id) || `concept-${nodeIndex + 1}`,
+      stringValue(node.label) || recordTitle(node, nodeIndex),
+    ]),
+  );
+  const resolveNode = (value: string) => nodeLabels.get(value) || value;
 
   return (
-    <div className="mt-4 rounded-2xl border border-plum/20 bg-plum/[0.04] p-4">
-      <div className="flex items-center gap-2 text-sm font-medium">
+    <div className="mt-5 rounded-3xl border border-plum/20 bg-plum/[0.04] p-5 animate-in fade-in-0 slide-in-from-bottom-2 duration-500">
+      <div className="flex items-center gap-2 text-base font-medium">
         <Network className="size-4 text-plum" /> {recordTitle(map, index)}
       </div>
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {nodes.map((node, nodeIndex) => (
-          <span key={recordKey(node, nodeIndex)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm">
-            {stringValue(node.label) || recordTitle(node, nodeIndex)}
-          </span>
+          <div
+            key={recordKey(node, nodeIndex)}
+            className="min-h-32 rounded-2xl border border-border bg-background p-4 text-sm leading-6 shadow-sm animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
+            style={{ animationDelay: `${nodeIndex * 80}ms` }}
+          >
+            <div className="mb-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Concept {nodeIndex + 1}</div>
+            <div className="break-words text-base font-medium text-foreground">{stringValue(node.label) || recordTitle(node, nodeIndex)}</div>
+          </div>
         ))}
       </div>
       {edges.length > 0 && (
-        <div className="mt-4 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+        <div className="mt-4 grid gap-3 text-sm text-muted-foreground md:grid-cols-2">
           {edges.map((edge, edgeIndex) => (
-            <div key={recordKey(edge, edgeIndex)} className="flex items-center gap-2">
-              <span>{stringValue(edge.from)}</span>
-              <ArrowRight className="size-3 text-plum" />
-              <span>{stringValue(edge.to)}</span>
-              {stringValue(edge.label) && <span className="text-foreground/70">({stringValue(edge.label)})</span>}
+            <div
+              key={recordKey(edge, edgeIndex)}
+              className="flex min-h-14 items-center gap-2 rounded-2xl border border-border bg-background/70 p-3 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
+              style={{ animationDelay: `${(nodes.length + edgeIndex) * 80}ms` }}
+            >
+              <span className="min-w-0 flex-1 break-words">{resolveNode(stringValue(edge.from))}</span>
+              <ArrowRight className="size-4 shrink-0 text-plum" />
+              <span className="min-w-0 flex-1 break-words">{resolveNode(stringValue(edge.to))}</span>
+              {stringValue(edge.label) && <span className="shrink-0 rounded-full bg-plum/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-plum">{stringValue(edge.label)}</span>}
             </div>
           ))}
         </div>
@@ -562,13 +648,17 @@ function FlowDiagram({ flow, index }: { flow: ApiRecord; index: number }) {
   const steps = recordsFrom(flow.steps);
 
   return (
-    <div className="mt-4 rounded-2xl border border-border p-4">
-      <div className="flex items-center gap-2 text-sm font-medium">
+    <div className="mt-5 rounded-3xl border border-border p-5 animate-in fade-in-0 slide-in-from-bottom-2 duration-500">
+      <div className="flex items-center gap-2 text-base font-medium">
         <GitBranch className="size-4 text-plum" /> {recordTitle(flow, index)}
       </div>
-      <div className="mt-4 grid gap-2 md:grid-cols-4">
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
         {steps.map((step, stepIndex) => (
-          <div key={`${recordKey(flow, index)}-${stepIndex}`} className="min-h-20 rounded-xl bg-muted/35 p-3 text-sm leading-relaxed">
+          <div
+            key={`${recordKey(flow, index)}-${stepIndex}`}
+            className="min-h-24 break-words rounded-xl bg-muted/35 p-4 text-base leading-7 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
+            style={{ animationDelay: `${stepIndex * 80}ms` }}
+          >
             <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Step {stepIndex + 1}</div>
             {valueToText(step)}
           </div>
@@ -647,91 +737,6 @@ function RoadmapCards({
   );
 }
 
-function VideoLesson({ video, index }: { video: ApiRecord; index: number }) {
-  const videoUrl = resolveMediaUrl(stringValue(video.videoUrl));
-  const thumbnailUrl = resolveMediaUrl(stringValue(video.thumbnailUrl));
-  const captionsUrl = resolveMediaUrl(stringValue(video.captionsUrl));
-  const narration = stringValue(video.narration);
-  const script = typeof video.videoScript === "object" && video.videoScript !== null && !Array.isArray(video.videoScript) ? video.videoScript : {};
-  const scenes = recordArray(script.scenes);
-  const lastNarratedScene = useRef(-1);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const sourceType = stringValue(video.contentType) || (videoUrl.endsWith(".mp4") ? "video/mp4" : "video/webm");
-
-  useEffect(() => {
-    const player = videoRef.current;
-    if (!player || !videoUrl) return;
-    console.info("Lesson video player initialization", { videoId: video.videoId, videoUrl, sourceType, canPlayType: player.canPlayType(sourceType) });
-    player.load();
-  }, [sourceType, video.videoId, videoUrl]);
-
-  function narrateAt(currentTime: number) {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const sceneIndex = scenes.length ? Math.min(Math.floor(currentTime / 4), scenes.length - 1) : 0;
-    if (sceneIndex === lastNarratedScene.current) return;
-    lastNarratedScene.current = sceneIndex;
-    const sceneNarration = stringValue(scenes[sceneIndex]?.narration) || narration;
-    if (!sceneNarration) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(sceneNarration);
-    utterance.onerror = (event) => console.error("Lesson video narration failed", event);
-    window.speechSynthesis.speak(utterance);
-  }
-
-  return (
-    <section className="overflow-hidden rounded-3xl border border-border bg-card p-6">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
-        <Play className="size-3.5 text-plum" /> Visual lesson video
-      </div>
-      <h3 className="mt-2 text-lg font-medium">{recordTitle(video, index)}</h3>
-      <video
-        ref={videoRef}
-        controls
-        playsInline
-        preload="metadata"
-        poster={isValidMediaUrl(stringValue(video.thumbnailUrl), "image") ? thumbnailUrl : undefined}
-        className="mt-4 aspect-video w-full rounded-2xl border border-border bg-black"
-        onLoadStart={() => console.info("Lesson video load started", { videoId: video.videoId, videoUrl, sourceType })}
-        onLoadedMetadata={(event) => console.info("Video render request verified", { videoId: video.videoId, duration: event.currentTarget.duration, videoUrl })}
-        onCanPlay={(event) => console.info("Lesson video can play", { videoId: video.videoId, duration: event.currentTarget.duration, readyState: event.currentTarget.readyState, networkState: event.currentTarget.networkState })}
-        onPlaying={(event) => console.info("Lesson video playback active", { videoId: video.videoId, currentTime: event.currentTarget.currentTime })}
-        onWaiting={(event) => console.warn("Lesson video waiting for data", { videoId: video.videoId, currentTime: event.currentTarget.currentTime, readyState: event.currentTarget.readyState })}
-        onStalled={(event) => console.warn("Lesson video network stalled", { videoId: video.videoId, networkState: event.currentTarget.networkState })}
-        onPlay={(event) => {
-          console.info("Lesson video playback result: started", { videoId: video.videoId, videoUrl });
-          lastNarratedScene.current = -1;
-          narrateAt(event.currentTarget.currentTime);
-        }}
-        onTimeUpdate={(event) => narrateAt(event.currentTarget.currentTime)}
-        onSeeked={(event) => {
-          lastNarratedScene.current = -1;
-          narrateAt(event.currentTarget.currentTime);
-        }}
-        onPause={() => typeof window !== "undefined" && "speechSynthesis" in window && window.speechSynthesis.cancel()}
-        onEnded={() => typeof window !== "undefined" && "speechSynthesis" in window && window.speechSynthesis.cancel()}
-        onError={(event) => {
-          const error = event.currentTarget.error;
-          const labels: Record<number, string> = { 1: "MEDIA_ERR_ABORTED", 2: "MEDIA_ERR_NETWORK", 3: "MEDIA_ERR_DECODE", 4: "MEDIA_ERR_SRC_NOT_SUPPORTED" };
-          console.error("Lesson video playback failed", {
-            videoId: video.videoId,
-            videoUrl,
-            sourceType,
-            code: error?.code,
-            category: error?.code ? labels[error.code] : "UNKNOWN_MEDIA_ERROR",
-            message: error?.message,
-            networkState: event.currentTarget.networkState,
-            readyState: event.currentTarget.readyState,
-          });
-        }}
-      >
-        <source key={videoUrl} src={videoUrl} type={sourceType} />
-        {isValidMediaUrl(stringValue(video.captionsUrl), "video") && <track kind="captions" src={captionsUrl} srcLang="en" label="English" default />}
-      </video>
-      <p className="mt-3 text-sm text-muted-foreground">{stringValue(video.description)}</p>
-    </section>
-  );
-}
-
 function SourceBadge({ source, model, inverse = false }: { source?: string; model?: string | null; inverse?: boolean }) {
   const isAi = source === "ai";
   const label = isAi ? "AI generated" : "Generation pending";
@@ -762,12 +767,12 @@ function LessonSection({ section, index }: { section: ApiRecord; index: number }
   const checkpoint = stringValue(section.checkpoint);
 
   return (
-    <section className="rounded-3xl border border-border bg-card p-6">
+    <section className="rounded-3xl border border-border bg-card p-7">
       <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
         <BookMarked className="size-3" /> Lesson part {index + 1}
       </div>
-      <h3 className="mt-3 font-display text-2xl">{recordTitle(section, index)}</h3>
-      <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-foreground/80">{explanation}</p>
+      <h3 className="mt-3 font-display text-3xl">{recordTitle(section, index)}</h3>
+      <p className="mt-4 whitespace-pre-wrap text-base leading-8 text-foreground/80">{explanation}</p>
       {example && <Detail label="Example" text={example} />}
       {practice && <Detail label="Practice" text={practice} />}
       {hint && <Detail label="Hint" text={hint} />}
@@ -785,7 +790,7 @@ function LessonSection({ section, index }: { section: ApiRecord; index: number }
 
 function Detail({ label, text, accent = false }: { label: string; text: string; accent?: boolean }) {
   return (
-    <div className={`mt-4 rounded-2xl border p-4 text-sm leading-relaxed ${accent ? "border-plum/20 bg-plum/[0.04]" : "border-border bg-muted/20"}`}>
+    <div className={`mt-4 rounded-2xl border p-5 text-base leading-8 ${accent ? "border-plum/20 bg-plum/[0.04]" : "border-border bg-muted/20"}`}>
       <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
       {text}
     </div>
@@ -868,7 +873,7 @@ function stringValue(value: ApiJson | undefined) {
   return typeof value === "string" ? value : "";
 }
 
-function isValidMediaUrl(value: string, kind: "image" | "video" | "audio") {
+function isValidMediaUrl(value: string, kind: "image" | "audio") {
   if (!value) return false;
   if (value.startsWith("/")) return true;
   if (value.startsWith(`data:${kind}/`)) return true;
@@ -963,9 +968,8 @@ function toLearningStyleLabel(value?: string) {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "visual") return "Visual Examples and Diagrams";
   if (normalized === "audio") return "Audio Learning";
-  if (normalized === "practice") return "Practice First Learning";
   if (normalized === "reading" || normalized === "written") return "Detailed Written Explanations";
-  return "Balanced Mix";
+  return "Detailed Written Explanations";
 }
 
 function toAvailabilityLabel(value?: string) {

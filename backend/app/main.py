@@ -1,6 +1,7 @@
 from pathlib import Path
 import logging
 import mimetypes
+import re
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -10,7 +11,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from app.api.routers import router
 from app.ai.router import ModelRouter
 from app.core.db import init_db
-from app.core.video_generator import MEDIA_ROOT
+from app.core.media import MEDIA_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ load_dotenv(backend_env)
 
 app = FastAPI(title="EvolvED Backend")
 MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+BYTE_RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 def _media_chunks(path: Path, start: int, length: int, chunk_size: int = 64 * 1024):
@@ -48,7 +50,13 @@ async def lesson_media(filename: str, request: Request):
 
     size = path.stat().st_size
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, Content-Type",
+        "Cache-Control": "public, max-age=3600",
+        "Content-Disposition": f'inline; filename="{path.name}"',
+        "Content-Encoding": "identity",
+    }
     range_header = request.headers.get("range")
     logger.info("Media storage retrieval request: filename=%s range=%s size=%s", filename, range_header, size)
     if not range_header:
@@ -56,15 +64,19 @@ async def lesson_media(filename: str, request: Request):
         return FileResponse(path, media_type=media_type, headers=headers, method=request.method)
 
     try:
-        unit, requested = range_header.strip().split("=", 1)
-        if unit.lower() != "bytes" or "," in requested:
+        match = BYTE_RANGE_RE.match(range_header.strip())
+        if not match:
             raise ValueError("unsupported range")
-        start_text, end_text = requested.split("-", 1)
+        start_text, end_text = match.groups()
+        if not start_text and not end_text:
+            raise ValueError("empty range")
         if start_text:
             start = int(start_text)
             end = min(int(end_text) if end_text else size - 1, size - 1)
         else:
             suffix_length = int(end_text)
+            if suffix_length <= 0:
+                raise ValueError("invalid suffix range")
             start = max(0, size - suffix_length)
             end = size - 1
         if start < 0 or start >= size or end < start:
