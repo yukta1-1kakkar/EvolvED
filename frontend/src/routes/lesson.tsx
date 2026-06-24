@@ -110,6 +110,13 @@ function LessonPage() {
     void navigate({ to: "/lesson-view" });
   }
 
+  function updateDraft(nextBrief: LessonBrief) {
+    setDraft(nextBrief);
+    if (nextBrief.topic.trim() === brief.topic.trim()) {
+      setBrief(nextBrief);
+    }
+  }
+
   useEffect(() => {
     const nextBrief = makeInitialBrief(currentUser, searchTopic);
     const pendingTopic = consumePendingRoadmapTopic();
@@ -142,7 +149,7 @@ function LessonPage() {
           <Network className="size-4" /> Open knowledge map
         </Link>
       </div>
-      <LessonBriefForm draft={draft} onChange={setDraft} onSubmit={regenerate} loading={roadmap.isFetching} />
+      <LessonBriefForm draft={draft} onChange={updateDraft} onSubmit={regenerate} loading={roadmap.isFetching} />
 
       {roadmap.isLoading && <RoadmapSkeleton />}
       {roadmap.isError && <ErrorPanel title="Roadmap generation failed" message={roadmap.error.message} onRetry={() => void roadmap.refetch()} />}
