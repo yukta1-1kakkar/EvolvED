@@ -1,6 +1,9 @@
 import asyncio
 import logging
+from time import perf_counter
+from datetime import datetime, timezone
 from pathlib import Path
+import json
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -182,16 +185,23 @@ async def get_teaching_strategy(req: models.GenerateLessonRequest):
 @router.post("/submit-assessment", response_model=models.AssessmentResult)
 async def submit_assessment(sub: models.AssessmentSubmission):
     repo = repository.AsyncRepository()
+    started = perf_counter()
     try:
+        logger.info("Assessment submit started: learner_id=%s session_id=%s answers=%s", sub.learner_id, sub.session_id, len(sub.answers))
         session_state = await repo.get_session_state(sub.learner_id, sub.session_id)
+        logger.info("Assessment submit session loaded: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
         result = await langgraph_nodes.assessment_agent(sub, session_state)
+        logger.info("Assessment submit graded: session_id=%s score=%.3f elapsed=%.2fs", sub.session_id, result.score, perf_counter() - started)
         state = await repo.get_learner_state(sub.learner_id)
         decision = await langgraph_nodes.adaptation_agent(models.AdaptationRequest(learner_id=sub.learner_id, session_id=sub.session_id, assessment_state=result.model_dump()))
+        logger.info("Assessment submit adapted: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
         evolved = await langgraph_nodes.evolutionary_agent({"learner_model": state.model_dump(), "assessment": result.model_dump(), "adaptation": decision.adaptations})
         result.adaptation = decision.adaptations
         await repo.save_assessment_and_evolve(sub, result, decision, evolved)
+        logger.info("Assessment submit completed: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
         return result
     except Exception as exc:
+        logger.exception("Assessment submit failed: learner_id=%s session_id=%s elapsed=%.2fs", sub.learner_id, sub.session_id, perf_counter() - started)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
@@ -243,11 +253,77 @@ async def tutor_interaction(req: models.TutorInteractionRequest):
 
 
 @router.post("/retrieve-memory")
-async def retrieve_memory(q: models.RetrieveMemoryRequest):
+async def retrieve_memory(q: models.RetrieveMemoryRequest) -> models.RetrieveMemoryResponse:
     from app.core.chroma_client import ChromaClient
     cc = ChromaClient()
     hits = await cc.semantic_search(langgraph_nodes.lesson_embedding_collection(), q.query, top_k=5, where={"learner_id": q.learner_id})
-    return {"results": hits}
+    results = [_memory_hit_to_response(hit, q.query) for hit in hits]
+    concepts = []
+    seen = set()
+    for item in results:
+        key = item.concept.lower()
+        if key not in seen:
+            seen.add(key)
+            concepts.append(item.concept)
+    return models.RetrieveMemoryResponse(query=q.query, results=results, concepts=concepts)
+
+
+def _memory_hit_to_response(hit: dict[str, Any], query: str) -> models.RetrievedMemory:
+    metadata = hit.get("metadata") if isinstance(hit.get("metadata"), dict) else {}
+    content = str(hit.get("content") or "")
+    concept = str(metadata.get("concept") or metadata.get("topic") or metadata.get("title") or "Memory").strip() or "Memory"
+    source = str(metadata.get("source") or metadata.get("kind") or metadata.get("type") or "lesson").strip() or "lesson"
+    distance = hit.get("distance")
+    try:
+        score = 1 / (1 + max(0.0, float(distance)))
+    except (TypeError, ValueError):
+        score = 0.0
+    snippet = _compact_memory_snippet(content)
+    return models.RetrievedMemory(
+        id=str(hit.get("id") or concept),
+        concept=concept,
+        source=source,
+        snippet=snippet,
+        score=round(score, 3),
+        created_at=str(metadata.get("created_at") or metadata.get("timestamp") or "") or None,
+        why=f"Matched your query about {_compact_memory_snippet(query, 12).lower()} in prior {source} memory.",
+        metadata=metadata,
+    )
+
+
+def _compact_memory_snippet(value: str, max_words: int = 34) -> str:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return "Stored learner memory without text content."
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]).rstrip(".,;:") + "."
+
+
+@router.post("/peer-feedback", response_model=models.PeerFeedbackResponse)
+async def peer_feedback(req: models.PeerFeedbackRequest):
+    record = {
+        "learner_id": req.learner_id,
+        "reviewer_name": req.reviewer_name.strip() or "Peer reviewer",
+        "lesson_id": req.lesson_id,
+        "topic": req.topic.strip(),
+        "rating": req.rating,
+        "clarity": req.clarity,
+        "accessibility": req.accessibility,
+        "modality_fit": req.modality_fit,
+        "comment": req.comment.strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    feedback_path = Path(__file__).resolve().parents[2] / "data" / "peer_feedback.jsonl"
+    feedback_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with feedback_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.exception("Peer feedback persistence failed")
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return models.PeerFeedbackResponse(saved=record)
 
 
 @router.post("/save-lesson")

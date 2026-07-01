@@ -136,8 +136,21 @@ export interface RetrieveMemoryRequest {
   query: string;
 }
 
+export interface RetrievedMemory {
+  id: string;
+  concept: string;
+  source: string;
+  snippet: string;
+  score: number;
+  created_at?: string | null;
+  why: string;
+  metadata: ApiRecord;
+}
+
 export interface RetrieveMemoryResponse {
-  results: ApiRecord[];
+  query: string;
+  results: RetrievedMemory[];
+  concepts: string[];
 }
 
 export interface SaveLessonRequest {
@@ -199,4 +212,21 @@ export interface TutorInteractionRequest {
 export interface TutorInteractionResponse {
   interaction_id: string;
   answer: string;
+}
+
+export interface PeerFeedbackRequest {
+  learner_id: string;
+  reviewer_name: string;
+  lesson_id?: string | null;
+  topic: string;
+  rating: number;
+  clarity: number;
+  accessibility: number;
+  modality_fit: number;
+  comment: string;
+}
+
+export interface PeerFeedbackResponse {
+  status: "ok";
+  saved: ApiRecord;
 }

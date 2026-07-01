@@ -14,7 +14,7 @@ import { ROUTES } from "@/lib/routes";
 
 const profileSchema = z.object({
   educationLevel: z.string().min(1, "Choose your education level."),
-  interests: z.string().min(2, "Tell us at least one subject or interest."),
+  interests: z.enum(["Calculus", "Linear Algebra"], { required_error: "Choose a subject." }),
   learningGoal: z.string().min(2, "Tell us what you want to achieve."),
   pacePreference: z.string().min(1, "Choose a learning pace."),
   learningAvailability: z.string().min(1, "Choose your learning availability."),
@@ -80,7 +80,7 @@ function ProfileSetupPage() {
         learningAvailability: values.learningAvailability,
         accessibilitySupport: values.accessibility,
       });
-      await navigate({ to: ROUTES.LESSON, replace: true });
+      await navigate({ to: ROUTES.KNOWLEDGE, replace: true });
     } catch (error) {
       setError("root", {
         message: error instanceof Error ? error.message : "Profile setup failed. Please try again.",
@@ -112,8 +112,12 @@ function ProfileSetupPage() {
           </Select>
         </Field>
 
-        <Field label="Subjects and interests" htmlFor="interests" error={errors.interests?.message}>
-          <Input id="interests" placeholder="e.g. calculus, robotics, economics" {...register("interests")} />
+        <Field label="Subject track" htmlFor="interests" error={errors.interests?.message}>
+          <Select id="interests" {...register("interests")}>
+            <option value="">Choose a track</option>
+            <option value="Calculus">Calculus</option>
+            <option value="Linear Algebra">Linear Algebra</option>
+          </Select>
         </Field>
 
         <Field label="Primary learning goal" htmlFor="learningGoal" error={errors.learningGoal?.message}>

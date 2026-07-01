@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { motion } from "framer-motion";
+import { Lock } from "lucide-react";
 import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
@@ -34,11 +35,19 @@ function KnowledgePage() {
   const sel = nodes.find(n => n.id === activeId);
   const find = (id: string) => nodes.find(n => n.id === id);
   const topicLabel = topicItems[0]?.topic ?? currentUser?.learningTopic ?? "Your topic";
-  const suggestions = buildSuggestions(nodes, edges, activeId);
+  const unlockedIds = unlockedNodeIds(nodes, edges);
+  const completedIds = completedNodeIds(nodes);
+  const suggestions = buildSuggestions(nodes, edges, unlockedIds, completedIds);
   const prerequisiteLabels = sel ? prerequisitesFor(sel, edges, find) : [];
   const unlockLabels = sel ? edges.filter(([a]) => a === sel.id).map(([,b]) => find(b)?.label).filter(Boolean) : [];
+  const selectedLocked = Boolean(sel && !unlockedIds.has(sel.id));
 
   function openRoadmap(node: Node) {
+    if (!unlockedIds.has(node.id)) {
+      setActive(node.id);
+      return;
+    }
+
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem(LESSON_ROADMAP_TOPIC_STORAGE_KEY, node.label);
     }
@@ -77,33 +86,47 @@ function KnowledgePage() {
               const A = find(a), B = find(b);
               if (!A || !B) return null;
               const linked = a === activeId || b === activeId;
+              const locked = !unlockedIds.has(b);
               return (
                 <motion.line
                   key={i} x1={A.x} y1={A.y} x2={B.x} y2={B.y}
-                  stroke={linked ? "oklch(0.45 0.18 300)" : "url(#edge2)"}
+                  stroke={locked ? "oklch(0.62 0.025 270)" : linked ? "oklch(0.45 0.18 300)" : "url(#edge2)"}
                   strokeWidth={linked ? 0.4 : 0.2}
-                  strokeDasharray={B.mastery < 0.2 ? "0.6,0.6" : undefined}
+                  strokeDasharray={locked ? "0.7,0.7" : undefined}
                   initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1, delay: i * 0.04 }}
                 />
               );
             })}
             {nodes.map((n, i) => {
               const isActive = n.id === activeId;
+              const isUnlocked = unlockedIds.has(n.id);
+              const isCompleted = completedIds.has(n.id);
               const r = 1.6 + n.mastery * 3.2;
               return (
-                <g key={n.id} onClick={() => openRoadmap(n)} className="cursor-pointer">
+                <g key={n.id} onClick={() => openRoadmap(n)} className={isUnlocked ? "cursor-pointer" : "cursor-not-allowed"}>
                   <motion.circle
                     cx={n.x} cy={n.y} r={r}
-                    fill={`oklch(${0.5 + n.mastery * 0.35} ${0.15 + n.mastery * 0.05} ${300 - n.mastery * 30})`}
+                    fill={isUnlocked ? `oklch(${0.5 + n.mastery * 0.35} ${0.15 + n.mastery * 0.05} ${300 - n.mastery * 30})` : "oklch(0.78 0.015 270)"}
                     stroke={isActive ? "oklch(0.22 0.025 270)" : "transparent"} strokeWidth={0.4}
+                    opacity={isUnlocked ? 1 : 0.65}
                     initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.3 + i * 0.05, type: "spring", stiffness: 160 }}
                     style={{ transformOrigin: `${n.x}px ${n.y}px` }}
                   />
-                  {isActive && (
+                  {isActive && isUnlocked && (
                     <motion.circle cx={n.x} cy={n.y} r={r}
                       fill="none" stroke="oklch(0.45 0.18 300)" strokeWidth={0.3}
                       animate={{ r: [r, r * 2.5], opacity: [0.8, 0] }}
                       transition={{ duration: 2, repeat: Infinity }} />
+                  )}
+                  {!isUnlocked && (
+                    <text x={n.x} y={n.y + 0.8} textAnchor="middle" fontSize="2.6" fill="oklch(0.38 0.025 270)" className="font-medium pointer-events-none select-none">
+                      x
+                    </text>
+                  )}
+                  {isCompleted && (
+                    <text x={n.x} y={n.y + 0.8} textAnchor="middle" fontSize="2.4" fill="white" className="font-medium pointer-events-none select-none">
+                      ok
+                    </text>
                   )}
                   <text x={n.x} y={n.y + r + 2.4} textAnchor="middle" fontSize="2.2" fill="oklch(0.22 0.025 270)" className="font-medium pointer-events-none select-none">
                     {n.label}
@@ -129,14 +152,17 @@ function KnowledgePage() {
               </div>
             </div>
             <div className="mt-5 text-xs text-muted-foreground space-y-2">
-              <div><span className="text-foreground font-medium">Required prerequisites:</span> {prerequisiteLabels.join(" · ") || "None"}</div>
-              <div><span className="text-foreground font-medium">Unlocks:</span> {unlockLabels.join(" · ") || "—"}</div>
+              <div><span className="text-foreground font-medium">Required prerequisites:</span> {prerequisiteLabels.join(" - ") || "None"}</div>
+              <div><span className="text-foreground font-medium">Unlocks:</span> {unlockLabels.join(" - ") || "-"}</div>
+              <div><span className="text-foreground font-medium">Status:</span> {selectedLocked ? "Locked" : completedIds.has(sel.id) ? "Completed" : "Unlocked"}</div>
             </div>
             <button
               type="button"
               onClick={() => openRoadmap(sel)}
-              className="mt-5 w-full rounded-full bg-foreground text-background text-sm py-2.5 hover:opacity-90"
+              disabled={selectedLocked}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-foreground text-background text-sm py-2.5 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
             >
+              {selectedLocked && <Lock className="size-4" />}
               Open roadmap for {sel.label}
             </button>
               </>
@@ -201,7 +227,7 @@ function humanize(value: string) {
 }
 
 function filterItemsForSelectedTopic(items: CurriculumItem[], selectedTopic?: string): CurriculumItem[] {
-  const normalizedSelected = normalizeTopic(selectedTopic);
+  const normalizedSelected = canonicalTrackTopic(selectedTopic);
   if (!normalizedSelected) return items;
 
   const exactTopic = items.filter((item) => normalizeTopic(item.topic) === normalizedSelected);
@@ -224,16 +250,34 @@ function filterItemsForSelectedTopic(items: CurriculumItem[], selectedTopic?: st
   return [];
 }
 
-function buildSuggestions(nodes: Node[], edges: [string, string][], activeId?: string): Node[] {
-  const unlockIds = edges.filter(([from]) => from === activeId).map(([, to]) => to);
-  const unlocked = unlockIds
+function buildSuggestions(nodes: Node[], edges: [string, string][], unlockedIds: Set<string>, completedIds: Set<string>): Node[] {
+  const directUnlockIds = new Set(
+    edges
+      .filter(([from, to]) => completedIds.has(from) && unlockedIds.has(to) && !completedIds.has(to))
+      .map(([, to]) => to),
+  );
+  const directUnlocks = [...directUnlockIds]
     .map((id) => nodes.find((node) => node.id === id))
     .filter((node): node is Node => Boolean(node));
   const lowMastery = nodes
-    .filter((node) => node.id !== activeId && !unlockIds.includes(node.id))
+    .filter((node) => unlockedIds.has(node.id) && !completedIds.has(node.id) && !directUnlockIds.has(node.id))
     .sort((a, b) => a.mastery - b.mastery);
 
-  return [...unlocked, ...lowMastery].slice(0, 3);
+  return [...directUnlocks, ...lowMastery].slice(0, 3);
+}
+
+function unlockedNodeIds(nodes: Node[], edges: [string, string][]): Set<string> {
+  const completedIds = completedNodeIds(nodes);
+  return new Set(nodes.filter((node) => prerequisitesMet(node.id, edges, completedIds)).map((node) => node.id));
+}
+
+function completedNodeIds(nodes: Node[]): Set<string> {
+  return new Set(nodes.filter((node) => node.mastery >= MASTERY_COMPLETE).map((node) => node.id));
+}
+
+function prerequisitesMet(nodeId: string, edges: [string, string][], completedIds: Set<string>) {
+  const prerequisites = edges.filter(([, to]) => to === nodeId).map(([from]) => from);
+  return prerequisites.length === 0 || prerequisites.every((id) => completedIds.has(id));
 }
 
 function prerequisitesFor(node: Node, edges: [string, string][], find: (id: string) => Node | undefined): string[] {
@@ -267,6 +311,17 @@ function normalizeTopic(value?: string) {
   return (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+function canonicalTrackTopic(value?: string) {
+  const normalized = normalizeTopic(value);
+  if (["linear_algebra", "linear_algebra_foundations", "vectors_matrices_norms_projections_eigenvalues_diagonalisation"].includes(normalized)) {
+    return "linear_algebra";
+  }
+  if (["calculus", "limits_derivatives_gradients_multivariate_calculus_hessians"].includes(normalized)) {
+    return "calculus";
+  }
+  return normalized;
+}
+
 const PREREQUISITE_EDGES: Record<string, [string, string][]> = {
   linear_algebra: [
     ["la_vectors", "la_matrices"],
@@ -291,6 +346,8 @@ const REQUIRED_PREREQUISITES: Record<string, string[]> = {
   calc_gradients: ["Derivatives", "Partial derivatives", "Multivariable functions"],
   calc_hessians: ["Gradients", "Second derivatives", "Matrices"],
 };
+
+const MASTERY_COMPLETE = 0.8;
 
 function Radial({ value }: { value: number }) {
   const c = 2 * Math.PI * 22;

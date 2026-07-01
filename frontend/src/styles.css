@@ -140,6 +140,39 @@
   .text-balance { text-wrap: balance; }
   .text-pretty { text-wrap: pretty; }
 
+  .reader-dyslexia article {
+    font-family: var(--font-reading);
+  }
+
+  .reader-dyslexia article p,
+  .reader-dyslexia article li,
+  .reader-dyslexia article textarea {
+    line-height: 2;
+    letter-spacing: 0.01em;
+    word-spacing: 0.12em;
+  }
+
+  .reader-dyslexia article section {
+    background-color: color-mix(in oklab, var(--card) 88%, white 12%);
+  }
+
+  .reader-focus article > section,
+  .reader-focus article > div,
+  .reader-focus article > article {
+    opacity: 0.42;
+    transition: opacity 160ms ease, box-shadow 160ms ease;
+  }
+
+  .reader-focus article > section:hover,
+  .reader-focus article > section:focus-within,
+  .reader-focus article > div:hover,
+  .reader-focus article > div:focus-within,
+  .reader-focus article > article:hover,
+  .reader-focus article > article:focus-within {
+    opacity: 1;
+    box-shadow: var(--shadow-soft);
+  }
+
   .grain::before {
     content: "";
     position: absolute; inset: 0; pointer-events: none;

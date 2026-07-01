@@ -1,10 +1,12 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   BookMarked,
   CheckCircle2,
   GitBranch,
   ListChecks,
+  Lock,
   MessageCircle,
   Mic,
   MicOff,
@@ -14,18 +16,25 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  ClipboardCheck,
   Target,
   Volume2,
   X,
+  Accessibility,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ElementType, type FormEvent, type SelectHTMLAttributes } from "react";
+import { useEffect, useMemo, useRef, useState, type ElementType, type FormEvent, type SelectHTMLAttributes } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
+import { MathText } from "@/components/learning/MathText";
+import { VectorArrowDiagram } from "@/components/learning/VectorArrowDiagram";
+import { isVectorVisualText } from "@/components/learning/vectorVisual";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
-import { useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
-import { synthesizeLessonAudio } from "@/lib/api";
+import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
+import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
+import { getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, setActiveRoadmapLesson, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import { ROUTES } from "@/lib/routes";
 import type { ApiJson, ApiRecord, LessonBlueprint, LessonRoadmapItem } from "@/types/api";
 
@@ -62,6 +71,7 @@ export type LessonBrief = {
 export type LessonLaunchContext = {
   brief: LessonBrief;
   selectedLesson: LessonRoadmapItem;
+  lessonIndex?: number;
 };
 
 type BrowserSpeechRecognition = {
@@ -82,16 +92,24 @@ type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 function LessonPage() {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { topic: searchTopic } = Route.useSearch();
   const initialBrief = makeInitialBrief(currentUser, searchTopic);
   const [draft, setDraft] = useState<LessonBrief>(initialBrief);
   const [brief, setBrief] = useState<LessonBrief>(initialBrief);
+  const [completedLessonIds, setCompletedLessonIds] = useState<Set<string>>(new Set());
+  const [completedLessonCount, setCompletedLessonCount] = useState(0);
+  const [preloadingLessonId, setPreloadingLessonId] = useState("");
   const roadmapConstraints = constraintsFromBrief(brief);
   const roadmap = useRoadmap({
     learner_id: currentUser?.id ?? "",
     topic: brief.topic,
     constraints: roadmapConstraints,
   });
+  const roadmapLessons = useMemo(
+    () => mergeCompletedRoadmapLessons(roadmap.data?.lessons ?? [], getCompletedRoadmapLessonItems(currentUser?.id, brief.topic), completedLessonCount),
+    [brief.topic, completedLessonCount, currentUser?.id, roadmap.data?.lessons],
+  );
 
   function regenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -103,9 +121,18 @@ function LessonPage() {
   }
 
   function chooseLesson(item: LessonRoadmapItem) {
-    const launchContext: LessonLaunchContext = { brief: launchBriefFromPreferences(brief, draft), selectedLesson: item };
+    const lessons = roadmapLessons;
+    const lessonIndex = lessons.findIndex((lesson) => lesson.id === item.id);
+    if (!isRoadmapLessonUnlocked(lessons, lessonIndex, completedLessonIds, completedLessonCount)) return;
+
+    const launchContext: LessonLaunchContext = { brief: launchBriefFromPreferences(brief, draft), selectedLesson: item, lessonIndex };
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem(LESSON_CONTEXT_STORAGE_KEY, JSON.stringify(launchContext));
+      setNextRoadmapLessonContext(
+        lessons[lessonIndex + 1]
+          ? { ...launchContext, selectedLesson: lessons[lessonIndex + 1], lessonIndex: lessonIndex + 1, remainingLessons: lessons.slice(lessonIndex + 2) }
+          : null,
+      );
     }
     void navigate({ to: "/lesson-view" });
   }
@@ -118,22 +145,47 @@ function LessonPage() {
   }
 
   useEffect(() => {
+    setCompletedLessonIds(getCompletedRoadmapLessons(currentUser?.id, brief.topic));
+    setCompletedLessonCount(getCompletedRoadmapLessonCount(currentUser?.id, brief.topic));
+  }, [currentUser?.id, brief.topic, roadmap.data?.lessons]);
+
+  useEffect(() => {
+    if (!currentUser?.id || !roadmapLessons.length) return;
+    const preloadLesson = roadmapLessons.find((lesson, index) => (
+      isRoadmapLessonUnlocked(roadmapLessons, index, completedLessonIds, completedLessonCount) &&
+      !isRoadmapLessonCompleted(lesson, index, completedLessonIds, completedLessonCount)
+    ));
+    if (!preloadLesson) return;
+
+    const preloadBrief = launchBriefFromPreferences(brief, draft);
+    const request = {
+      learner_id: currentUser.id,
+      topic: preloadBrief.topic,
+      selected_lesson: roadmapItemToRecord(preloadLesson),
+      constraints: constraintsFromBrief(preloadBrief),
+    };
+    let cancelled = false;
+    setPreloadingLessonId(preloadLesson.id);
+    void queryClient.prefetchQuery({
+      queryKey: lessonQueryKey(request),
+      queryFn: () => generateLesson(request),
+      staleTime: 5 * 60 * 1000,
+    }).finally(() => {
+      if (!cancelled) setPreloadingLessonId("");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [brief, completedLessonCount, completedLessonIds, currentUser?.id, draft, queryClient, roadmapLessons]);
+
+  useEffect(() => {
     const nextBrief = makeInitialBrief(currentUser, searchTopic);
     const pendingTopic = consumePendingRoadmapTopic();
     if (pendingTopic) nextBrief.topic = pendingTopic;
     setDraft(nextBrief);
     setBrief(nextBrief);
-  }, [
-    currentUser?.id,
-    currentUser?.learningTopic,
-    currentUser?.educationLevel,
-    currentUser?.topicFamiliarity,
-    currentUser?.pacePreference,
-    currentUser?.preferredModality,
-    currentUser?.learningAvailability,
-    currentUser?.accessibilitySupport,
-    searchTopic,
-  ]);
+  }, [currentUser, searchTopic]);
 
   return (
     <AppShell
@@ -155,9 +207,11 @@ function LessonPage() {
       {roadmap.isError && <ErrorPanel title="Roadmap generation failed" message={roadmap.error.message} onRetry={() => void roadmap.refetch()} />}
       {roadmap.data && (
         <RoadmapCards
-          lessons={roadmap.data.lessons}
+          lessons={roadmapLessons}
           onSelect={chooseLesson}
-          loading={false}
+          completedLessonIds={completedLessonIds}
+          completedLessonCount={completedLessonCount}
+          preloadingLessonId={preloadingLessonId}
           generationSource={roadmap.data.generation_source}
           generationModel={roadmap.data.generation_model}
         />
@@ -170,11 +224,14 @@ function LessonPage() {
 export function LessonExperience({
   brief,
   selectedLesson,
+  lessonIndex = 0,
 }: {
   brief: LessonBrief;
   selectedLesson: LessonRoadmapItem;
+  lessonIndex?: number;
 }) {
   const { currentUser } = useAuth();
+  const queryClient = useQueryClient();
   const lesson = useLesson({
     learner_id: currentUser?.id ?? "",
     topic: brief.topic,
@@ -190,6 +247,8 @@ export function LessonExperience({
   const [tutorResponseMode, setTutorResponseMode] = useState<"text" | "audio">("text");
   const [recordingQuestion, setRecordingQuestion] = useState(false);
   const [recordingStatus, setRecordingStatus] = useState("");
+  const [assessmentPreload, setAssessmentPreload] = useState<"idle" | "preloading" | "ready">("idle");
+  const [readerMode, setReaderMode] = useState<"standard" | "dyslexia" | "focus">(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
   const tutorAudioRef = useRef<HTMLAudioElement>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
 
@@ -208,7 +267,37 @@ export function LessonExperience({
   useEffect(() => {
     if (!lesson.data || typeof window === "undefined") return;
     window.localStorage.setItem("evolved.currentLessonSession", lesson.data.lesson_id);
-  }, [lesson.data]);
+    if (currentUser?.id) {
+      setActiveRoadmapLesson({
+        learnerId: currentUser.id,
+        topic: brief.topic,
+        lessonId: selectedLesson.id,
+        lessonIndex,
+        lesson: selectedLesson,
+      });
+    }
+  }, [brief.topic, currentUser?.id, lesson.data, lessonIndex, selectedLesson]);
+
+  useEffect(() => {
+    if (!currentUser?.id || !lesson.data?.lesson_id) return;
+
+    const request = { learner_id: currentUser.id, session_id: lesson.data.lesson_id };
+    let cancelled = false;
+    setAssessmentPreload("preloading");
+    void queryClient.prefetchQuery({
+      queryKey: quizQueryKey(request),
+      queryFn: () => generateQuiz(request),
+      staleTime: 5 * 60 * 1000,
+    }).then(() => {
+      if (!cancelled) setAssessmentPreload("ready");
+    }).catch(() => {
+      if (!cancelled) setAssessmentPreload("idle");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, lesson.data?.lesson_id, queryClient]);
 
   useEffect(() => {
     setTutorOpen(false);
@@ -315,13 +404,13 @@ export function LessonExperience({
   if (!lesson.data) return null;
 
   return (
-    <div className="relative">
+    <div className={`relative ${readerModeClass(readerMode)}`}>
       <article className="space-y-6">
         <section className="overflow-hidden rounded-3xl border border-border bg-card">
           <div className="bg-foreground px-6 py-5 text-background">
             <div className="text-[10px] uppercase tracking-[0.24em] text-background/65">Your lesson</div>
             <h2 className="mt-2 max-w-5xl font-display text-3xl md:text-4xl">{lesson.data.learning_objective}</h2>
-            <p className="mt-3 max-w-5xl text-base leading-8 text-background/75">{lesson.data.lesson_summary}</p>
+            <MathText className="mt-3 max-w-5xl text-base leading-8 text-background/75" text={lesson.data.lesson_summary} />
             {lesson.data.learning_style && (
               <div className="mt-3 inline-flex rounded-full border border-background/30 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-background/80">
                 {lesson.data.learning_style}
@@ -344,6 +433,7 @@ export function LessonExperience({
           </div>
         </section>
 
+        <ReaderControls mode={readerMode} onChange={setReaderMode} />
         <AdaptiveLessonPayload lesson={lesson.data} />
 
         {lesson.data.lesson_structure.map((section, index) => (
@@ -364,6 +454,29 @@ export function LessonExperience({
           <AgentList icon={MessageCircle} title="Try as you learn" empty="No practice prompts returned." items={lesson.data.interaction_points} />
           <AgentList icon={Target} title="Check your understanding" empty="No checkpoints returned." items={lesson.data.assessment_points} />
         </div>
+
+        <section className="rounded-3xl border border-plum/20 bg-plum/[0.04] p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.22em] text-plum">Lesson complete</div>
+              <h3 className="mt-2 font-display text-2xl">Ready for the assessment?</h3>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                Finish the checkpoint to record progress and unlock the next roadmap lesson.
+              </p>
+              {assessmentPreload !== "idle" && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {assessmentPreload === "ready" ? "Assessment is ready." : "Preparing assessment..."}
+                </p>
+              )}
+            </div>
+            <Link
+              to={ROUTES.ASSESSMENT}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm text-background hover:opacity-90"
+            >
+              <ClipboardCheck className="size-4" /> Start assessment
+            </Link>
+          </div>
+        </section>
       </article>
 
       <button
@@ -525,7 +638,7 @@ function LessonBriefForm({
             className="mt-2"
             value={draft.topic}
             onChange={(event) => onChange({ ...draft, topic: event.target.value })}
-            placeholder="e.g. Derivatives"
+            placeholder="Chosen from your subject track"
           />
         </label>
         <label className="text-xs font-medium text-muted-foreground">
@@ -534,43 +647,43 @@ function LessonBriefForm({
             <option>School</option>
             <option>Undergraduate</option>
             <option>Postgraduate</option>
-            <option>Professional / Independent Learner</option>
+            <option>Professional or independent learner</option>
           </Select>
         </label>
         <label className="text-xs font-medium text-muted-foreground">
           Current familiarity
           <Select value={draft.familiarity_level} onChange={(event) => onChange({ ...draft, familiarity_level: event.target.value })}>
-            <option>Beginner</option>
-            <option>Intermediate</option>
-            <option>Advanced</option>
+            <option value="beginner">Beginner</option>
+            <option value="intermediate">Intermediate</option>
+            <option value="advanced">Advanced</option>
           </Select>
         </label>
         <label className="text-xs font-medium text-muted-foreground">
           Preferred pace
           <Select value={draft.pace} onChange={(event) => onChange({ ...draft, pace: event.target.value })}>
-            <option>Gentle and Thorough</option>
-            <option>Balanced</option>
-            <option>Fast and Challenging</option>
+            <option value="gentle">Gentle and thorough</option>
+            <option value="balanced">Balanced</option>
+            <option value="fast">Fast and challenging</option>
           </Select>
         </label>
         <label className="text-xs font-medium text-muted-foreground">
           Learning style
           <Select value={draft.learning_style} onChange={(event) => onChange({ ...draft, learning_style: event.target.value })}>
-            <option>Visual Examples and Diagrams</option>
-            <option>Audio Learning</option>
-            <option>Detailed Written Explanations</option>
+            <option value="visual">Visual examples and diagrams</option>
+            <option value="audio">Audio learning</option>
+            <option value="reading">Detailed written explanations</option>
           </Select>
         </label>
         <label className="text-xs font-medium text-muted-foreground">
           Learning availability
           <Select value={draft.availability} onChange={(event) => onChange({ ...draft, availability: event.target.value })}>
-            <option>30 min/day</option>
-            <option>1 hr/day</option>
-            <option>2 hr/day</option>
+            <option value="30_min">30 min/day</option>
+            <option value="60_min">1 hr/day</option>
+            <option value="120_min">2 hr/day</option>
           </Select>
         </label>
       </div>
-      <label className="mt-4 flex items-center gap-3 text-sm text-muted-foreground">
+        <label className="mt-4 flex items-center gap-3 text-sm text-muted-foreground">
         <input
           type="checkbox"
           checked={draft.accessibility_support}
@@ -579,8 +692,47 @@ function LessonBriefForm({
         />
         Accessibility support
       </label>
+      {draft.accessibility_support && (
+        <div className="mt-3 rounded-2xl border border-plum/20 bg-plum/[0.04] p-4 text-sm leading-6 text-muted-foreground">
+          Dyslexia-aware support is active: lessons use clearer chunking, shorter explanations, stronger visual anchoring, and optional focus reading mode.
+        </div>
+      )}
     </form>
   );
+}
+
+function ReaderControls({ mode, onChange }: { mode: "standard" | "dyslexia" | "focus"; onChange: (mode: "standard" | "dyslexia" | "focus") => void }) {
+  return (
+    <section className="rounded-3xl border border-border bg-card p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          <Accessibility className="size-3.5 text-plum" /> Reader accessibility
+        </div>
+        <div className="grid grid-cols-3 rounded-2xl border border-border bg-muted/25 p-1 text-xs">
+          {[
+            { value: "standard", label: "Standard" },
+            { value: "dyslexia", label: "Dyslexia" },
+            { value: "focus", label: "Focus" },
+          ].map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => onChange(item.value as "standard" | "dyslexia" | "focus")}
+              className={`rounded-xl px-3 py-2 font-medium ${mode === item.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function readerModeClass(mode: "standard" | "dyslexia" | "focus") {
+  if (mode === "dyslexia") return "reader-dyslexia";
+  if (mode === "focus") return "reader-focus";
+  return "";
 }
 
 function TutorAnswerText({ answer }: { answer: string }) {
@@ -593,11 +745,11 @@ function TutorAnswerText({ answer }: { answer: string }) {
           return (
             <div key={`${line}-${index}`}>
               <span className="font-medium">{match[1]}:</span>
-              {match[2] && <span className="ml-1 text-foreground/80">{match[2]}</span>}
+              {match[2] && <MathText as="span" className="ml-1 text-foreground/80" text={match[2]} />}
             </div>
           );
         }
-        return <p key={`${line}-${index}`} className="text-foreground/80">{line}</p>;
+        return <MathText key={`${line}-${index}`} className="text-foreground/80" text={line} />;
       })}
     </div>
   );
@@ -620,7 +772,8 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
       ]),
     ).values(),
   );
-  const hasVisuals = visuals.length > 0 || Boolean(lesson.conceptMaps?.length || lesson.flowDiagrams?.length);
+  const conceptMaps = visuals.some((item) => stringValue(item.type) === "concept_map") ? [] : (lesson.conceptMaps ?? []);
+  const hasVisuals = visuals.length > 0 || Boolean(conceptMaps.length || lesson.flowDiagrams?.length);
   const practiceItems = [...(lesson.practiceExercises ?? []), ...(lesson.interactiveQuestions ?? [])];
 
   return (
@@ -635,7 +788,7 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
       {hasVisuals && (
         <VisualLesson
           visualElements={visuals}
-          conceptMaps={lesson.conceptMaps ?? []}
+          conceptMaps={conceptMaps}
           flowDiagrams={lesson.flowDiagrams ?? []}
         />
       )}
@@ -794,7 +947,7 @@ function AudioLesson({ narration, sections, audioAsset }: { narration: string; s
           {sections.map((section, index) => (
             <div key={recordKey(section, index)} className="rounded-2xl border border-border p-4 text-sm leading-relaxed">
               <div className="font-medium">{recordTitle(section, index)}</div>
-              <p className="mt-2 text-muted-foreground">{stringValue(section.script) || recordBody(section)}</p>
+              <MathText className="mt-2 text-muted-foreground" text={stringValue(section.script) || recordBody(section)} />
             </div>
           ))}
         </div>
@@ -832,7 +985,9 @@ function VisualLesson({
               style={{ animationDelay: `${index * 90}ms` }}
             >
               <div className="text-lg font-medium">{recordTitle(item, index)}</div>
-              {isValidMediaUrl(stringValue(item.imageUrl), "image") && (
+              {isVectorVisualText(item) ? (
+                <VectorArrowDiagram title={recordTitle(item, index)} description={stringValue(item.description)} data={item.data ?? item.items} />
+              ) : isValidMediaUrl(stringValue(item.imageUrl), "image") && (
                 <img
                   src={stringValue(item.imageUrl)}
                   alt={stringValue(item.description) || recordTitle(item, index)}
@@ -847,7 +1002,7 @@ function VisualLesson({
                 <div className="mt-3 flex flex-wrap gap-2">
                   {recordsFrom(item.items).map((entry, itemIndex) => (
                     <span key={`${recordKey(item, index)}-${itemIndex}`} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-                      {valueToText(entry)}
+                      <MathText text={valueToText(entry)} />
                     </span>
                   ))}
                 </div>
@@ -910,6 +1065,13 @@ function ConceptMap({ map, index }: { map: ApiRecord; index: number }) {
 
 function FlowDiagram({ flow, index }: { flow: ApiRecord; index: number }) {
   const steps = recordsFrom(flow.steps);
+  if (isVectorVisualText(flow)) {
+    return (
+      <div className="mt-5 animate-in fade-in-0 slide-in-from-bottom-2 duration-500">
+        <VectorArrowDiagram title={recordTitle(flow, index)} description={stringValue(flow.description)} data={steps} />
+      </div>
+    );
+  }
 
   return (
     <div className="mt-5 rounded-3xl border border-border p-6 animate-in fade-in-0 slide-in-from-bottom-2 duration-500">
@@ -924,7 +1086,7 @@ function FlowDiagram({ flow, index }: { flow: ApiRecord; index: number }) {
             style={{ animationDelay: `${stepIndex * 80}ms` }}
           >
             <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Step {stepIndex + 1}</div>
-            {valueToText(step)}
+            <MathText text={valueToText(step)} />
           </div>
         ))}
       </div>
@@ -941,10 +1103,10 @@ function PracticeLesson({ items }: { items: ApiRecord[] }) {
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {items.map((item, index) => (
           <div key={recordKey(item, index)} className="rounded-2xl border border-border p-4 text-sm leading-relaxed">
-            <div className="font-medium">{stringValue(item.prompt) || recordTitle(item, index)}</div>
-            {stringValue(item.hint) && <p className="mt-2 text-muted-foreground">Hint: {stringValue(item.hint)}</p>}
-            {stringValue(item.feedback) && <p className="mt-2 text-muted-foreground">Feedback: {stringValue(item.feedback)}</p>}
-            {!stringValue(item.prompt) && !stringValue(item.hint) && !stringValue(item.feedback) && <p className="mt-2 text-muted-foreground">{recordBody(item)}</p>}
+            <MathText className="font-medium" text={stringValue(item.prompt) || recordTitle(item, index)} />
+            {stringValue(item.hint) && <MathText className="mt-2 text-muted-foreground" text={`Hint: ${stringValue(item.hint)}`} />}
+            {stringValue(item.feedback) && <MathText className="mt-2 text-muted-foreground" text={`Feedback: ${stringValue(item.feedback)}`} />}
+            {!stringValue(item.prompt) && !stringValue(item.hint) && !stringValue(item.feedback) && <MathText className="mt-2 text-muted-foreground" text={recordBody(item)} />}
           </div>
         ))}
       </div>
@@ -958,16 +1120,18 @@ function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
 
 function RoadmapCards({
   lessons,
-  selectedId,
   onSelect,
-  loading,
+  completedLessonIds,
+  completedLessonCount,
+  preloadingLessonId,
   generationSource,
   generationModel,
 }: {
   lessons: LessonRoadmapItem[];
-  selectedId?: string;
   onSelect: (item: LessonRoadmapItem) => void;
-  loading: boolean;
+  completedLessonIds: Set<string>;
+  completedLessonCount: number;
+  preloadingLessonId?: string;
   generationSource?: string;
   generationModel?: string | null;
 }) {
@@ -977,35 +1141,71 @@ function RoadmapCards({
         <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Personalized roadmap</div>
         <div className="flex items-center gap-2">
           <SourceBadge source={generationSource} model={generationModel} />
-          {loading && <div className="text-xs text-muted-foreground">Generating selected lesson...</div>}
+          {preloadingLessonId && <div className="text-xs text-muted-foreground">Preparing your next lesson...</div>}
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {lessons.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onSelect(item)}
-            title={item.title}
-            className={`flex aspect-square overflow-hidden rounded-2xl border p-4 text-left transition ${selectedId === item.id ? "border-plum bg-plum/[0.06]" : "border-border bg-card hover:border-plum/50"}`}
-          >
-            <div className="flex min-h-0 w-full flex-col">
-              <div className="flex items-center justify-between gap-2 text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
-                <span className="min-w-0 truncate">{compactText(item.difficulty, 2, 18)}</span>
-                <span className="shrink-0">{item.estimated_duration} min</span>
+        {lessons.map((item, index) => {
+          const unlocked = isRoadmapLessonUnlocked(lessons, index, completedLessonIds, completedLessonCount);
+          const completed = isRoadmapLessonCompleted(item, index, completedLessonIds, completedLessonCount);
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onSelect(item)}
+              disabled={!unlocked}
+              title={unlocked ? item.title : "Finish the previous lesson to unlock this one."}
+              className={`flex aspect-square overflow-hidden rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-55 ${
+                completed
+                  ? "border-plum bg-plum/[0.06]"
+                  : unlocked
+                    ? "border-border bg-card hover:border-plum/50"
+                    : "border-border bg-muted/25"
+              }`}
+            >
+              <div className="flex min-h-0 w-full flex-col">
+                <div className="flex items-center justify-between gap-2 text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+                  <span className="min-w-0 truncate">{compactText(item.difficulty, 2, 18)}</span>
+                  <span className="shrink-0">{item.estimated_duration} min</span>
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.16em]">
+                  {completed ? (
+                    <span className="inline-flex items-center gap-1 text-plum"><CheckCircle2 className="size-3" /> Completed</span>
+                  ) : unlocked ? (
+                    <span className="text-muted-foreground">{preloadingLessonId === item.id ? "Preloading" : "Unlocked"}</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-muted-foreground"><Lock className="size-3" /> Locked</span>
+                  )}
+                </div>
+                <h3 className="mt-3 break-words text-base font-semibold leading-6 text-foreground">
+                  {compactText(item.title, 8, 76)}
+                </h3>
+                <p className="mt-3 break-words text-xs leading-5 text-muted-foreground">
+                  {compactText(item.description, 16, 120)}
+                </p>
               </div>
-              <h3 className="mt-4 break-words text-base font-semibold leading-6 text-foreground">
-                {compactText(item.title, 8, 76)}
-              </h3>
-              <p className="mt-3 break-words text-xs leading-5 text-muted-foreground">
-                {compactText(item.description, 16, 120)}
-              </p>
-            </div>
-          </button>
-        ))}
+            </button>
+          );
+        })}
       </div>
     </section>
   );
+}
+
+function isRoadmapLessonCompleted(item: LessonRoadmapItem, index: number, completedIds: Set<string>, completedCount: number) {
+  return completedIds.has(item.id) || index < completedCount;
+}
+
+function isRoadmapLessonUnlocked(lessons: LessonRoadmapItem[], index: number, completedIds: Set<string>, completedCount: number) {
+  return index >= 0 && (
+    index <= completedCount ||
+    lessons.slice(0, index).every((lesson, lessonIndex) => isRoadmapLessonCompleted(lesson, lessonIndex, completedIds, completedCount))
+  );
+}
+
+function mergeCompletedRoadmapLessons(generated: LessonRoadmapItem[], completed: LessonRoadmapItem[], completedCount: number) {
+  if (!completedCount) return generated;
+  return generated.map((lesson, index) => index < completedCount ? (completed[index] ?? lesson) : lesson);
 }
 
 function SourceBadge({ source, model, inverse = false }: { source?: string; model?: string | null; inverse?: boolean }) {
@@ -1043,7 +1243,7 @@ function LessonSection({ section, index }: { section: ApiRecord; index: number }
         <BookMarked className="size-3" /> Lesson part {index + 1}
       </div>
       <h3 className="mt-3 font-display text-3xl">{recordTitle(section, index)}</h3>
-      <p className="mt-4 whitespace-pre-wrap text-base leading-8 text-foreground/80">{explanation}</p>
+      <MathText className="mt-4 whitespace-pre-wrap text-base leading-8 text-foreground/80" text={explanation} />
       {example && <Detail label="Example" text={example} />}
       {practice && <Detail label="Practice" text={practice} />}
       {hint && <Detail label="Hint" text={hint} />}
@@ -1063,7 +1263,7 @@ function Detail({ label, text, accent = false }: { label: string; text: string; 
   return (
     <div className={`mt-4 rounded-2xl border p-5 text-base leading-8 ${accent ? "border-plum/20 bg-plum/[0.04]" : "border-border bg-muted/20"}`}>
       <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-      {text}
+      <MathText text={text} />
     </div>
   );
 }
@@ -1077,7 +1277,7 @@ function AgentList({ icon: Icon, title, empty, items }: { icon: ElementType; tit
       <div className="mt-4 space-y-3">
         {items.map((item, index) => (
           <div key={recordKey(item, index)} className="rounded-2xl bg-muted/35 p-4 text-sm leading-relaxed">
-            {stringValue(item.prompt) || recordBody(item)}
+            <MathText text={stringValue(item.prompt) || recordBody(item)} />
           </div>
         ))}
         {items.length === 0 && <p className="text-sm text-muted-foreground">{empty}</p>}
@@ -1214,11 +1414,11 @@ function makeInitialBrief(
 ): LessonBrief {
   return {
     topic: topicOverride?.trim() || (user?.learningTopic ?? ""),
-    education_level: toEducationLabel(user?.educationLevel),
-    familiarity_level: toFamiliarityLabel(user?.topicFamiliarity),
-    pace: toPaceLabel(user?.pacePreference),
-    learning_style: toLearningStyleLabel(user?.preferredModality),
-    availability: toAvailabilityLabel(user?.learningAvailability),
+    education_level: user?.educationLevel || "Undergraduate",
+    familiarity_level: user?.topicFamiliarity || "beginner",
+    pace: user?.pacePreference || "balanced",
+    learning_style: user?.preferredModality || "reading",
+    availability: user?.learningAvailability || "30_min",
     accessibility_support: Boolean(user?.accessibilitySupport),
   };
 }
@@ -1246,7 +1446,7 @@ function toEducationLabel(value?: string) {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "school") return "School";
   if (normalized === "postgraduate") return "Postgraduate";
-  if (normalized.includes("professional") || normalized.includes("independent")) return "Professional / Independent Learner";
+  if (normalized.includes("professional") || normalized.includes("independent")) return "Professional or independent learner";
   return "Undergraduate";
 }
 
@@ -1281,13 +1481,23 @@ function toAvailabilityLabel(value?: string) {
 
 function constraintsFromBrief(brief: LessonBrief): ApiRecord {
   return {
-    education_level: brief.education_level,
-    familiarity_level: brief.familiarity_level,
-    pace: brief.pace,
-    learning_style: brief.learning_style,
-    availability: brief.availability,
-    accessibility: { additional_support: brief.accessibility_support },
+    education_level: toEducationLabel(brief.education_level),
+    familiarity_level: toFamiliarityLabel(brief.familiarity_level),
+    pace: toPaceLabel(brief.pace),
+    learning_style: toLearningStyleLabel(brief.learning_style),
+    availability: toAvailabilityLabel(brief.availability),
+    accessibility: {
+      additional_support: brief.accessibility_support,
+      dyslexia_support: brief.accessibility_support,
+      chunked_explanations: brief.accessibility_support,
+      symbolic_math_required: isMathTopic(brief.topic),
+      focus_mode_available: true,
+    },
   };
+}
+
+function isMathTopic(topic: string) {
+  return /\b(calculus|algebra|vector|matrix|matrices|eigen|derivative|gradient|hessian|limit|projection|norm)\b/i.test(topic);
 }
 
 function roadmapItemToRecord(item: LessonRoadmapItem): ApiRecord {

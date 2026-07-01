@@ -9,6 +9,7 @@ import {
   Compass,
   Sparkles,
   Search,
+  MessageSquarePlus,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -23,6 +24,7 @@ const nav = [
   { to: ROUTES.PROGRESS, label: "Progress", icon: LineChart, kbd: "P" },
   { to: ROUTES.INTELLIGENCE, label: "Intelligence", icon: Brain, kbd: "I" },
   { to: ROUTES.PEDAGOGY, label: "Pedagogy", icon: Compass, kbd: "S" },
+  { to: ROUTES.FEEDBACK, label: "Feedback", icon: MessageSquarePlus, kbd: "F" },
 ] as const;
 
 export function AppShell({
@@ -43,7 +45,7 @@ export function AppShell({
     <ProtectedRoute>
       <div className="min-h-dvh flex bg-background text-foreground">
         <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-border/70 px-4 py-5 sticky top-0 h-dvh">
-          <Link to={ROUTES.HOME} className="flex items-center gap-2 px-2 mb-7 group">
+          <Link to={ROUTES.KNOWLEDGE} className="flex items-center gap-2 px-2 mb-7 group">
             <div
               className="size-7 rounded-lg"
               style={{ backgroundImage: "var(--gradient-aurora)" }}
@@ -111,12 +113,12 @@ export function AppShell({
 
         <div className="flex-1 min-w-0 flex flex-col">
           <header className="sticky top-0 z-30 backdrop-blur bg-background/80 border-b border-border/70 px-6 lg:px-10 h-14 flex items-center gap-4">
-            <Link to={ROUTES.HOME} className="lg:hidden font-display">
+            <Link to={ROUTES.KNOWLEDGE} className="lg:hidden font-display">
               EvolvED
             </Link>
             <div className="hidden lg:flex items-center gap-2 text-xs text-muted-foreground">
-              <Link to={ROUTES.HOME} className="hover:text-foreground">
-                Home
+              <Link to={ROUTES.KNOWLEDGE} className="hover:text-foreground">
+                Knowledge
               </Link>
               <span>/</span>
               <span className="text-foreground">{title}</span>

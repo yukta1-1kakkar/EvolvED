@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { motion } from "framer-motion";
-import { Brain, AlertTriangle, GitBranch, Database, Eye } from "lucide-react";
+import { Brain, AlertTriangle, GitBranch, Database, Eye, Search, Clock3 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import { useAuth } from "@/hooks/useAuth";
 import { useMemory } from "@/hooks/useMemory";
-import type { ApiJson, ApiRecord } from "@/types/api";
+import type { ApiJson, ApiRecord, RetrievedMemory } from "@/types/api";
 
 export const Route = createFileRoute("/intelligence")({
   head: () => ({
@@ -79,15 +79,7 @@ function IntelligencePage() {
           </div>
         </Card>
         <Card icon={Database} title="Retrieved memories">
-          <ul className="space-y-3 text-sm">
-            {(memory.data?.results ?? []).slice(0, 3).map((item, i) => (
-              <li key={i} className="flex gap-3">
-                <span className="text-xs text-muted-foreground w-12 shrink-0 pt-0.5">#{i + 1}</span>
-                <span>{recordSummary(item)}</span>
-              </li>
-            ))}
-            {!memory.isLoading && (memory.data?.results.length ?? 0) === 0 && <li className="text-muted-foreground">No memories returned.</li>}
-          </ul>
+          <MemorySnapshot memories={memory.data?.results ?? []} loading={memory.isLoading} />
         </Card>
         <Card icon={Eye} title="Confidence estimate">
           <div className="font-display text-4xl">{firstNumeric(engagement).toFixed(2)}</div>
@@ -98,6 +90,13 @@ function IntelligencePage() {
         </Card>
       </div>
 
+      <MemoryPanel
+        memories={memory.data?.results ?? []}
+        concepts={memory.data?.concepts ?? []}
+        query={memory.data?.query ?? "current learner model misconceptions pedagogy"}
+        loading={memory.isLoading}
+      />
+
       <div className="rounded-3xl border border-border bg-card p-6">
         <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">AI insights</div>
         <ul className="mt-4 space-y-3 text-sm">
@@ -106,6 +105,99 @@ function IntelligencePage() {
       </div>
 
     </AppShell>
+  );
+}
+
+function MemorySnapshot({ memories, loading }: { memories: RetrievedMemory[]; loading: boolean }) {
+  if (loading) return <Skeleton className="h-28 w-full rounded-2xl" />;
+  if (!memories.length) return <div className="text-sm text-muted-foreground">No memories returned.</div>;
+  return (
+    <div className="space-y-3">
+      {memories.slice(0, 3).map((memory, index) => (
+        <div key={memory.id || index} className="text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium">{memory.concept}</span>
+            <span className="text-xs tabular-nums text-muted-foreground">{Math.round(memory.score * 100)}%</span>
+          </div>
+          <div className="mt-1 h-1 rounded-full bg-muted">
+            <div className="h-full rounded-full bg-plum" style={{ width: `${Math.max(4, memory.score * 100)}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MemoryPanel({ memories, concepts, query, loading }: { memories: RetrievedMemory[]; concepts: string[]; query: string; loading: boolean }) {
+  return (
+    <section className="mb-6 rounded-3xl border border-border bg-card p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+            <Database className="size-3.5 text-plum" /> Memory retrieval
+          </div>
+          <h3 className="mt-1 font-display text-2xl">What memory is being used</h3>
+        </div>
+        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground">
+          <Search className="size-3.5 shrink-0" />
+          <span className="truncate">{query}</span>
+        </div>
+      </div>
+
+      {concepts.length > 0 && (
+        <div className="mt-5 flex flex-wrap gap-2">
+          {concepts.map((concept) => (
+            <span key={concept} className="rounded-full border border-plum/20 bg-plum/[0.06] px-3 py-1 text-xs font-medium text-plum">
+              {concept}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          <Skeleton className="h-40 rounded-2xl" />
+          <Skeleton className="h-40 rounded-2xl" />
+        </div>
+      ) : memories.length ? (
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {memories.map((memory, index) => (
+            <MemoryCard key={memory.id || index} memory={memory} index={index} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-5 text-sm text-muted-foreground">No memory matched this query yet. Complete lessons, quizzes, or tutor conversations to build retrievable learner memory.</p>
+      )}
+    </section>
+  );
+}
+
+function MemoryCard({ memory, index }: { memory: RetrievedMemory; index: number }) {
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.06 }}
+      className="rounded-2xl border border-border bg-muted/20 p-4"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{memory.source}</div>
+          <h4 className="mt-1 text-base font-medium">{memory.concept}</h4>
+        </div>
+        <span className="rounded-full bg-background px-2 py-1 text-xs tabular-nums text-muted-foreground">
+          {Math.round(memory.score * 100)}%
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-foreground/85">{memory.snippet}</p>
+      <div className="mt-4 h-1.5 rounded-full bg-background">
+        <div className="h-full rounded-full bg-plum" style={{ width: `${Math.max(4, memory.score * 100)}%` }} />
+      </div>
+      <div className="mt-3 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+        <Clock3 className="mt-0.5 size-3.5 shrink-0 text-plum" />
+        <span>{memory.why || "Retrieved because it matched the current learner query."}</span>
+      </div>
+    </motion.article>
   );
 }
 
@@ -178,7 +270,3 @@ function valueToText(value: ApiJson): string {
   return JSON.stringify(value);
 }
 
-function recordSummary(record: ApiRecord) {
-  const preferred = record.text ?? record.content ?? record.document ?? record.page_content;
-  return typeof preferred === "string" ? preferred : valueToText(record);
-}

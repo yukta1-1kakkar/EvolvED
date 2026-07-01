@@ -1,48 +1,39 @@
-# EvolvED — Adaptive Educational Intelligence Platform
+# EvolvED - Agentic Adaptive Learning Platform
 
-This repository contains the EvolvED production-grade adaptive learning system scaffold.
+EvolvED is a full-stack adaptive learning system for Linear Algebra and Calculus foundations. It generates personalized roadmaps, multimodal lessons, quizzes, assessments, and follow-up adaptations from a learner profile and assessment history.
 
-Services:
-- backend: FastAPI AI orchestration, LangGraph agents, AWS Bedrock, Neon PostgreSQL, Chroma Cloud
-- frontend: Next.js (App Router), TypeScript, TailwindCSS
+## What It Covers
 
-Managed persistence:
-- Structured data: Neon PostgreSQL via `DATABASE_URL` (`postgresql://USER:PASSWORD@HOST/DATABASE?sslmode=require&channel_binding=require`)
-- Vector memory: Chroma Cloud via `CHROMA_TENANT`, `CHROMA_DATABASE`, and `CHROMA_API_KEY`
+- Agentic workflow: learner modeling, pedagogical strategy, lesson planning, content generation, quiz generation, assessment, adaptation, and memory retrieval.
+- Personalization: learning style, education level, familiarity, pace, availability, accessibility support, and persisted roadmap progress.
+- Multimodal learning: readable symbolic math, visual diagrams, vector plots, audio narration, guided practice, tutor chat, and interactive assessment.
+- Human feedback loop: feedback route, assessment history, progress analytics, learner memory, and evolved next-lesson generation.
+- Math scope: Linear Algebra foundations and Calculus topics selected during onboarding.
 
-Model routing:
-- Pedagogical reasoning: Claude 3.7 Sonnet on AWS Bedrock
-- Lesson planning: Claude 3.7 Sonnet on AWS Bedrock
-- Content generation: Claude 3.7 Sonnet on AWS Bedrock
-- Fast interactions: Claude 3 Haiku on AWS Bedrock
-- Embeddings: Amazon Titan Text Embeddings on AWS Bedrock
+## Services
 
-Quick start (development):
+- `backend/`: FastAPI, LangGraph-style orchestration, SQLAlchemy/Alembic, AWS Bedrock routing, Chroma memory, TTS support.
+- `frontend/`: TanStack Start, React, TypeScript, Tailwind CSS, adaptive learning UI.
 
-1. Copy `.env.example` to `.env` and fill AWS, Neon, and Chroma Cloud values. Use a direct Neon endpoint for migration startup, not a `-pooler` endpoint.
+## Managed Persistence
+
+- Structured data: PostgreSQL via `DATABASE_URL`.
+- Vector memory: Chroma via `CHROMA_TENANT`, `CHROMA_DATABASE`, and `CHROMA_API_KEY`.
+- AI inference: AWS Bedrock models configured in `backend/app/core/config.py`.
+
+## Quick Start
+
+1. Create `.env` with database, Chroma, and AWS credentials.
 2. Install backend dependencies: `python -m pip install -r backend/requirements.txt`.
-3. From `backend/`, run `python -m alembic -c alembic.ini upgrade head`.
-4. From `backend/`, run `python -m uvicorn app.main:app --reload --port 8000`.
-5. In another terminal, from `frontend/`, run `npm install` and `npm run dev`.
-6. Open `http://localhost:3000` for the frontend and `http://localhost:8000/docs` for API docs.
+3. Run migrations from `backend/`: `python -m alembic -c alembic.ini upgrade head`.
+4. Start backend from `backend/`: `python -m uvicorn app.main:app --reload --reload-dir app --reload-dir alembic --port 8000`.
+5. Install frontend dependencies from `frontend/`: `npm install`.
+6. Start frontend from `frontend/`: `npm run dev`.
+7. Open `http://localhost:3000` and `http://localhost:8000/docs`.
 
-Backend:
+## Verification
 
-1. Run `python -m pip install -r backend/requirements.txt`.
-2. From `backend/`, run `python -m alembic -c alembic.ini upgrade head`.
-3. From `backend/`, run `python -m uvicorn app.main:app --reload --port 8000`.
-4. Run the real lifecycle integration check against a running backend:
-   `EVOLVED_E2E_BASE_URL=http://127.0.0.1:8000 python tests/integration_lifecycle.py`.
-
-Adaptive lifecycle:
-
-- Signup and login persist learner accounts in Neon.
-- Onboarding initializes curriculum progress and the learner model.
-- Lesson generation persists sessions and stores lesson memory in Chroma.
-- Tutor interactions, adaptive quizzes, assessments, adaptations, and evolved learner-model state feed the next lesson.
-- Routed OpenRouter models remain the primary path. Profile-derived fallbacks keep the learning loop available when a configured paid route is unavailable.
-
-Frontend:
-
-1. From `frontend/`, run `npm install`.
-2. Run `npm run dev`.
+- Frontend build: `cd frontend && npm.cmd run build`.
+- Backend syntax check: `python -m compileall backend/app`.
+- Backend focused tests: run the files in `backend/tests/` with `pytest` after installing test dependencies.
+- Lifecycle integration: run `EVOLVED_E2E_BASE_URL=http://127.0.0.1:8000 python tests/integration_lifecycle.py` against a running backend.

@@ -55,7 +55,7 @@ function LessonViewPage() {
       </button>
 
       {context ? (
-        <LessonExperience brief={context.brief} selectedLesson={context.selectedLesson} />
+        <LessonExperience brief={context.brief} selectedLesson={context.selectedLesson} lessonIndex={context.lessonIndex} />
       ) : loaded ? (
         <div className="rounded-3xl border border-border bg-card p-6">
           <div className="font-medium">No roadmap lesson selected</div>

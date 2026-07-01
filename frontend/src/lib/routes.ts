@@ -10,4 +10,5 @@ export const ROUTES = {
   PROGRESS: "/progress",
   INTELLIGENCE: "/intelligence",
   PEDAGOGY: "/pedagogy",
+  FEEDBACK: "/feedback",
 } as const;

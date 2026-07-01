@@ -3,12 +3,17 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { askTutor, generateLesson, generateRoadmap, generateTeachingStrategy, saveLesson } from "@/lib/api";
 import type { GenerateLessonRequest, SaveLessonRequest, TutorInteractionRequest } from "@/types/api";
 
+export function lessonQueryKey(request: GenerateLessonRequest) {
+  return ["lesson", request.learner_id, request.topic, request.selected_lesson, request.constraints] as const;
+}
+
 export function useLesson(request: GenerateLessonRequest) {
   return useQuery({
-    queryKey: ["lesson", request.learner_id, request.topic, request.selected_lesson, request.constraints],
+    queryKey: lessonQueryKey(request),
     queryFn: () => generateLesson(request),
     enabled: Boolean(request.learner_id && request.topic && request.selected_lesson),
     retry: 1,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

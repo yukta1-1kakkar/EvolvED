@@ -40,7 +40,6 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const { login, loading } = useAuth();
   const navigate = useNavigate();
-  const { redirect } = Route.useSearch();
   const [showPassword, setShowPassword] = useState(false);
 
   const {
@@ -61,11 +60,7 @@ function LoginPage() {
     try {
       const user = await login(values);
       await navigate({
-        to: !user.profileComplete
-          ? ROUTES.PROFILE_SETUP
-          : isWorkspaceRedirect(redirect)
-            ? redirect
-            : ROUTES.LESSON,
+        to: !user.profileComplete ? ROUTES.PROFILE_SETUP : ROUTES.KNOWLEDGE,
         replace: true,
       });
     } catch (error) {
@@ -156,15 +151,6 @@ function LoginPage() {
         </Link>
       </p>
     </AuthLayout>
-  );
-}
-
-function isWorkspaceRedirect(redirect?: string): redirect is string {
-  return Boolean(
-    redirect?.startsWith("/") &&
-      ![ROUTES.LOGIN, ROUTES.SIGNUP, ROUTES.FORGOT_PASSWORD, ROUTES.PROFILE_SETUP].includes(
-        redirect as (typeof ROUTES)[keyof typeof ROUTES],
-      ),
   );
 }
 

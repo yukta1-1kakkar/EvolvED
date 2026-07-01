@@ -12,6 +12,7 @@ export function submitAssessment(submission: AssessmentSubmission) {
   return apiRequest<AssessmentResult, AssessmentSubmission>("/submit-assessment", {
     method: "POST",
     body: submission,
+    timeoutMs: 120000,
   });
 }
 

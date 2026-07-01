@@ -138,6 +138,40 @@ class RetrieveMemoryRequest(BaseModel):
     query: str
 
 
+class RetrievedMemory(BaseModel):
+    id: str
+    concept: str = "Memory"
+    source: str = "lesson"
+    snippet: str = ""
+    score: float = 0.0
+    created_at: Optional[str] = None
+    why: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrieveMemoryResponse(BaseModel):
+    query: str
+    results: List[RetrievedMemory] = Field(default_factory=list)
+    concepts: List[str] = Field(default_factory=list)
+
+
+class PeerFeedbackRequest(BaseModel):
+    learner_id: str
+    reviewer_name: str = "Peer reviewer"
+    lesson_id: Optional[str] = None
+    topic: str = ""
+    rating: int = Field(ge=1, le=5)
+    clarity: int = Field(ge=1, le=5)
+    accessibility: int = Field(ge=1, le=5)
+    modality_fit: int = Field(ge=1, le=5)
+    comment: str = ""
+
+
+class PeerFeedbackResponse(BaseModel):
+    status: str = "ok"
+    saved: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ProgressResponse(BaseModel):
     learner_id: str
     mastery: Dict[str, float] = Field(default_factory=dict)

@@ -5,5 +5,6 @@ export function retrieveMemory(request: RetrieveMemoryRequest) {
   return apiRequest<RetrieveMemoryResponse, RetrieveMemoryRequest>("/retrieve-memory", {
     method: "POST",
     body: request,
+    timeoutMs: 60000,
   });
 }

@@ -304,6 +304,33 @@ def _lesson_style_contract(learning_style: str) -> str:
     return contracts[_lesson_style_key(learning_style)]
 
 
+def _accessibility_contract(constraints: Dict[str, Any]) -> str:
+    accessibility = constraints.get("accessibility") if isinstance(constraints.get("accessibility"), dict) else {}
+    if not accessibility.get("additional_support") and not accessibility.get("dyslexia_support"):
+        return "No additional accessibility preference was selected; still use clear language and explicit transitions."
+    return (
+        "Accessibility support is active. Use dyslexia-aware instructional design: short paragraphs, predictable "
+        "sentence structure, plain language before notation, explicit step labels, low memory load, one idea per "
+        "sentence when possible, and frequent checks for confusion. Avoid dense walls of text, unexplained symbols, "
+        "ambiguous pronouns, and unnecessary jargon. Pair symbols with spoken/plain-language meaning."
+    )
+
+
+def _symbolic_math_contract(topic: str, constraints: Dict[str, Any]) -> str:
+    accessibility = constraints.get("accessibility") if isinstance(constraints.get("accessibility"), dict) else {}
+    if not accessibility.get("symbolic_math_required") and not _is_mathematical_topic(topic):
+        return "Use formal notation only when it improves clarity."
+    return (
+        "Symbolic mathematics is required. Include compact LaTeX-style expressions wrapped in $...$ for definitions, "
+        "worked examples, and final interpretations. Every symbol must be explained in words immediately before or "
+        "after it. Prefer learner-readable notation over dense syntax: write 'vector v has magnitude 7' near "
+        "$\\|\\vec{v}\\| = 7$, and write 'unit x direction' near $\\hat{i}$. Do not leave commands such as "
+        "\\vec, \\hat, \\geq, \\leq, or \\frac unexplained. For linear algebra and calculus, include at least one expression such as $Ax = lambda x$, "
+        "$f'(x)$, $grad f$, $H_f$, a vector norm, projection formula, limit, derivative, or matrix expression when "
+        "appropriate to the selected lesson."
+    )
+
+
 def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
     title = str(asset["title"])
     description = str(asset["description"])
@@ -323,7 +350,9 @@ def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
     heading = _svg_multiline_text(title, 64, 58, 31, 62, 2, "#30263b", font, weight="700")
     body = ""
 
-    if asset_type == "graph":
+    if _is_vector_visual_asset(asset):
+        body = _vector_visual_svg_body(title, description, data, font)
+    elif asset_type == "graph":
         points = [(float(item["x"]), float(item["y"])) for item in data]
         xs, ys = [point[0] for point in points], [point[1] for point in points]
         x_min, x_max = min(xs), max(xs)
@@ -449,6 +478,78 @@ def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
     svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{animation}{background}{heading}{body}</svg>'
     encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _is_vector_visual_asset(asset: Dict[str, Any]) -> bool:
+    text = " ".join(str(asset.get(key, "")) for key in ("title", "description", "type"))
+    text += " " + " ".join(str(item) for item in asset.get("data", []) if isinstance(asset.get("data"), list))
+    return bool(re.search(r"\b(vector|component|magnitude|hypotenuse|origin|coordinate|direction)\b", text, re.I))
+
+
+def _vector_visual_svg_body(title: str, description: str, data: list[Any], font: str) -> str:
+    text = f"{title} {description} {' '.join(str(item) for item in data)}"
+    pairs = [(float(x), float(y)) for x, y in re.findall(r"\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)", text)]
+    pairs.extend(
+        (float(item["x"]), float(item["y"]))
+        for item in data
+        if isinstance(item, dict) and _is_number_like(item.get("x")) and _is_number_like(item.get("y"))
+    )
+    x, y = max(pairs, key=lambda point: point[0] * point[0] + point[1] * point[1], default=(3.0, 4.0))
+    if x == 0 and y == 0:
+        x, y = 3.0, 4.0
+    magnitude = (x * x + y * y) ** 0.5
+    bounds = max(5, int(max(abs(x), abs(y))) + 1)
+    left, right, top, bottom = 120, 1160, 140, 610
+    plot_width, plot_height = right - left, bottom - top
+
+    def px(value: float) -> float:
+        return left + ((value + bounds) / (bounds * 2)) * plot_width
+
+    def py(value: float) -> float:
+        return bottom - ((value + bounds) / (bounds * 2)) * plot_height
+
+    def fmt(value: float) -> str:
+        return f"{value:g}"
+
+    origin_x, origin_y = px(0), py(0)
+    end_x, end_y = px(x), py(y)
+    grid = []
+    for value in range(-bounds, bounds + 1):
+        grid.append(f'<line x1="{px(value):.1f}" y1="{top}" x2="{px(value):.1f}" y2="{bottom}" stroke="#e5ddf3" stroke-width="1"/>')
+        grid.append(f'<line x1="{left}" y1="{py(value):.1f}" x2="{right}" y2="{py(value):.1f}" stroke="#e5ddf3" stroke-width="1"/>')
+    return (
+        '<defs><marker id="vectorArrow" markerWidth="13" markerHeight="13" refX="12" refY="6.5" orient="auto" markerUnits="userSpaceOnUse">'
+        '<path d="M1,1.5 L12,6.5 L1,11.5 Z" fill="#7c3aed"/></marker>'
+        '<marker id="axisArrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">'
+        '<path d="M1,2 L7,4 L1,6 Z" fill="#65566f"/></marker></defs>'
+        '<rect x="90" y="115" width="1120" height="560" rx="20" fill="#ffffff" stroke="#d8cdeb"/>'
+        + "".join(grid) +
+        f'<line x1="{left}" y1="{origin_y:.1f}" x2="{right + 28}" y2="{origin_y:.1f}" stroke="#65566f" stroke-width="3" marker-end="url(#axisArrow)"/>'
+        f'<line x1="{origin_x:.1f}" y1="{bottom}" x2="{origin_x:.1f}" y2="{top - 28}" stroke="#65566f" stroke-width="3" marker-end="url(#axisArrow)"/>'
+        f'<line x1="{origin_x:.1f}" y1="{origin_y:.1f}" x2="{end_x:.1f}" y2="{origin_y:.1f}" stroke="#14b8a6" stroke-width="5" marker-end="url(#vectorArrow)"/>'
+        f'<line x1="{end_x:.1f}" y1="{origin_y:.1f}" x2="{end_x:.1f}" y2="{end_y:.1f}" stroke="#f97316" stroke-width="5" marker-end="url(#vectorArrow)"/>'
+        f'<line x1="{origin_x:.1f}" y1="{origin_y:.1f}" x2="{end_x:.1f}" y2="{end_y:.1f}" stroke="#7c3aed" stroke-width="6" marker-end="url(#vectorArrow)"/>'
+        f'<line x1="{end_x:.1f}" y1="{origin_y:.1f}" x2="{end_x:.1f}" y2="{end_y:.1f}" stroke="#7c3aed" stroke-width="2.5" stroke-dasharray="8 8" opacity="0.55"/>'
+        f'<line x1="{origin_x:.1f}" y1="{end_y:.1f}" x2="{end_x:.1f}" y2="{end_y:.1f}" stroke="#7c3aed" stroke-width="2.5" stroke-dasharray="8 8" opacity="0.55"/>'
+        f'<circle cx="{origin_x:.1f}" cy="{origin_y:.1f}" r="7" fill="#30263b"/>'
+        f'<circle cx="{end_x:.1f}" cy="{end_y:.1f}" r="4" fill="#7c3aed"/>'
+        f'<text x="{origin_x + 12:.1f}" y="{origin_y + 32:.1f}" font-family="{font}" font-size="20" font-weight="700" fill="#30263b">(0,0)</text>'
+        f'<text x="{(origin_x + end_x) / 2 - 38:.1f}" y="{origin_y + 38:.1f}" font-family="{font}" font-size="22" font-weight="700" fill="#0f766e">x = {fmt(x)}</text>'
+        f'<text x="{end_x + 16:.1f}" y="{(origin_y + end_y) / 2:.1f}" font-family="{font}" font-size="22" font-weight="700" fill="#c2410c">y = {fmt(y)}</text>'
+        f'<text x="{end_x + 16:.1f}" y="{end_y - 16:.1f}" font-family="{font}" font-size="23" font-weight="800" fill="#7c3aed">({fmt(x)},{fmt(y)})</text>'
+        f'<text x="{(origin_x + end_x) / 2 + 12:.1f}" y="{(origin_y + end_y) / 2 - 20:.1f}" font-family="{font}" font-size="24" font-weight="800" fill="#5b21b6">vector v</text>'
+        f'<text x="120" y="705" font-family="{font}" font-size="22" font-weight="700" fill="#30263b">|v| = {fmt(magnitude)} from sqrt({fmt(x)}^2 + {fmt(y)}^2)</text>'
+    )
+
+
+def _is_number_like(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _svg_multiline_text(
@@ -577,13 +678,21 @@ def _validate_visual_text(value: Any, field: str, asset_index: int, max_words: i
         raise ValueError(f"visualAssets[{asset_index}] {field} is required")
     if lower in _BAD_VISUAL_LABELS or any(token in lower for token in ("[topic]", "[concept]", "insert ", "placeholder")):
         raise ValueError(f"visualAssets[{asset_index}] {field} contains placeholder text")
-    if len(normalized.split()) > max_words:
-        raise ValueError(f"visualAssets[{asset_index}] {field} must be concise and readable")
     if not re.search(r"[A-Za-z0-9]", normalized):
         raise ValueError(f"visualAssets[{asset_index}] {field} must contain readable text")
     if re.search(r"[{}<>|`~]{2,}", normalized):
         raise ValueError(f"visualAssets[{asset_index}] {field} contains malformed text")
+    if len(normalized.split()) > max_words:
+        normalized = _compact_visual_text(normalized, max_words)
     return normalized
+
+
+def _compact_visual_text(value: str, max_words: int) -> str:
+    # ponytail: word-cap captions; upgrade to semantic summarization if visual captions need nuance.
+    words = value.split()
+    if len(words) <= max_words:
+        return value
+    return " ".join(words[:max_words]).rstrip(".,;:") + "."
 
 
 def _validate_visual_label(label: str, asset_index: int, label_index: int) -> str:
@@ -595,12 +704,13 @@ def _validate_visual_label(label: str, asset_index: int, label_index: int) -> st
         raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] contains placeholder text")
     if any(phrase in lower for phrase in _VISUAL_DESCRIPTION_PHRASES):
         raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] must be a node label, not a visual description")
-    if len(normalized) > 42 or len(normalized.split()) > 6:
-        raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] must be a concise readable label")
     if not re.search(r"[A-Za-z0-9]", normalized):
         raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] must contain readable text")
     if re.search(r"[{}<>|`~]{2,}", normalized):
         raise ValueError(f"visualAssets[{asset_index}].data[{label_index}] contains malformed text")
+    if len(normalized) > 42 or len(normalized.split()) > 6:
+        # ponytail: simple node-label cap; upgrade to semantic summarization if labels need full clauses.
+        normalized = _compact_visual_label(normalized, f"Node {label_index + 1}")
     return normalized
 
 
@@ -716,8 +826,10 @@ def _lesson_generation_prompt(
         "Data labels must be node names only, not sentences or descriptions. Never start a label with phrases like "
         "'A diagram showing', 'A flowchart showing', 'The diagram shows', or 'The diagram highlights'. "
         "For flowcharts, labels must form the correct learning sequence and arrows will be rendered in array order. "
-        "For diagrams, include named objects from the selected lesson. For example, vector lessons should name Vector A, "
-        "Vector B, Resultant Vector, Triangle Rule, Parallelogram Rule, or Component Addition; eigenvalue lessons should "
+        "For diagrams, include named objects from the selected lesson. For vector lessons, prefer graph assets or "
+        "coordinate diagrams with endpoints such as (3,4), component arrows, and magnitude labels; do not use "
+        "flowcharts for vector components unless the selected lesson is explicitly procedural. Vector lessons may "
+        "name Vector A, Vector B, Resultant Vector, Triangle Rule, Parallelogram Rule, or Component Addition; eigenvalue lessons should "
         "name Matrix A, Eigenvector, Eigenvalue, Transformation, or Scaling Direction; derivative lessons should name "
         "Curve, Tangent Line, Instantaneous Rate of Change, or Slope Interpretation. "
         "For mathematical topics, include at least one graph asset with numeric points and one lesson-specific diagram "
@@ -751,6 +863,8 @@ def _lesson_generation_prompt(
         "The lesson structure, examples, explanations, activities, and practice questions must reflect that learning "
         "style throughout the lesson.\n"
         f"- Learning-style teaching contract: {_lesson_style_contract(learning_style)}\n"
+        f"- Accessibility contract: {_accessibility_contract(constraints)}\n"
+        f"- Symbolic modality contract: {_symbolic_math_contract(lesson_title, constraints)}\n"
         "- The lesson must be directly studyable by a person. It should explain, demonstrate, coach practice, "
         "and check understanding without relying on a human teacher to fill gaps.\n"
         "- Use a concrete throughline example that fits the topic. Reuse it across sections, then add a fresh "
@@ -1126,24 +1240,6 @@ def _lesson_payload_to_blueprint(
         blueprint.visualElements = visual_assets
         blueprint.diagramDescriptions = [asset for asset in visual_assets if asset["type"] != "graph"]
         blueprint.graphData = [asset for asset in visual_assets if asset["type"] == "graph"]
-        blueprint.conceptMaps = [
-            {
-                "id": f"concept-map-{blueprint.lesson_id}",
-                "title": f"{payload['title']} concept map",
-                "nodes": [
-                    {"id": f"concept-{index + 1}", "label": _compact_visual_label(concept, f"Concept {index + 1}")}
-                    for index, concept in enumerate(payload["coreConcepts"][:4])
-                ],
-                "edges": [
-                    {
-                        "from": f"concept-{index + 1}",
-                        "to": f"concept-{index + 2}",
-                        "label": "supports",
-                    }
-                    for index in range(min(3, len(payload["coreConcepts"]) - 1))
-                ],
-            }
-        ]
         flow_source = next((asset for asset in visual_assets if asset["type"] in {"flowchart", "process", "timeline"}), None)
         if flow_source:
             flow_steps = flow_source["data"]
@@ -1555,13 +1651,15 @@ async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, A
         "Generate an adaptive quiz for this lesson. Return JSON only with a 'questions' list of 4 items. "
         "Every question must combine multiple-select checking with a long written answer. "
         "Every item must include id, type='msq_long_answer', prompt, options, correct_answers, "
-        "long_answer_prompt, expected_answer, concept, explanation, and visual_asset. "
+        "long_answer_prompt, expected_answer, concept, and explanation. "
         "options must contain 4 to 6 short choices and correct_answers must contain 1 to 3 exact option strings. "
         "long_answer_prompt must ask the learner to justify, derive, explain, or interpret in 3 to 6 sentences. "
-        "visual_asset must be an object with title, description, type, and data, using the same schema as lesson visualAssets: "
+        "Include visual_asset only when a diagram, flowchart, graph, or process is needed for that specific question. "
+        "Do not reuse the same visual for unrelated questions. visual_asset must be an object with title, description, type, and data, using the same schema as lesson visualAssets: "
         "type must be graph, diagram, flowchart, concept_map, timeline, illustration, or process. "
-        "For graph visualizations, data must be numeric points with x and y fields. For diagrams and flowcharts, "
-        "data must be 2 to 6 ordered string labels. The visual must be needed to answer the question, not decoration. "
+        "For graph visualizations, data must be numeric points with x and y fields. For vector questions, prefer "
+        "a graph or coordinate diagram with endpoint labels such as (3,4), component arrows, and magnitude; do not "
+        "use a flowchart for vector components. For diagrams and flowcharts, data must be 2 to 6 ordered string labels. If no visual is needed, omit visual_asset. "
         f"Learning style: {style}. Assessment contract: {json.dumps(style_contract)}. "
         f"Lesson: {json.dumps(lesson)}"
     )
@@ -1738,18 +1836,17 @@ def _normalize_quiz_questions(raw_questions: list[Any], lesson: Dict[str, Any]) 
         question_id = str(raw.get("id") or f"question-{index + 1}")
         prompt = str(raw.get("prompt") or raw.get("question") or "").strip()
         concept = str(raw.get("concept") or _lesson_question_concept(lesson, index)).strip()
+        visual_asset = _quiz_visual_asset(raw.get("visual_asset") or raw.get("visualAsset") or raw.get("diagram"), concept, index)
         if not prompt:
-            prompt = f"Use the diagram to identify and explain the key idea in {concept}."
-        options = _quiz_options(raw, concept)
+            prompt = f"Use the visual to identify and explain the key idea in {concept}." if visual_asset else f"Identify and explain the key idea in {concept}."
+        options = _quiz_options(raw, concept, bool(visual_asset))
         correct_answers = raw.get("correct_answers") or raw.get("correctAnswers") or raw.get("answer") or raw.get("expected_options")
         if isinstance(correct_answers, str):
             correct_answers = [correct_answers]
         if not isinstance(correct_answers, list):
             correct_answers = options[:2]
         correct = [str(item) for item in correct_answers if str(item) in options][:3] or options[:1]
-        visual_asset = _quiz_visual_asset(raw.get("visual_asset") or raw.get("visualAsset") or raw.get("diagram"), lesson, concept, index)
-        normalized.append(
-            {
+        question = {
                 "id": question_id,
                 "type": "msq_long_answer",
                 "prompt": prompt,
@@ -1759,27 +1856,24 @@ def _normalize_quiz_questions(raw_questions: list[Any], lesson: Dict[str, Any]) 
                 "expected_answer": str(raw.get("expected_answer") or raw.get("expectedAnswer") or raw.get("explanation") or ""),
                 "concept": concept,
                 "explanation": str(raw.get("explanation") or "Select every correct option, then justify your reasoning in writing."),
-                "visual_asset": visual_asset,
             }
-        )
+        if visual_asset:
+            question["visual_asset"] = visual_asset
+        normalized.append(question)
     if len(normalized) < 3:
         normalized.extend(_fallback_questions(lesson, _lesson_style_from_payload(lesson))[len(normalized):])
     return normalized[:4]
 
 
-def _quiz_options(raw: Dict[str, Any], concept: str) -> list[str]:
+def _quiz_options(raw: Dict[str, Any], concept: str, has_visual: bool = False) -> list[str]:
     options = raw.get("options")
     if isinstance(options, list):
         cleaned = [re.sub(r"\s+", " ", str(option)).strip() for option in options if str(option).strip()]
     else:
         cleaned = []
-    defaults = [
-        f"Correctly identifies {concept}",
-        "Uses the visual evidence",
-        "Explains the reasoning clearly",
-        "Ignores the diagram",
-        "Confuses the prerequisite concept",
-    ]
+    defaults = [f"Correctly identifies {concept}", "Explains the reasoning clearly", "Connects the idea to the lesson objective", "Confuses the prerequisite concept"]
+    if has_visual:
+        defaults[1:1] = ["Uses the visual evidence", "Ignores the diagram"]
     for option in defaults:
         if len(cleaned) >= 4:
             break
@@ -1788,48 +1882,34 @@ def _quiz_options(raw: Dict[str, Any], concept: str) -> list[str]:
     return cleaned[:6]
 
 
-def _quiz_visual_asset(raw_visual: Any, lesson: Dict[str, Any], concept: str, index: int) -> Dict[str, Any]:
+def _quiz_visual_asset(raw_visual: Any, concept: str, index: int) -> Dict[str, Any] | None:
     if isinstance(raw_visual, dict):
+        image_url = str(raw_visual.get("imageUrl") or raw_visual.get("image_url") or "").strip()
+        data = raw_visual.get("data") if isinstance(raw_visual.get("data"), list) else []
+        if not image_url and not data:
+            return None
         asset = {
             "id": str(raw_visual.get("id") or f"quiz-visual-{index + 1}"),
             "title": str(raw_visual.get("title") or f"{concept} assessment diagram"),
             "description": str(raw_visual.get("description") or f"Assessment visual for {concept}."),
             "type": str(raw_visual.get("type") or "flowchart").lower(),
-            "data": raw_visual.get("data") if isinstance(raw_visual.get("data"), list) else [],
+            "data": data,
         }
+        if image_url:
+            asset["imageUrl"] = image_url
     else:
-        asset = _lesson_visual_for_quiz(lesson, concept, index)
+        return None
+    if not asset:
+        return None
     if asset["type"] not in {"graph", "diagram", "flowchart", "concept_map", "timeline", "illustration", "process"}:
         asset["type"] = "flowchart"
-    if not asset["data"]:
-        asset["data"] = [concept, "Key relationship", "Learner reasoning"]
+    if not asset.get("imageUrl") and not asset.get("data"):
+        return None
     try:
         asset["imageUrl"] = str(asset.get("imageUrl") or _visual_asset_image_url(asset))
     except Exception as exc:
         logger.warning("Quiz visual rendering failed; using text-only visual metadata: %s", exc)
     return asset
-
-
-def _lesson_visual_for_quiz(lesson: Dict[str, Any], concept: str, index: int) -> Dict[str, Any]:
-    visuals = lesson.get("visualElements") or []
-    if isinstance(visuals, list):
-        candidates = [item for item in visuals if isinstance(item, dict)]
-        if candidates:
-            visual = dict(candidates[index % len(candidates)])
-            visual.setdefault("id", f"quiz-visual-{index + 1}")
-            visual.setdefault("title", f"{concept} assessment diagram")
-            visual.setdefault("description", f"Assessment visual for {concept}.")
-            visual.setdefault("type", "diagram")
-            visual.setdefault("data", [concept, "Evidence", "Reasoning"])
-            return visual
-    return {
-        "id": f"quiz-visual-{index + 1}",
-        "title": f"{concept} assessment flow",
-        "description": f"Use this flow to reason about {concept}.",
-        "type": "flowchart",
-        "data": [concept, "Identify evidence", "Select all true claims", "Explain reasoning"],
-    }
-
 
 def _lesson_question_concept(lesson: Dict[str, Any], index: int) -> str:
     sections = lesson.get("lesson_structure") or []
@@ -1863,31 +1943,26 @@ def _fallback_questions(lesson: Dict[str, Any], learning_style: str) -> list[Dic
     for index, section in enumerate(sections[:4]):
         concept = section.get("title", topic)
         base_prompt = section.get("checkpoint") or f"Explain the key idea from {concept}."
-        visual_asset = _quiz_visual_asset(None, lesson, str(concept), index)
-        questions.append(
-            {
+        prompt = f"Select every statement that supports this idea: {base_prompt}"
+        options = [
+            f"{concept} connects to the lesson objective",
+            f"{concept} should be explained with evidence from the lesson",
+            "A correct answer should justify the selected claims",
+            "Any unrelated formula is enough",
+        ]
+        correct_answers = options[:3]
+        question = {
                 "id": f"checkpoint-{index + 1}",
                 "type": "msq_long_answer",
-                "prompt": f"Use the visual and select every statement that supports this idea: {base_prompt}",
-                "options": [
-                    f"{concept} depends on the visual relationship shown",
-                    "The diagram evidence should be used in the explanation",
-                    "A correct answer should connect the concept to the lesson objective",
-                    "The visual can be ignored completely",
-                    "Any unrelated formula is enough",
-                ],
-                "correct_answers": [
-                    f"{concept} depends on the visual relationship shown",
-                    "The diagram evidence should be used in the explanation",
-                    "A correct answer should connect the concept to the lesson objective",
-                ],
+                "prompt": prompt,
+                "options": options,
+                "correct_answers": correct_answers,
                 "long_answer_prompt": f"Explain your selected choices for {concept} in 3 to 6 sentences.",
                 "expected_answer": section.get("explanation", ""),
                 "concept": concept,
-                "explanation": "This checks both multiple-select recognition and written reasoning from the visual.",
-                "visual_asset": visual_asset,
+                "explanation": "This checks both multiple-select recognition and written reasoning from the lesson.",
             }
-        )
+        questions.append(question)
     return questions
 
 
