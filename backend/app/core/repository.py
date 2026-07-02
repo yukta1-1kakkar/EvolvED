@@ -176,7 +176,7 @@ class AsyncRepository:
             if record:
                 record.state = {**(record.state or {}), "status": "assessed", "latest_assessment": result.model_dump(), "latest_adaptation": decision.model_dump()}
             for concept, score in result.mastery_estimates.items():
-                await self._upsert_progress(session, learner.id, concept, score)
+                await self._upsert_progress(session, learner.id, concept, min(float(score), float(result.score)))
             await session.commit()
 
     async def save_lesson_blueprint(self, learner_id: str, lesson_id: str, lesson_structure: list) -> Dict[str, Any]:
@@ -280,7 +280,7 @@ def _verify_password(password: str, encoded: str) -> bool:
 
 
 def _auth_user(learner: db_models.Learner) -> models.AuthUser:
-    return models.AuthUser(id=learner.learner_id, full_name=learner.full_name or "Learner", email=learner.email or "", age=learner.age, profile_complete=learner.onboarding_status == "complete", learning_topic=learner.topic, learning_project=learner.learning_project)
+    return models.AuthUser(id=learner.learner_id, full_name=learner.full_name or "Learner", email=learner.email or "", age=learner.age, profile_complete=learner.onboarding_status == "complete", learning_topic=learner.topic, learning_project=learner.learning_project, created_at=_iso(learner.created_at))
 
 
 def _initial_model() -> Dict[str, Any]:
@@ -304,10 +304,15 @@ def _insights(model: Dict[str, Any], performance: Dict[str, Any]) -> list[str]:
     insights = []
     modalities = model.get("preferred_modalities") or []
     if modalities:
-        insights.append(f"Your lessons currently prioritize {', '.join(modalities)} explanations.")
+        insights.append(f"Your lessons currently prioritize {', '.join(_humanize_identifier(item) for item in modalities)} explanations.")
     if performance["assessment_count"]:
         insights.append(f"Your average checkpoint score is {round(performance['average_score'] * 100)}%.")
     weak = model.get("weak_topics") or []
     if weak:
-        insights.append(f"Your next lesson will reinforce {', '.join(weak[:2])}.")
+        insights.append(f"Your next lesson will reinforce {', '.join(_humanize_identifier(item) for item in weak[:2])}.")
     return insights or ["Complete your first lesson assessment to unlock personalized learning insights."]
+
+
+def _humanize_identifier(value: Any) -> str:
+    text = str(value or "").replace("_", " ").replace("-", " ").strip()
+    return " ".join(text.split())

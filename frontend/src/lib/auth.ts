@@ -14,6 +14,7 @@ export interface AuthUser {
   topicFamiliarity?: string;
   learningAvailability?: string;
   accessibilitySupport?: boolean;
+  createdAt?: string;
 }
 
 export interface LoginCredentials {
@@ -37,6 +38,7 @@ interface BackendAuthUser {
   profile_complete: boolean;
   learning_topic?: string | null;
   learning_project?: string | null;
+  created_at?: string | null;
 }
 
 const AUTH_USER_KEY = "evolved.auth.user";
@@ -121,5 +123,6 @@ function fromBackend(user: BackendAuthUser): AuthUser {
     profileComplete: user.profile_complete,
     learningTopic: user.learning_topic ?? undefined,
     learningProject: user.learning_project ?? undefined,
+    createdAt: user.created_at ?? undefined,
   };
 }

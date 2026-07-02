@@ -1,5 +1,3 @@
-import { MathText } from "@/components/learning/MathText";
-
 type VectorArrowDiagramProps = {
   title?: string;
   description?: string;
@@ -65,13 +63,6 @@ export function VectorArrowDiagram({ title, description, data }: VectorArrowDiag
           |v| = {formatNumber(magnitude)} from {`\u221a(${formatNumber(x)}\u00b2 + ${formatNumber(y)}\u00b2)`}
         </text>
       </svg>
-      {(title || description) && (
-        <div className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          <MathText as="span" className="font-medium text-foreground" text={title ?? ""} />
-          {title && description ? " - " : ""}
-          <MathText as="span" text={description ?? ""} />
-        </div>
-      )}
     </div>
   );
 }

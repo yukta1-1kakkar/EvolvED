@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import {
   LESSON_CONTEXT_STORAGE_KEY,
   LessonExperience,
@@ -16,7 +17,11 @@ export const Route = createFileRoute("/lesson-view")({
       { name: "description", content: "A focused generated lesson view for the selected roadmap stage." },
     ],
   }),
-  component: LessonViewPage,
+  component: () => (
+    <ProtectedRoute>
+      <LessonViewPage />
+    </ProtectedRoute>
+  ),
 });
 
 function LessonViewPage() {

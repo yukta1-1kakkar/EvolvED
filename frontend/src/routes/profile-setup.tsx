@@ -44,10 +44,12 @@ function ProfileSetupPage() {
     handleSubmit,
     formState: { errors },
     setError,
+    watch,
   } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: { accessibility: false },
   });
+  const selectedTrack = watch("interests");
 
   useEffect(() => {
     if (!loading && !currentUser) {
@@ -118,6 +120,11 @@ function ProfileSetupPage() {
             <option value="Calculus">Calculus</option>
             <option value="Linear Algebra">Linear Algebra</option>
           </Select>
+          {selectedTrack && (
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Knowledge map topics: {TRACK_TOPICS[selectedTrack].join(", ")}.
+            </p>
+          )}
         </Field>
 
         <Field label="Primary learning goal" htmlFor="learningGoal" error={errors.learningGoal?.message}>
@@ -202,3 +209,8 @@ function getAgeGroup(age?: number) {
   if (age < 18) return "teen";
   return "adult";
 }
+
+const TRACK_TOPICS: Record<ProfileFormValues["interests"], string[]> = {
+  Calculus: ["limits", "derivatives", "gradients", "multivariable calculus", "Hessians"],
+  "Linear Algebra": ["vectors", "matrices", "norms", "projections", "eigenvalues", "diagonalisation"],
+};

@@ -22,7 +22,7 @@ export function Hero() {
             className="inline-flex items-center gap-2 rounded-full border border-border bg-card/60 backdrop-blur px-3 py-1.5 text-xs text-muted-foreground"
           >
             <span className="size-1.5 rounded-full bg-orchid animate-pulse" />
-            Adaptive educational intelligence · v1.0
+            Adaptive educational intelligence - v1.0
           </motion.div>
 
           <motion.h1
@@ -68,7 +68,7 @@ export function Hero() {
               to={ROUTES.INTELLIGENCE}
               className="rounded-full border border-border bg-card/50 backdrop-blur px-6 py-3 text-sm hover:bg-card transition-colors"
             >
-              Explore EvolvED →
+              Explore EvolvED
             </Link>
           </motion.div>
 
@@ -81,7 +81,7 @@ export function Hero() {
             {[
               ["12.4M", "concepts modeled"],
               ["94%", "mastery accuracy"],
-              ["∞", "adaptive paths"],
+              ["many", "adaptive paths"],
             ].map(([k, v]) => (
               <div key={v}>
                 <div className="font-display text-2xl">{k}</div>

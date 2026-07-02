@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { motion } from "framer-motion";
 import { Flame, TrendingUp, Clock, Award, CheckCircle2, AlertCircle, Activity } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -11,11 +12,15 @@ import type { ApiRecord } from "@/types/api";
 export const Route = createFileRoute("/progress")({
   head: () => ({
     meta: [
-      { title: "Progress — EvolvED" },
+      { title: "Progress - EvolvED" },
       { name: "description", content: "Mastery, confidence, velocity, and adaptation history." },
     ],
   }),
-  component: ProgressPage,
+  component: () => (
+    <ProtectedRoute>
+      <ProgressPage />
+    </ProtectedRoute>
+  ),
 });
 
 type ProgressRange = "7d" | "30d" | "all";

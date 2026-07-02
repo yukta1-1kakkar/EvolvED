@@ -1,10 +1,10 @@
 import { motion } from "framer-motion";
 
 const items = [
-  { k: "Multimodal lessons", v: "Text, diagrams, MathJax, code, audio narration, 3D visualizations — composed to fit how you learn best." },
+  { k: "Multimodal lessons", v: "Text, diagrams, MathJax, code, audio narration, 3D visualizations - composed to fit how you learn best." },
   { k: "Concept maps", v: "Navigate prerequisites and mastery as a living map of what you know and what's next." },
   { k: "Memory across sessions", v: "EvolvED remembers what clicked, what didn't, and which analogies worked for you." },
-  { k: "Accessibility first", v: "Dyslexia mode, focus mode, reduced motion, adjustable spacing — built in, not bolted on." },
+  { k: "Accessibility first", v: "Dyslexia mode, focus mode, reduced motion, adjustable spacing - built in, not bolted on." },
   { k: "Confidence-aware", v: "Quizzes capture certainty, not just correctness, to detect fragile understanding." },
   { k: "Explainable AI", v: "See what the tutor believes about you and why it chose this lesson, this moment." },
 ];
@@ -19,7 +19,7 @@ export function Capabilities() {
           </h2>
           <p className="font-reading text-lg text-muted-foreground max-w-xl text-pretty">
             EvolvED is built on a foundation of pedagogy, cognitive science, and
-            adaptive intelligence — every surface is designed to teach.
+            adaptive intelligence - every surface is designed to teach.
           </p>
         </div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-px bg-border rounded-3xl overflow-hidden">

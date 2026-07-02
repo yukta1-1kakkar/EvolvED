@@ -2,12 +2,17 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Compass, Gauge, Layers, MessageCircle } from "lucide-react";
 
 import { AppShell } from "@/components/app/AppShell";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useTeachingStrategy } from "@/hooks/useLesson";
 
 export const Route = createFileRoute("/pedagogy")({
-  component: PedagogyPage,
+  component: () => (
+    <ProtectedRoute>
+      <PedagogyPage />
+    </ProtectedRoute>
+  ),
 });
 
 function PedagogyPage() {

@@ -1,5 +1,10 @@
 export function isVectorVisualText(value: unknown) {
-  return /\b(vector|component|magnitude|hypotenuse|origin|coordinate|direction)\b/i.test(flattenVisualText(value));
+  const text = flattenVisualText(value).toLowerCase();
+  return (
+    /\bvector\b/.test(text) &&
+    (/\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)/.test(text) ||
+      /\b(component|magnitude|origin|direction|endpoint|tail|head)\b/.test(text))
+  );
 }
 
 function flattenVisualText(value: unknown): string {

@@ -25,6 +25,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ElementType, type FormEvent, type SelectHTMLAttributes } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MathText } from "@/components/learning/MathText";
 import { VectorArrowDiagram } from "@/components/learning/VectorArrowDiagram";
 import { isVectorVisualText } from "@/components/learning/vectorVisual";
@@ -34,7 +35,7 @@ import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
 import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
-import { getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, setActiveRoadmapLesson, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
+import { getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, peekNextRoadmapLessonContext, setActiveRoadmapLesson, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import { ROUTES } from "@/lib/routes";
 import type { ApiJson, ApiRecord, LessonBlueprint, LessonRoadmapItem } from "@/types/api";
 
@@ -48,7 +49,11 @@ export const Route = createFileRoute("/lesson")({
       { name: "description", content: "An adaptive lesson roadmap and concept-first lesson composed in real time by EvolvED." },
     ],
   }),
-  component: LessonPage,
+  component: () => (
+    <ProtectedRoute>
+      <LessonPage />
+    </ProtectedRoute>
+  ),
 });
 
 export const LESSON_CONTEXT_STORAGE_KEY = "evolved.pendingLessonContext";
@@ -72,6 +77,7 @@ export type LessonLaunchContext = {
   brief: LessonBrief;
   selectedLesson: LessonRoadmapItem;
   lessonIndex?: number;
+  remainingLessons?: LessonRoadmapItem[];
 };
 
 type BrowserSpeechRecognition = {
@@ -247,6 +253,7 @@ export function LessonExperience({
   const [tutorResponseMode, setTutorResponseMode] = useState<"text" | "audio">("text");
   const [recordingQuestion, setRecordingQuestion] = useState(false);
   const [recordingStatus, setRecordingStatus] = useState("");
+  const [liveTranscript, setLiveTranscript] = useState("");
   const [assessmentPreload, setAssessmentPreload] = useState<"idle" | "preloading" | "ready">("idle");
   const [readerMode, setReaderMode] = useState<"standard" | "dyslexia" | "focus">(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
   const tutorAudioRef = useRef<HTMLAudioElement>(null);
@@ -300,6 +307,25 @@ export function LessonExperience({
   }, [currentUser?.id, lesson.data?.lesson_id, queryClient]);
 
   useEffect(() => {
+    if (!currentUser?.id) return;
+    const nextContext = peekNextRoadmapLessonContext();
+    if (!isLessonLaunchContext(nextContext)) return;
+    if (nextContext.selectedLesson.id === selectedLesson.id) return;
+
+    const request = {
+      learner_id: currentUser.id,
+      topic: nextContext.brief.topic,
+      selected_lesson: roadmapItemToRecord(nextContext.selectedLesson),
+      constraints: constraintsFromBrief(nextContext.brief),
+    };
+    void queryClient.prefetchQuery({
+      queryKey: lessonQueryKey(request),
+      queryFn: () => generateLesson(request),
+      staleTime: 5 * 60 * 1000,
+    });
+  }, [currentUser?.id, queryClient, selectedLesson.id]);
+
+  useEffect(() => {
     setTutorOpen(false);
   }, [lesson.data?.lesson_id]);
 
@@ -337,11 +363,12 @@ export function LessonExperience({
       return;
     }
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
     recognition.onstart = () => {
       setRecordingQuestion(true);
+      setLiveTranscript("");
       setRecordingStatus("Listening...");
     };
     recognition.onend = () => {
@@ -353,12 +380,17 @@ export function LessonExperience({
       setRecordingStatus(event.error ? `Voice input failed: ${event.error}` : "Voice input failed");
     };
     recognition.onresult = (event) => {
-      let transcript = "";
+      let finalTranscript = "";
+      let interimTranscript = "";
       for (let index = 0; index < event.results.length; index += 1) {
-        transcript += event.results[index][0].transcript;
+        const phrase = event.results[index][0].transcript;
+        if (event.results[index].isFinal) finalTranscript += phrase;
+        else interimTranscript += phrase;
       }
-      setQuestion(transcript.trim());
-      setRecordingStatus("Voice captured");
+      const transcript = `${finalTranscript} ${interimTranscript}`.trim();
+      setLiveTranscript(transcript);
+      if (transcript) setQuestion(transcript);
+      setRecordingStatus(interimTranscript ? "Transcribing..." : "Voice captured");
     };
     recognitionRef.current = recognition;
     try {
@@ -402,6 +434,7 @@ export function LessonExperience({
   if (lesson.isLoading) return <LessonSkeleton />;
   if (lesson.isError) return <ErrorPanel message={lesson.error.message} onRetry={() => void lesson.refetch()} />;
   if (!lesson.data) return null;
+  const lessonSections = uniqueRecords(lesson.data.lesson_structure);
 
   return (
     <div className={`relative ${readerModeClass(readerMode)}`}>
@@ -436,7 +469,7 @@ export function LessonExperience({
         <ReaderControls mode={readerMode} onChange={setReaderMode} />
         <AdaptiveLessonPayload lesson={lesson.data} />
 
-        {lesson.data.lesson_structure.map((section, index) => (
+        {lessonSections.map((section, index) => (
           <LessonSection key={recordKey(section, index)} section={section} index={index} />
         ))}
 
@@ -490,7 +523,8 @@ export function LessonExperience({
       {tutorOpen && (
         <div className="fixed inset-0 z-50">
           <button type="button" aria-label="Close AI tutor" onClick={() => setTutorOpen(false)} className="absolute inset-0 bg-foreground/25" />
-          <aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-card p-5 shadow-2xl">
+          <aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-card shadow-2xl" onWheel={(event) => event.stopPropagation()}>
+            <div className="flex-1 overflow-y-auto p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
                 <Sparkles className="size-3.5 text-plum" /> AI tutor
@@ -499,7 +533,7 @@ export function LessonExperience({
                 <X className="size-4" />
               </button>
             </div>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">Ask about this lesson. Your questions become part of your learner memory.</p>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">Ask about this lesson. Your questions help personalize the next explanation.</p>
             <div className="mt-4 grid grid-cols-2 rounded-2xl border border-border bg-muted/25 p-1">
               {[
                 { value: "text", label: "Text" },
@@ -556,8 +590,9 @@ export function LessonExperience({
               </div>
             )}
             {tutor.isError && <p className="mt-3 text-sm text-destructive">{tutor.error.message}</p>}
+            </div>
             <form
-              className="mt-4 flex gap-2"
+              className="flex gap-2 border-t border-border bg-card p-5"
               onSubmit={(event) => {
                 event.preventDefault();
                 askTutor();
@@ -593,8 +628,11 @@ export function LessonExperience({
                 <Send className="size-4" />
               </button>
             </form>
-            {recordingStatus && <p className="mt-2 text-xs text-muted-foreground">{recordingStatus}</p>}
-            {tutor.isPending && <p className="mt-2 text-xs text-muted-foreground">Tutor is responding...</p>}
+            <div className="px-5 pb-5">
+              {liveTranscript && recordingQuestion && <p className="text-xs leading-5 text-muted-foreground">Transcript: {liveTranscript}</p>}
+              {recordingStatus && <p className="mt-2 text-xs text-muted-foreground">{recordingStatus}</p>}
+              {tutor.isPending && <p className="mt-2 text-xs text-muted-foreground">Tutor is responding...</p>}
+            </div>
           </aside>
         </div>
       )}
@@ -767,7 +805,7 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
   const visuals = Array.from(
     new Map(
       visualCandidates.map((item, index) => [
-        stringValue(item.id) || stringValue(item.imageUrl) || `${recordTitle(item, index)}-${index}`,
+        visualIdentity(item, index),
         item,
       ]),
     ).values(),
@@ -781,7 +819,6 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
       {hasAudio && (
         <AudioLesson
           narration={lesson.ttsContent || lesson.audioNarration || ""}
-          sections={lesson.audioSections ?? []}
           audioAsset={audioAssets[0]}
         />
       )}
@@ -797,7 +834,7 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
   );
 }
 
-function AudioLesson({ narration, sections, audioAsset }: { narration: string; sections: ApiRecord[]; audioAsset?: ApiRecord }) {
+function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?: ApiRecord }) {
   const storedAudioUrl = resolveMediaUrl(stringValue(audioAsset?.audioUrl));
   const [audioUrl, setAudioUrl] = useState(storedAudioUrl);
   const [status, setStatus] = useState(storedAudioUrl ? "Ready" : narration ? "Preparing audio..." : "");
@@ -942,16 +979,6 @@ function AudioLesson({ narration, sections, audioAsset }: { narration: string; s
           </select>
         </label>
       )}
-      {sections.length > 0 && (
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {sections.map((section, index) => (
-            <div key={recordKey(section, index)} className="rounded-2xl border border-border p-4 text-sm leading-relaxed">
-              <div className="font-medium">{recordTitle(section, index)}</div>
-              <MathText className="mt-2 text-muted-foreground" text={stringValue(section.script) || recordBody(section)} />
-            </div>
-          ))}
-        </div>
-      )}
     </section>
   );
 }
@@ -978,13 +1005,16 @@ function VisualLesson({
       ))}
       {visualElements.length > 0 && (
         <div className="mt-6 grid gap-6">
-          {visualElements.map((item, index) => (
+          {visualElements.filter(shouldShowVisual).map((item, index) => (
             <div
               key={recordKey(item, index)}
               className="rounded-3xl border border-border bg-muted/20 p-6 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
               style={{ animationDelay: `${index * 90}ms` }}
             >
               <div className="text-lg font-medium">{recordTitle(item, index)}</div>
+              {stringValue(item.description) && (
+                <MathText className="mt-2 text-sm leading-relaxed text-muted-foreground" text={stringValue(item.description)} />
+              )}
               {isVectorVisualText(item) ? (
                 <VectorArrowDiagram title={recordTitle(item, index)} description={stringValue(item.description)} data={item.data ?? item.items} />
               ) : isValidMediaUrl(stringValue(item.imageUrl), "image") && (
@@ -1192,6 +1222,40 @@ function RoadmapCards({
   );
 }
 
+function visualIdentity(item: ApiRecord, index: number) {
+  return [
+    stringValue(item.id),
+    stringValue(item.imageUrl),
+    stringValue(item.type),
+    recordTitle(item, index).toLowerCase(),
+    stringValue(item.description).toLowerCase(),
+    JSON.stringify(item.data ?? item.items ?? ""),
+  ].filter(Boolean).join("|") || `visual-${index}`;
+}
+
+function shouldShowVisual(item: ApiRecord) {
+  const title = recordTitle(item, 0);
+  const description = stringValue(item.description);
+  const hasImage = isValidMediaUrl(stringValue(item.imageUrl), "image");
+  const hasVector = isVectorVisualText(item);
+  return hasImage || hasVector || recordsFrom(item.items).length > 0 || Boolean(title && description);
+}
+
+function uniqueRecords(records: ApiRecord[]) {
+  const seen = new Set<string>();
+  return records.filter((record, index) => {
+    const key = [
+      recordTitle(record, index).toLowerCase(),
+      stringValue(record.explanation).toLowerCase(),
+      stringValue(record.example).toLowerCase(),
+      stringValue(record.concept_connection).toLowerCase(),
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function isRoadmapLessonCompleted(item: LessonRoadmapItem, index: number, completedIds: Set<string>, completedCount: number) {
   return completedIds.has(item.id) || index < completedCount;
 }
@@ -1252,7 +1316,10 @@ function LessonSection({ section, index }: { section: ApiRecord; index: number }
       {checkpoint && (
         <div className="mt-4 flex gap-3 rounded-2xl bg-muted/40 p-4 text-sm leading-relaxed">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-plum" />
-          <div><span className="font-medium">Quick check:</span> {checkpoint}</div>
+          <div>
+            <span className="font-medium">Quick check: </span>
+            <MathText as="span" text={checkpoint} />
+          </div>
         </div>
       )}
     </section>
@@ -1509,6 +1576,12 @@ function roadmapItemToRecord(item: LessonRoadmapItem): ApiRecord {
     estimated_duration: item.estimated_duration,
     objectives: item.objectives,
   };
+}
+
+function isLessonLaunchContext(value: unknown): value is LessonLaunchContext {
+  if (!value || typeof value !== "object") return false;
+  const context = value as Partial<LessonLaunchContext>;
+  return Boolean(context.brief?.topic && context.selectedLesson?.id && context.selectedLesson.title);
 }
 
 function selectedLessonTitle(value: ApiRecord | null | undefined) {

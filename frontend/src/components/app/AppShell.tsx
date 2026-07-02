@@ -13,18 +13,19 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { EvolvedLogo } from "@/components/brand/EvolvedLogo";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
 
 const nav = [
-  { to: ROUTES.KNOWLEDGE, label: "Knowledge", icon: Network, kbd: "K" },
-  { to: ROUTES.LESSON, label: "Lesson", icon: BookOpen, kbd: "L" },
-  { to: ROUTES.ASSESSMENT, label: "Assessment", icon: Target, kbd: "A" },
-  { to: ROUTES.PROGRESS, label: "Progress", icon: LineChart, kbd: "P" },
-  { to: ROUTES.INTELLIGENCE, label: "Intelligence", icon: Brain, kbd: "I" },
-  { to: ROUTES.PEDAGOGY, label: "Pedagogy", icon: Compass, kbd: "S" },
-  { to: ROUTES.FEEDBACK, label: "Feedback", icon: MessageSquarePlus, kbd: "F" },
+  { to: ROUTES.KNOWLEDGE, label: "Knowledge", icon: Network },
+  { to: ROUTES.LESSON, label: "Lesson", icon: BookOpen },
+  { to: ROUTES.ASSESSMENT, label: "Assessment", icon: Target },
+  { to: ROUTES.PROGRESS, label: "Progress", icon: LineChart },
+  { to: ROUTES.INTELLIGENCE, label: "Intelligence", icon: Brain },
+  { to: ROUTES.PEDAGOGY, label: "Pedagogy", icon: Compass },
+  { to: ROUTES.FEEDBACK, label: "Feedback", icon: MessageSquarePlus },
 ] as const;
 
 export function AppShell({
@@ -46,10 +47,7 @@ export function AppShell({
       <div className="min-h-dvh flex bg-background text-foreground">
         <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-border/70 px-4 py-5 sticky top-0 h-dvh">
           <Link to={ROUTES.KNOWLEDGE} className="flex items-center gap-2 px-2 mb-7 group">
-            <div
-              className="size-7 rounded-lg"
-              style={{ backgroundImage: "var(--gradient-aurora)" }}
-            />
+            <EvolvedLogo className="size-8" />
             <div className="font-display text-lg tracking-tight">EvolvED</div>
           </Link>
 
@@ -57,9 +55,6 @@ export function AppShell({
             <div className="flex items-center gap-2 rounded-xl border border-border bg-card/60 px-3 py-2 text-xs text-muted-foreground">
               <Search className="size-3.5" />
               <span>Ask EvolvED anything</span>
-              <span className="ml-auto rounded border border-border px-1.5 py-0.5 text-[10px]">
-                ⌘K
-              </span>
             </div>
           </div>
 
@@ -85,7 +80,6 @@ export function AppShell({
                   )}
                   <n.icon className="size-4" />
                   <span className="flex-1">{n.label}</span>
-                  <span className="text-[10px] text-muted-foreground/70 font-mono">{n.kbd}</span>
                 </Link>
               );
             })}

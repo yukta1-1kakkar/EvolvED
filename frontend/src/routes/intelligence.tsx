@@ -1,37 +1,40 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { motion } from "framer-motion";
-import { Brain, AlertTriangle, GitBranch, Database, Eye, Search, Clock3 } from "lucide-react";
+import { Brain, AlertTriangle, GitBranch, Eye, Activity } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import { useAuth } from "@/hooks/useAuth";
-import { useMemory } from "@/hooks/useMemory";
-import type { ApiJson, ApiRecord, RetrievedMemory } from "@/types/api";
+import type { ApiJson, ApiRecord } from "@/types/api";
 
 export const Route = createFileRoute("/intelligence")({
   head: () => ({
     meta: [
-      { title: "AI Intelligence — EvolvED" },
+      { title: "AI Intelligence - EvolvED" },
       { name: "description", content: "What EvolvED currently understands about you, and why it teaches the way it does." },
     ],
   }),
-  component: IntelligencePage,
+  component: () => (
+    <ProtectedRoute>
+      <IntelligencePage />
+    </ProtectedRoute>
+  ),
 });
 
 function IntelligencePage() {
   const { currentUser } = useAuth();
   const analytics = useAnalytics(currentUser?.id);
-  const memory = useMemory(currentUser?.id, "current learner model misconceptions pedagogy");
   const engagement = analytics.data?.engagement_trends ?? {};
   const performance = analytics.data?.performance_trends ?? {};
 
   return (
-    <AppShell title="What EvolvED knows about you" subtitle="A transparent view of learner analytics and retrieved memories from the backend." accent={analytics.isFetching || memory.isFetching ? "Syncing" : "Reasoning"}>
-      {(analytics.isError || memory.isError) && (
+    <AppShell title="What EvolvED knows about you" subtitle="A transparent view of learner analytics and adaptation signals." accent={analytics.isFetching ? "Syncing" : "Reasoning"}>
+      {analytics.isError && (
         <div className="mb-6 rounded-2xl border border-rose/30 bg-rose/5 p-5">
           <div className="font-medium">Intelligence data could not be loaded</div>
-          <p className="mt-1 text-sm text-muted-foreground">{analytics.error?.message ?? memory.error?.message}</p>
-          <button onClick={() => { void analytics.refetch(); void memory.refetch(); }} className="mt-4 rounded-full bg-foreground px-4 py-2 text-sm text-background">
+          <p className="mt-1 text-sm text-muted-foreground">{analytics.error?.message}</p>
+          <button onClick={() => { void analytics.refetch(); }} className="mt-4 rounded-full bg-foreground px-4 py-2 text-sm text-background">
             Retry
           </button>
         </div>
@@ -78,8 +81,9 @@ function IntelligencePage() {
             {!analytics.isLoading && numericPairs(performance).length === 0 && <div className="text-sm text-muted-foreground">No performance flags returned.</div>}
           </div>
         </Card>
-        <Card icon={Database} title="Retrieved memories">
-          <MemorySnapshot memories={memory.data?.results ?? []} loading={memory.isLoading} />
+        <Card icon={Activity} title="Learning evidence">
+          <div className="font-display text-4xl">{Number(performance.assessment_count ?? 0)}</div>
+          <p className="mt-2 text-xs text-muted-foreground">Completed assessment checkpoints used to update this model.</p>
         </Card>
         <Card icon={Eye} title="Confidence estimate">
           <div className="font-display text-4xl">{firstNumeric(engagement).toFixed(2)}</div>
@@ -90,13 +94,6 @@ function IntelligencePage() {
         </Card>
       </div>
 
-      <MemoryPanel
-        memories={memory.data?.results ?? []}
-        concepts={memory.data?.concepts ?? []}
-        query={memory.data?.query ?? "current learner model misconceptions pedagogy"}
-        loading={memory.isLoading}
-      />
-
       <div className="rounded-3xl border border-border bg-card p-6">
         <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">AI insights</div>
         <ul className="mt-4 space-y-3 text-sm">
@@ -105,99 +102,6 @@ function IntelligencePage() {
       </div>
 
     </AppShell>
-  );
-}
-
-function MemorySnapshot({ memories, loading }: { memories: RetrievedMemory[]; loading: boolean }) {
-  if (loading) return <Skeleton className="h-28 w-full rounded-2xl" />;
-  if (!memories.length) return <div className="text-sm text-muted-foreground">No memories returned.</div>;
-  return (
-    <div className="space-y-3">
-      {memories.slice(0, 3).map((memory, index) => (
-        <div key={memory.id || index} className="text-sm">
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-medium">{memory.concept}</span>
-            <span className="text-xs tabular-nums text-muted-foreground">{Math.round(memory.score * 100)}%</span>
-          </div>
-          <div className="mt-1 h-1 rounded-full bg-muted">
-            <div className="h-full rounded-full bg-plum" style={{ width: `${Math.max(4, memory.score * 100)}%` }} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function MemoryPanel({ memories, concepts, query, loading }: { memories: RetrievedMemory[]; concepts: string[]; query: string; loading: boolean }) {
-  return (
-    <section className="mb-6 rounded-3xl border border-border bg-card p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
-            <Database className="size-3.5 text-plum" /> Memory retrieval
-          </div>
-          <h3 className="mt-1 font-display text-2xl">What memory is being used</h3>
-        </div>
-        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground">
-          <Search className="size-3.5 shrink-0" />
-          <span className="truncate">{query}</span>
-        </div>
-      </div>
-
-      {concepts.length > 0 && (
-        <div className="mt-5 flex flex-wrap gap-2">
-          {concepts.map((concept) => (
-            <span key={concept} className="rounded-full border border-plum/20 bg-plum/[0.06] px-3 py-1 text-xs font-medium text-plum">
-              {concept}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
-          <Skeleton className="h-40 rounded-2xl" />
-          <Skeleton className="h-40 rounded-2xl" />
-        </div>
-      ) : memories.length ? (
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
-          {memories.map((memory, index) => (
-            <MemoryCard key={memory.id || index} memory={memory} index={index} />
-          ))}
-        </div>
-      ) : (
-        <p className="mt-5 text-sm text-muted-foreground">No memory matched this query yet. Complete lessons, quizzes, or tutor conversations to build retrievable learner memory.</p>
-      )}
-    </section>
-  );
-}
-
-function MemoryCard({ memory, index }: { memory: RetrievedMemory; index: number }) {
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.06 }}
-      className="rounded-2xl border border-border bg-muted/20 p-4"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{memory.source}</div>
-          <h4 className="mt-1 text-base font-medium">{memory.concept}</h4>
-        </div>
-        <span className="rounded-full bg-background px-2 py-1 text-xs tabular-nums text-muted-foreground">
-          {Math.round(memory.score * 100)}%
-        </span>
-      </div>
-      <p className="mt-3 text-sm leading-6 text-foreground/85">{memory.snippet}</p>
-      <div className="mt-4 h-1.5 rounded-full bg-background">
-        <div className="h-full rounded-full bg-plum" style={{ width: `${Math.max(4, memory.score * 100)}%` }} />
-      </div>
-      <div className="mt-3 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-        <Clock3 className="mt-0.5 size-3.5 shrink-0 text-plum" />
-        <span>{memory.why || "Retrieved because it matched the current learner query."}</span>
-      </div>
-    </motion.article>
   );
 }
 
@@ -223,7 +127,7 @@ function Radar({ data }: { data: ApiRecord }) {
   };
   const poly = v.map((val, i) => pt(i, val).join(",")).join(" ");
   return (
-    <svg viewBox="0 0 360 360" className="w-full max-w-md mx-auto">
+    <svg viewBox="-36 -36 432 432" className="w-full max-w-md mx-auto overflow-visible">
       {[0.25,0.5,0.75,1].map(r => (
         <polygon key={r} points={axes.map((_,i)=>pt(i,r).join(",")).join(" ")} fill="none" stroke="oklch(0.88 0.012 75)" strokeWidth={0.5} />
       ))}
@@ -236,7 +140,7 @@ function Radar({ data }: { data: ApiRecord }) {
         style={{ transformOrigin: `${cx}px ${cy}px` }} />
       {axes.map((a, i) => {
         const [x, y] = pt(i, 1.12);
-        return <text key={a} x={x} y={y} textAnchor="middle" fontSize="11" fill="oklch(0.38 0.025 265)">{a}</text>;
+        return <text key={a} x={x} y={y} textAnchor="middle" fontSize="10" fill="oklch(0.38 0.025 265)">{compactAxisLabel(a)}</text>;
       })}
       {v.map((val, i) => {
         const [x, y] = pt(i, val);
@@ -262,6 +166,10 @@ function firstNumeric(record: ApiRecord) {
 
 function humanize(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function compactAxisLabel(value: string) {
+  return value.length > 18 ? `${value.slice(0, 16)}...` : value;
 }
 
 function valueToText(value: ApiJson): string {

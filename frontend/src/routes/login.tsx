@@ -30,7 +30,7 @@ export const Route = createFileRoute("/login")({
   }),
   head: () => ({
     meta: [
-      { title: "Login — EvolvED" },
+      { title: "Login - EvolvED" },
       { name: "description", content: "Return to your adaptive EvolvED learning space." },
     ],
   }),
@@ -40,6 +40,7 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const { login, loading } = useAuth();
   const navigate = useNavigate();
+  const { redirect } = Route.useSearch();
   const [showPassword, setShowPassword] = useState(false);
 
   const {
@@ -60,7 +61,7 @@ function LoginPage() {
     try {
       const user = await login(values);
       await navigate({
-        to: !user.profileComplete ? ROUTES.PROFILE_SETUP : ROUTES.KNOWLEDGE,
+        to: !user.profileComplete ? ROUTES.PROFILE_SETUP : safeRedirect(redirect),
         replace: true,
       });
     } catch (error) {
@@ -152,6 +153,12 @@ function LoginPage() {
       </p>
     </AuthLayout>
   );
+}
+
+function safeRedirect(value?: string) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return ROUTES.KNOWLEDGE;
+  if ([ROUTES.LOGIN, ROUTES.SIGNUP, ROUTES.FORGOT_PASSWORD].includes(value as typeof ROUTES[keyof typeof ROUTES])) return ROUTES.KNOWLEDGE;
+  return value;
 }
 
 function AuthHeading({ title, subtitle }: { title: string; subtitle: string }) {

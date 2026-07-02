@@ -331,6 +331,21 @@ def _symbolic_math_contract(topic: str, constraints: Dict[str, Any]) -> str:
     )
 
 
+def _roadmap_syllabus_contract(topic: str) -> str:
+    normalized = topic.strip().lower()
+    if "linear" in normalized and "algebra" in normalized:
+        return (
+            "Required syllabus sequence for Linear Algebra Foundations: vectors, matrices, norms, projections, "
+            "eigenvalues, diagonalisation. The roadmap must contain these exact concept groups in this order."
+        )
+    if "calculus" in normalized:
+        return (
+            "Required syllabus sequence for Calculus: limits, derivatives, gradients, multivariable calculus, "
+            "Hessians. The roadmap must contain these exact concept groups in this order."
+        )
+    return ""
+
+
 def _visual_asset_image_url(asset: Dict[str, Any]) -> str:
     title = str(asset["title"])
     description = str(asset["description"])
@@ -1291,7 +1306,8 @@ async def lesson_planning_agent(
     )
     prompt = (
         f"{prompt}\n\nLearning style is a first-class delivery constraint: {learning_style}.\n"
-        "Adapt wording, examples, practice, and pacing to that style while preserving the flat JSON contract."
+        "Adapt wording, examples, practice, and pacing to that style while preserving the flat JSON contract. "
+        "Do not use em dashes in any generated text; use commas, periods, or short parentheses instead."
     )
     lesson_request_id = f"lesson-request:{uuid4()}"
     base_messages = [
@@ -1300,7 +1316,7 @@ async def lesson_planning_agent(
             "content": (
                 "You are a master teacher and curriculum designer. Return one strictly valid JSON object with "
                 "double-quoted keys and strings. Escape quotes, backslashes, and line breaks inside strings. "
-                "Do not use Markdown fences or include commentary outside the JSON object."
+                "Do not use Markdown fences or include commentary outside the JSON object. Do not use em dashes."
             ),
         },
         {"role": "user", "content": prompt},
@@ -1421,6 +1437,7 @@ async def lesson_roadmap_agent(
         "description, difficulty, estimated_duration as minutes, and objectives as a list of strings. "
         "Sequence prerequisites before advanced material and adapt the roadmap to this learner context. "
         f"The roadmap topic is exactly {req.topic}; every lesson must stay within that topic. "
+        f"{_roadmap_syllabus_contract(req.topic)} "
         f"Education level is {planning_context['education_level']}; choose vocabulary, abstraction, examples, and "
         "expected math/formality for that level. "
         f"Current familiarity is {planning_context['knowledge_level']}; for Beginner start with intuition and "
@@ -1437,6 +1454,7 @@ async def lesson_roadmap_agent(
         "short; name the exact concept group without listing every subtopic. Descriptions should summarize only the "
         "core outcome, not a full lesson plan. "
         "Do not hardcode a generic plan. Do not use project context, project goals, or applied projects. "
+        "Do not use em dashes in any generated text; use commas or periods instead. "
         f"Learner roadmap context: {json.dumps(planning_context)}"
     )
     messages = [{"role": "user", "content": prompt}]
@@ -1592,6 +1610,7 @@ async def interactive_agent(req: models.TutorInteractionRequest, session_state: 
         "Example: one compact example from the lesson.\n"
         "Check yourself: one short question the learner can answer.\n"
         "Keep the whole answer under 170 words. Use plain language, correct terminology, and clean line breaks. "
+        "Do not use em dashes; use commas or periods instead. "
         f"Action: {req.action}. "
         f"Selected lesson: {json.dumps(selected_lesson)}. "
         f"Lesson objective: {lesson.get('learning_objective')}. "
@@ -1660,6 +1679,7 @@ async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, A
         "For graph visualizations, data must be numeric points with x and y fields. For vector questions, prefer "
         "a graph or coordinate diagram with endpoint labels such as (3,4), component arrows, and magnitude; do not "
         "use a flowchart for vector components. For diagrams and flowcharts, data must be 2 to 6 ordered string labels. If no visual is needed, omit visual_asset. "
+        "Do not use em dashes in prompts, choices, explanations, or visual text; use commas or periods instead. "
         f"Learning style: {style}. Assessment contract: {json.dumps(style_contract)}. "
         f"Lesson: {json.dumps(lesson)}"
     )
@@ -1695,6 +1715,7 @@ async def assessment_agent(sub: models.AssessmentSubmission, session_state: Dict
         "and the written reasoning, with more weight on conceptual justification than guessing. "
         "Assess only the concepts taught in the selected lesson and its learning objectives. "
         "Do not use project context, project goals, or applied projects. "
+        "Do not use em dashes in detailed_feedback or any list item; use commas or periods instead. "
         f"Lesson assessment context: {json.dumps(assessment_context)}. "
         f"Submission: {sub.model_dump_json()}"
     )
@@ -1711,6 +1732,7 @@ async def adaptation_agent(req: models.AdaptationRequest) -> models.AdaptationDe
     prompt = (
         "You are an adaptive learning agent. Decide the next teaching adaptation from this assessment state. "
         "Return JSON only with an 'adaptations' object describing the action, targets, and reasoning. "
+        "Do not use em dashes in any generated text; use commas or periods instead. "
         f"Assessment state: {json.dumps(req.assessment_state)}"
     )
     try:

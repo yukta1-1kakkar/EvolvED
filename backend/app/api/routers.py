@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from time import perf_counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,6 +92,20 @@ async def _retry_database(operation, label: str, attempts: int = 3):
     raise RuntimeError(f"Database {label} failed after {attempts} attempts: {last_error}") from last_error
 
 
+def _normalize_generated_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return re.sub(r"\s{2,}", " ", re.sub(r"\s*\u2014\s*", ", ", value)).strip()
+    if isinstance(value, list):
+        return [_normalize_generated_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_generated_value(item) for key, item in value.items()}
+    return value
+
+
+def _normalize_generated_model(model):
+    return model.__class__(**_normalize_generated_value(model.model_dump()))
+
+
 async def _learner_context(repo: repository.AsyncRepository, learner_id: str):
     async def load():
         profile = await repo.get_learner_profile(learner_id)
@@ -143,12 +158,12 @@ async def generate_lesson(req: models.GenerateLessonRequest):
             "adaptation_context": learner_state.adaptation_history[-1:] or [],
         }
         package = await lg_graph.generate_lesson_package(learner_profile, learner_state, lesson_topic, constraints)
-        lesson = package["lesson"]
+        lesson = _normalize_generated_model(package["lesson"])
         await _finalize_lesson_media(lesson)
         await _retry_database(
             lambda: repo.persist_lesson(req.learner_id, lesson, {
-                "teaching_strategy": package["teaching_strategy"].model_dump(),
-                "generated_content": package["generated_content"].model_dump(),
+                "teaching_strategy": _normalize_generated_value(package["teaching_strategy"].model_dump()),
+                "generated_content": _normalize_generated_value(package["generated_content"].model_dump()),
             }),
             "lesson persistence",
         )
@@ -164,11 +179,69 @@ async def generate_roadmap(req: models.GenerateLessonRequest):
         learner_profile, learner_state = await _learner_context(repo, req.learner_id)
         topic = req.topic.strip() or learner_profile.topic or learner_profile.learning_goal or "foundational learning"
         constraints = {**(req.constraints or {}), "adaptation_context": learner_state.adaptation_history[-1:] or []}
-        roadmap = await lg_graph.generate_roadmap(learner_profile, learner_state, topic, constraints)
+        roadmap = _normalize_generated_model(await lg_graph.generate_roadmap(learner_profile, learner_state, topic, constraints))
         await _retry_database(lambda: repo.persist_roadmap(req.learner_id, roadmap), "roadmap persistence")
         return roadmap
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        logger.exception("Roadmap generation failed; returning fallback roadmap: learner_id=%s topic=%s", req.learner_id, req.topic)
+        topic = req.topic.strip() or "foundational learning"
+        roadmap = _normalize_generated_model(_fallback_roadmap(req.learner_id, topic, req.constraints or {}))
+        try:
+            await _retry_database(lambda: repo.persist_roadmap(req.learner_id, roadmap), "fallback roadmap persistence")
+        except Exception:
+            logger.exception("Fallback roadmap persistence failed; returning roadmap without stored session")
+        return roadmap
+
+
+def _fallback_roadmap(learner_id: str, topic: str, constraints: dict[str, Any]) -> models.LessonRoadmapResponse:
+    pace = str(constraints.get("pace") or "balanced").lower()
+    duration = 18 if "fast" in pace else 35 if "thorough" in pace or "gentle" in pace else 25
+    stages = _syllabus_stages(topic) or [
+        ("Core intuition", "Build the mental model and vocabulary for the topic.", "Beginner"),
+        ("Worked examples", "Solve guided examples that expose the main pattern.", "Beginner"),
+        ("Common mistakes", "Compare correct reasoning with tempting incorrect shortcuts.", "Intermediate"),
+        ("Independent practice", "Apply the method to new questions with feedback.", "Intermediate"),
+        ("Mixed challenge", "Connect the idea with nearby concepts and harder cases.", "Advanced"),
+    ]
+    return models.LessonRoadmapResponse(
+        learner_id=learner_id,
+        topic=topic,
+        generation_source="fallback",
+        generation_model="deterministic-roadmap",
+        lessons=[
+            models.LessonRoadmapItem(
+                id=f"fallback-{index + 1}",
+                title=f"{topic} {title}",
+                description=description,
+                difficulty=difficulty,
+                estimated_duration=duration,
+                objectives=[f"Explain {topic} clearly", "Solve one checkpoint correctly"],
+            )
+            for index, (title, description, difficulty) in enumerate(stages)
+        ],
+    )
+
+
+def _syllabus_stages(topic: str) -> list[tuple[str, str, str]]:
+    normalized = topic.strip().lower()
+    if "linear" in normalized and "algebra" in normalized:
+        return [
+            ("Vectors", "Represent quantities with magnitude and direction, then operate on components geometrically and symbolically.", "Beginner"),
+            ("Matrices", "Use arrays of numbers to represent linear maps, transformations, and systems of equations.", "Beginner"),
+            ("Norms", "Measure vector and matrix size, distance, error, and stability with common norm choices.", "Intermediate"),
+            ("Projections", "Map vectors onto lines, planes, or subspaces and connect projections to approximation.", "Intermediate"),
+            ("Eigenvalues", "Find invariant directions and scaling factors for linear transformations.", "Advanced"),
+            ("Diagonalisation", "Use eigenvectors to rewrite suitable matrices in a simpler diagonal form.", "Advanced"),
+        ]
+    if "calculus" in normalized:
+        return [
+            ("Limits", "Reason about the value a function approaches and use limits as the foundation for change.", "Beginner"),
+            ("Derivatives", "Measure instantaneous rate of change with slopes, tangent lines, and derivative rules.", "Beginner"),
+            ("Gradients", "Extend derivatives to multivariable functions and direction of steepest ascent.", "Intermediate"),
+            ("Multivariable calculus", "Study functions with several inputs using partial derivatives, level curves, and directional change.", "Intermediate"),
+            ("Hessians", "Use second partial derivatives to understand curvature and optimization behavior.", "Advanced"),
+        ]
+    return []
 
 
 @router.post("/teaching-strategy", response_model=models.TeachingStrategy)
@@ -190,12 +263,12 @@ async def submit_assessment(sub: models.AssessmentSubmission):
         logger.info("Assessment submit started: learner_id=%s session_id=%s answers=%s", sub.learner_id, sub.session_id, len(sub.answers))
         session_state = await repo.get_session_state(sub.learner_id, sub.session_id)
         logger.info("Assessment submit session loaded: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
-        result = await langgraph_nodes.assessment_agent(sub, session_state)
+        result = _normalize_generated_model(await langgraph_nodes.assessment_agent(sub, session_state))
         logger.info("Assessment submit graded: session_id=%s score=%.3f elapsed=%.2fs", sub.session_id, result.score, perf_counter() - started)
         state = await repo.get_learner_state(sub.learner_id)
-        decision = await langgraph_nodes.adaptation_agent(models.AdaptationRequest(learner_id=sub.learner_id, session_id=sub.session_id, assessment_state=result.model_dump()))
+        decision = _normalize_generated_model(await langgraph_nodes.adaptation_agent(models.AdaptationRequest(learner_id=sub.learner_id, session_id=sub.session_id, assessment_state=result.model_dump())))
         logger.info("Assessment submit adapted: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
-        evolved = await langgraph_nodes.evolutionary_agent({"learner_model": state.model_dump(), "assessment": result.model_dump(), "adaptation": decision.adaptations})
+        evolved = _normalize_generated_value(await langgraph_nodes.evolutionary_agent({"learner_model": state.model_dump(), "assessment": result.model_dump(), "adaptation": decision.adaptations}))
         result.adaptation = decision.adaptations
         await repo.save_assessment_and_evolve(sub, result, decision, evolved)
         logger.info("Assessment submit completed: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
@@ -208,7 +281,7 @@ async def submit_assessment(sub: models.AssessmentSubmission):
 @router.post("/adapt-learning", response_model=models.AdaptationDecision)
 async def adapt_learning(req: models.AdaptationRequest):
     try:
-        return await langgraph_nodes.adaptation_agent(req)
+        return _normalize_generated_model(await langgraph_nodes.adaptation_agent(req))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -220,7 +293,7 @@ async def generate_quiz(req: models.GenerateQuizRequest):
     if not session_state:
         raise HTTPException(status_code=404, detail="Lesson session was not found.")
     try:
-        quiz = await langgraph_nodes.quiz_agent(req, session_state)
+        quiz = _normalize_generated_model(await langgraph_nodes.quiz_agent(req, session_state))
         await repo.save_quiz(req.learner_id, quiz, (session_state.get("lesson") or {}).get("topic"))
         return quiz
     except Exception as exc:
@@ -234,7 +307,7 @@ async def tutor_interaction(req: models.TutorInteractionRequest):
     if not session_state:
         raise HTTPException(status_code=404, detail="Lesson session was not found.")
     try:
-        answer = await langgraph_nodes.interactive_agent(req, session_state)
+        answer = _normalize_generated_model(await langgraph_nodes.interactive_agent(req, session_state))
         try:
             await repo.save_interaction(req, answer)
         except Exception as exc:

@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, Check, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MathText } from "@/components/learning/MathText";
 import { VectorArrowDiagram } from "@/components/learning/VectorArrowDiagram";
 import { isVectorVisualText } from "@/components/learning/vectorVisual";
@@ -11,7 +12,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { completeActiveRoadmapLesson, prepareNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import type { ApiJson, ApiRecord } from "@/types/api";
 
-export const Route = createFileRoute("/assessment")({ component: AssessmentPage });
+export const Route = createFileRoute("/assessment")({
+  component: () => (
+    <ProtectedRoute>
+      <AssessmentPage />
+    </ProtectedRoute>
+  ),
+});
 
 type AssessmentAnswer = ApiRecord & {
   selected_options: string[];
@@ -94,27 +101,71 @@ function AssessmentPage() {
           )}
           {submit.isError && <p className="text-sm text-destructive">{submit.error.message}</p>}
           {submit.data && (
-            <div className="rounded-3xl border border-plum/20 bg-plum/[0.04] p-6">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-plum">Learner model updated</div>
-              <div className="mt-2 font-display text-4xl">{Math.round(submit.data.score * 100)}%</div>
-              <MathText as="p" className="mt-3 text-sm leading-relaxed" text={submit.data.detailed_feedback} />
-              <MathText
-                as="p"
-                className="mt-3 text-sm text-muted-foreground"
-                text={`Next-lesson adaptation: ${textValue(submit.data.adaptation.action) || "Teaching strategy recalibrated from this result."}`}
-              />
-              <button
-                type="button"
-                onClick={evolveNextLesson}
-                className="mt-5 inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:opacity-90"
-              >
-                <ArrowRight className="size-4" /> Evolve my next lesson
-              </button>
-            </div>
+            <AssessmentResultCard
+              score={submit.data.score}
+              feedback={submit.data.detailed_feedback}
+              nextAction={humanizeIdentifier(textValue(submit.data.adaptation.action))}
+              onNext={evolveNextLesson}
+            />
           )}
         </div>
       )}
     </AppShell>
+  );
+}
+
+function AssessmentResultCard({
+  score,
+  feedback,
+  nextAction,
+  onNext,
+}: {
+  score: number;
+  feedback: string;
+  nextAction: string;
+  onNext: () => void;
+}) {
+  const result = splitAssessmentFeedback(feedback);
+  return (
+    <section className="rounded-3xl border border-plum/20 bg-plum/[0.04] p-6">
+      <div className="grid gap-5 md:grid-cols-[auto_1fr] md:items-start">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.22em] text-plum">Learner model updated</div>
+          <div className="mt-2 font-display text-5xl">{Math.round(score * 100)}%</div>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Evaluation</div>
+          <MathText as="p" className="mt-2 text-sm leading-7 text-foreground/85" text={result.evaluation} />
+        </div>
+      </div>
+
+      {result.recommendation && (
+        <div className="mt-4 rounded-2xl border border-amber-300/50 bg-amber-50 p-5 text-amber-950">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-semibold">
+            <Sparkles className="size-3.5" /> Recommendation
+          </div>
+          <MathText as="p" className="mt-2 text-sm leading-7" text={result.recommendation} />
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-col gap-4 rounded-2xl border border-border bg-background p-5 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Suggested next step</div>
+          <MathText
+            as="p"
+            className="mt-1 text-sm font-medium"
+            text={nextAction || "Teaching strategy recalibrated from this result."}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onNext}
+          className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:opacity-90"
+        >
+          <ArrowRight className="size-4" /> Evolve my next lesson
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -182,7 +233,9 @@ function QuestionCard({
                 onClick={() => toggleOption(option)}
                 className={`rounded-xl border px-4 py-3 text-left text-sm transition ${selected ? "border-plum bg-plum/[0.08] text-foreground" : "border-border hover:border-plum/50"}`}
               >
-                <span className="mr-2 inline-flex size-4 items-center justify-center rounded border border-current text-[10px]">{selected ? "x" : ""}</span>
+                <span className="mr-2 inline-flex size-4 items-center justify-center rounded border border-current text-[10px]">
+                  {selected && <Check className="size-3" />}
+                </span>
                 <MathText as="span" text={option} />
               </button>
             );
@@ -252,4 +305,16 @@ function arrayValue(value: ApiJson | undefined) {
 
 function textValue(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function humanizeIdentifier(value: string) {
+  return value.replaceAll("_", " ").replaceAll("-", " ").replace(/\s+/g, " ").trim();
+}
+
+function splitAssessmentFeedback(feedback: string) {
+  const [evaluation, recommendation] = feedback.split(/\bRecommendation:\s*/i);
+  return {
+    evaluation: evaluation.trim() || "Assessment submitted.",
+    recommendation: recommendation?.trim() ?? "",
+  };
 }

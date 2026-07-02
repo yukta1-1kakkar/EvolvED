@@ -80,6 +80,15 @@ export function prepareNextRoadmapLessonContext() {
   return true;
 }
 
+export function peekNextRoadmapLessonContext() {
+  if (typeof window === "undefined") return null;
+  try {
+    return JSON.parse(window.localStorage.getItem(NEXT_ROADMAP_LESSON_CONTEXT_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
 export function completeActiveRoadmapLesson(learnerId: string) {
   if (typeof window === "undefined") return;
 

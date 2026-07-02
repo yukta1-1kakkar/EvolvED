@@ -46,7 +46,7 @@ type SignupFormValues = z.infer<typeof signupSchema>;
 export const Route = createFileRoute("/signup")({
   head: () => ({
     meta: [
-      { title: "Signup — EvolvED" },
+      { title: "Signup - EvolvED" },
       { name: "description", content: "Create your EvolvED adaptive learning profile." },
     ],
   }),

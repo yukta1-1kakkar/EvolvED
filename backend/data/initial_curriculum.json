@@ -12,6 +12,12 @@
     "content": "Matrices are rectangular arrays of numbers that represent linear maps between vector spaces. They support operations like addition, multiplication, transpose, and inversion (when square and full-rank). Practical examples include transformation matrices for rotations and scalings, and systems of linear equations."
   },
   {
+    "id": "la_norms",
+    "topic": "Linear Algebra",
+    "concept": "norms",
+    "content": "Norms measure the size or length of vectors and matrices. Start with vector magnitude, then compare common norms such as L1, L2, and infinity norm. Connect norms to distance, error, stability, and optimization."
+  },
+  {
     "id": "la_projections",
     "topic": "Linear Algebra",
     "concept": "projections",
@@ -22,6 +28,12 @@
     "topic": "Linear Algebra",
     "concept": "eigenvalues_and_vectors",
     "content": "Eigenvalues and eigenvectors are scalars and vectors such that A v = lambda v. They reveal invariant directions under a linear transform and are central to diagonalization, stability analysis, and PCA. Provide geometric intuition and computation steps for small matrices."
+  },
+  {
+    "id": "la_diagonalisation",
+    "topic": "Linear Algebra",
+    "concept": "diagonalisation",
+    "content": "Diagonalisation rewrites a suitable matrix as A = P D P^-1, where D is diagonal and P contains eigenvectors. It simplifies powers of matrices, linear recurrences, and the geometric interpretation of repeated transformations."
   },
   {
     "id": "calc_limits",
@@ -40,6 +52,12 @@
     "topic": "Calculus",
     "concept": "gradients",
     "content": "Gradients generalize derivatives to multivariable functions; the gradient vector points in direction of steepest ascent. Use geometric visualization and examples in optimization."
+  },
+  {
+    "id": "calc_multivariable",
+    "topic": "Calculus",
+    "concept": "multivariable_calculus",
+    "content": "Multivariable calculus studies functions with several inputs or outputs. Cover partial derivatives, level curves and surfaces, directional derivatives, and how local change is represented in higher dimensions."
   },
   {
     "id": "calc_hessians",

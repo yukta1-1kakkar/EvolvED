@@ -1,13 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2, MessageSquarePlus, Send, Star } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/hooks/useAuth";
 import { submitPeerFeedback } from "@/lib/api";
 
 export const Route = createFileRoute("/feedback")({
-  component: FeedbackPage,
+  component: () => (
+    <ProtectedRoute>
+      <FeedbackPage />
+    </ProtectedRoute>
+  ),
 });
 
 type FeedbackState = {
@@ -26,7 +31,7 @@ function FeedbackPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState<FeedbackState>({
-    reviewer_name: "",
+    reviewer_name: currentUser?.fullName ?? "",
     topic: currentUser?.learningTopic ?? "",
     rating: 4,
     clarity: 4,
@@ -34,6 +39,11 @@ function FeedbackPage() {
     modality_fit: 4,
     comment: "",
   });
+
+  useEffect(() => {
+    if (!currentUser?.fullName) return;
+    setForm((current) => current.reviewer_name ? current : { ...current, reviewer_name: currentUser.fullName });
+  }, [currentUser?.fullName]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

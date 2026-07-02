@@ -1,5 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { MathText } from "@/components/learning/MathText";
 import { motion } from "framer-motion";
 import { Lock } from "lucide-react";
 import { useState } from "react";
@@ -13,11 +15,15 @@ import type { CurriculumItem } from "@/types/api";
 export const Route = createFileRoute("/knowledge")({
   head: () => ({
     meta: [
-      { title: "Knowledge Map — EvolvED" },
+      { title: "Knowledge Map - EvolvED" },
       { name: "description", content: "Explore the living map of what you know, what's next, and how concepts connect." },
     ],
   }),
-  component: KnowledgePage,
+  component: () => (
+    <ProtectedRoute>
+      <KnowledgePage />
+    </ProtectedRoute>
+  ),
 });
 
 type Node = { id: string; x: number; y: number; label: string; mastery: number; group: string; item: CurriculumItem };
@@ -128,8 +134,10 @@ function KnowledgePage() {
                       ok
                     </text>
                   )}
-                  <text x={n.x} y={n.y + r + 2.4} textAnchor="middle" fontSize="2.2" fill="oklch(0.22 0.025 270)" className="font-medium pointer-events-none select-none">
-                    {n.label}
+                  <text x={n.x} y={n.y + r + 2.4} textAnchor="middle" fontSize="2.1" fill="oklch(0.22 0.025 270)" className="font-medium pointer-events-none select-none">
+                    {labelLines(n.label).map((line, lineIndex) => (
+                      <tspan key={line} x={n.x} dy={lineIndex === 0 ? 0 : 2.6}>{line}</tspan>
+                    ))}
                   </text>
                 </g>
               );
@@ -156,6 +164,7 @@ function KnowledgePage() {
               <div><span className="text-foreground font-medium">Unlocks:</span> {unlockLabels.join(" - ") || "-"}</div>
               <div><span className="text-foreground font-medium">Status:</span> {selectedLocked ? "Locked" : completedIds.has(sel.id) ? "Completed" : "Unlocked"}</div>
             </div>
+            <MathText as="p" className="mt-4 rounded-2xl bg-muted/35 p-4 text-sm leading-7 text-foreground/80" text={sel.item.content} />
             <button
               type="button"
               onClick={() => openRoadmap(sel)}
@@ -224,6 +233,13 @@ function buildEdges(items: CurriculumItem[]): [string, string][] {
 
 function humanize(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function labelLines(label: string) {
+  const words = label.split(" ");
+  if (label.length <= 16 || words.length === 1) return [label];
+  const midpoint = Math.ceil(words.length / 2);
+  return [words.slice(0, midpoint).join(" "), words.slice(midpoint).join(" ")].filter(Boolean);
 }
 
 function filterItemsForSelectedTopic(items: CurriculumItem[], selectedTopic?: string): CurriculumItem[] {
@@ -325,13 +341,17 @@ function canonicalTrackTopic(value?: string) {
 const PREREQUISITE_EDGES: Record<string, [string, string][]> = {
   linear_algebra: [
     ["la_vectors", "la_matrices"],
-    ["la_vectors", "la_projections"],
+    ["la_vectors", "la_norms"],
+    ["la_norms", "la_projections"],
     ["la_matrices", "la_eigen"],
     ["la_projections", "la_eigen"],
+    ["la_eigen", "la_diagonalisation"],
   ],
   calculus: [
     ["calc_limits", "calc_derivatives"],
     ["calc_derivatives", "calc_gradients"],
+    ["calc_gradients", "calc_multivariable"],
+    ["calc_multivariable", "calc_hessians"],
     ["calc_gradients", "calc_hessians"],
   ],
 };
@@ -339,11 +359,14 @@ const PREREQUISITE_EDGES: Record<string, [string, string][]> = {
 const REQUIRED_PREREQUISITES: Record<string, string[]> = {
   la_vectors: ["Coordinate systems", "Basic algebra", "Number lines"],
   la_matrices: ["Vectors", "Systems of equations", "Arithmetic operations"],
+  la_norms: ["Vectors", "Squares and square roots", "Distance formula"],
   la_projections: ["Vectors", "Dot products", "Basic trigonometry"],
   la_eigen: ["Vectors", "Matrices", "Solving equations"],
+  la_diagonalisation: ["Eigenvalues", "Eigenvectors", "Matrix multiplication"],
   calc_limits: ["Functions", "Graphs", "Basic algebra"],
   calc_derivatives: ["Limits", "Functions", "Slope of a line"],
   calc_gradients: ["Derivatives", "Partial derivatives", "Multivariable functions"],
+  calc_multivariable: ["Derivatives", "Functions of several variables", "3D graphs"],
   calc_hessians: ["Gradients", "Second derivatives", "Matrices"],
 };
 

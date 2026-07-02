@@ -22,7 +22,8 @@ export function useRoadmap(request: GenerateLessonRequest) {
     queryKey: ["roadmap", request.learner_id, request.topic, request.constraints],
     queryFn: () => generateRoadmap(request),
     enabled: Boolean(request.learner_id && request.topic),
-    retry: 1,
+    retry: 2,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

@@ -208,6 +208,7 @@ class AuthUser(BaseModel):
     profile_complete: bool = False
     learning_topic: Optional[str] = None
     learning_project: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class TutorInteractionRequest(BaseModel):

@@ -9,9 +9,9 @@ import { Footer } from "@/components/site/Footer";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "EvolvED — Education that evolves with every learner" },
+      { title: "EvolvED - Education that evolves with every learner" },
       { name: "description", content: "EvolvED is an adaptive educational intelligence that understands learners, reasons about pedagogy, generates lessons in real time, and evolves its teaching strategies over time." },
-      { property: "og:title", content: "EvolvED — Education that evolves with every learner" },
+      { property: "og:title", content: "EvolvED - Education that evolves with every learner" },
       { property: "og:description", content: "A living teaching intelligence that adapts to how you think, learn, and grow." },
     ],
     links: [

@@ -1,6 +1,6 @@
 import { motion, useScroll, useTransform } from "framer-motion";
 import { useRef } from "react";
-import { Brain, Sparkles, BookOpen, Target, Infinity as Inf, Compass } from "lucide-react";
+import { ArrowRight, Brain, Sparkles, BookOpen, Target, Infinity as Inf, Compass } from "lucide-react";
 
 const chapters = [
   {
@@ -8,7 +8,7 @@ const chapters = [
     chapter: "I",
     eyebrow: "Adaptive Intelligence",
     title: "Begins by understanding you.",
-    body: "Every learner has a fingerprint — pace, prior knowledge, misconceptions, what makes a concept finally click. EvolvED builds and refines this model from the first question you ask.",
+    body: "Every learner has a fingerprint - pace, prior knowledge, misconceptions, what makes a concept finally click. EvolvED builds and refines this model from the first question you ask.",
     icon: Brain,
     visual: <LearnerModelVisual />,
   },
@@ -17,7 +17,7 @@ const chapters = [
     chapter: "II",
     eyebrow: "Pedagogical Reasoning",
     title: "Thinks like a great teacher.",
-    body: "Not all knowledge is taught the same way. EvolvED reasons over teaching strategies — when to scaffold, when to challenge, when to use analogy, when to step back.",
+    body: "Not all knowledge is taught the same way. EvolvED reasons over teaching strategies - when to scaffold, when to challenge, when to use analogy, when to step back.",
     icon: Compass,
     visual: <PedagogyVisual />,
   },
@@ -26,7 +26,7 @@ const chapters = [
     chapter: "III",
     eyebrow: "Lesson Generation",
     title: "Composes lessons in real time.",
-    body: "Lessons aren't pulled from a shelf. They're written for the version of you that exists right now — with diagrams, problems, narration, and code, tuned to the moment.",
+    body: "Lessons aren't pulled from a shelf. They're written for the version of you that exists right now - with diagrams, problems, narration, and code, tuned to the moment.",
     icon: BookOpen,
     visual: <LessonVisual />,
   },
@@ -35,7 +35,7 @@ const chapters = [
     chapter: "IV",
     eyebrow: "Assessment & Adaptation",
     title: "Listens to how you answer, not just what.",
-    body: "Confidence, hesitation, partial understanding — EvolvED reads all of it. Each response refines its picture of your mastery and changes what comes next.",
+    body: "Confidence, hesitation, partial understanding - EvolvED reads all of it. Each response refines its picture of your mastery and changes what comes next.",
     icon: Target,
     visual: <AssessVisual />,
   },
@@ -109,7 +109,7 @@ function Chapter({
   );
 }
 
-/* ——— Visuals ——— */
+/* Visuals */
 
 function LearnerModelVisual() {
   const traits = [
@@ -147,33 +147,94 @@ function LearnerModelVisual() {
 }
 
 function PedagogyVisual() {
-  const strategies = ["Scaffold", "Worked example", "Analogy", "Socratic", "Spaced recall", "Challenge"];
+  const signals = [
+    ["Misconception", "Slope mistaken for height"],
+    ["Confidence", "Sure answer, fragile logic"],
+    ["Pace", "Needs smaller steps"],
+  ];
+  const moves = ["Analogy", "Worked example", "Check understanding"];
+
   return (
-    <div className="absolute inset-0 p-8 grid place-items-center">
-      <div className="relative w-full max-w-sm">
-        {strategies.map((s, i) => {
-          const a = (i / strategies.length) * Math.PI * 2 - Math.PI / 2;
-          const x = Math.cos(a) * 110;
-          const y = Math.sin(a) * 110;
-          const active = i === 2;
-          return (
+    <div className="absolute inset-0 p-6 md:p-8">
+      <div className="grid h-full grid-rows-[1fr_auto] gap-4">
+        <div className="grid min-h-0 gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
+          <div className="space-y-2.5">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Learner signals</div>
+            {signals.map(([label, value], i) => (
+              <motion.div
+                key={label}
+                initial={{ opacity: 0, x: -12 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: 0.12 + i * 0.08 }}
+                className={`rounded-2xl border border-border bg-card/75 p-3 ${i > 0 ? "hidden sm:block" : ""}`}
+              >
+                <div className="text-[10px] uppercase tracking-[0.18em] text-plum">{label}</div>
+                <div className="mt-1 text-xs font-medium leading-5">{value}</div>
+              </motion.div>
+            ))}
+          </div>
+
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.35, duration: 0.45 }}
+            className="hidden md:grid justify-items-center gap-3"
+          >
+            <ArrowRight className="size-4 text-muted-foreground" />
+            <div className="grid size-20 place-items-center rounded-full border border-border bg-background/80 shadow-[var(--shadow-soft)]">
+              <Compass className="size-7 text-plum" />
+            </div>
+            <ArrowRight className="size-4 text-muted-foreground" />
+          </motion.div>
+
+          <div className="space-y-2.5">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Teaching move</div>
             <motion.div
-              key={s}
-              initial={{ opacity: 0, scale: 0.6 }}
-              whileInView={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0, x: 12 }}
+              whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
-              transition={{ delay: 0.2 + i * 0.08, duration: 0.5 }}
-              className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-1.5 rounded-full text-xs whitespace-nowrap border ${
-                active ? "bg-foreground text-background border-transparent shadow-[var(--shadow-glow)]" : "bg-card border-border text-muted-foreground"
-              }`}
-              style={{ transform: `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))` }}
+              transition={{ delay: 0.45 }}
+              className="rounded-2xl border border-gold/60 bg-gold/10 p-4"
             >
-              {s}
+              <div className="text-[10px] uppercase tracking-[0.18em] text-graphite dark:text-muted-foreground">Selected strategy</div>
+              <div className="mt-2 font-display text-lg">Analogy + scaffold</div>
+              <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                Explain slope as a road ramp, then solve one guided example.
+              </div>
             </motion.div>
-          );
-        })}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 rounded-full border border-dashed border-border" />
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-3 rounded-full" style={{ backgroundImage: "var(--gradient-aurora)" }} />
+            <div className="hidden grid-cols-3 gap-2 sm:grid">
+              {moves.map((move, i) => (
+                <motion.div
+                  key={move}
+                  initial={{ opacity: 0, y: 8 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: 0.55 + i * 0.08 }}
+                  className="rounded-xl border border-border bg-card/70 px-2.5 py-2 text-center text-[10px] font-medium leading-4"
+                >
+                  {move}
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-center text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+          {["Sense", "Reason", "Adapt"].map((step, i) => (
+            <motion.div
+              key={step}
+              initial={{ opacity: 0, y: 8 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.7 + i * 0.08 }}
+              className="rounded-full border border-border bg-background/60 px-3 py-2"
+            >
+              {step}
+            </motion.div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -182,14 +243,14 @@ function PedagogyVisual() {
 function LessonVisual() {
   const lines = [
     "Let's build intuition for derivatives.",
-    "Imagine zooming into a curve until it looks straight…",
+    "Imagine zooming into a curve until it looks straight...",
     "The slope of that tiny line is f'(x).",
-    "▣  Try: estimate f'(2) for f(x) = x²",
+    "Try: estimate f'(2) for f(x) = x^2",
   ];
   return (
     <div className="absolute inset-0 p-8 flex flex-col">
       <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-5">
-        <Sparkles className="size-3 text-gold" /> Composing lesson · derivatives
+        <Sparkles className="size-3 text-gold" /> Composing lesson - derivatives
       </div>
       <div className="font-reading space-y-3 text-[15px] leading-relaxed">
         {lines.map((l, i) => (
@@ -222,11 +283,11 @@ function AssessVisual() {
   return (
     <div className="absolute inset-0 p-8 flex flex-col justify-center">
       <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-5">Question 3 of 5</div>
-      <div className="font-reading text-base mb-5">What is the derivative of <span className="font-display italic">x³</span> ?</div>
+      <div className="font-reading text-base mb-5">What is the derivative of <span className="font-display italic">x^3</span> ?</div>
       <div className="space-y-2">
         {[
-          { t: "3x²", ok: true },
-          { t: "x²", ok: false },
+          { t: "3x^2", ok: true },
+          { t: "x^2", ok: false },
           { t: "3x", ok: false },
         ].map((o, i) => (
           <motion.div
@@ -266,7 +327,7 @@ function AssessVisual() {
 function EvolveVisual() {
   return (
     <div className="absolute inset-0 p-8 flex flex-col">
-      <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-5">Strategy evolution · last 30 days</div>
+      <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-5">Strategy evolution - last 30 days</div>
       <svg viewBox="0 0 300 180" className="flex-1 w-full">
         <defs>
           <linearGradient id="ev" x1="0" y1="0" x2="1" y2="0">
@@ -296,7 +357,7 @@ function EvolveVisual() {
         ))}
       </svg>
       <div className="grid grid-cols-3 gap-3 mt-2 text-xs">
-        {[["+34%","mastery velocity"],["−52%","time on stuck concepts"],["+12","new strategies learned"]].map(([k,v]) => (
+        {[["+34%","mastery velocity"],["-52%","time on stuck concepts"],["+12","new strategies learned"]].map(([k,v]) => (
           <div key={v}>
             <div className="font-display text-lg">{k}</div>
             <div className="text-muted-foreground text-[11px]">{v}</div>

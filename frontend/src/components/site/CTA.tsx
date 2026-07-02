@@ -35,7 +35,7 @@ export function CTA() {
               to={ROUTES.LESSON}
               className="rounded-full border border-white/40 text-white px-7 py-3.5 text-sm hover:bg-white/10 transition-colors"
             >
-              Watch a lesson →
+              Watch a lesson
             </Link>
           </div>
         </div>

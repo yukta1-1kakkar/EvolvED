@@ -9,7 +9,7 @@ export function Footer() {
         <div>
           <div className="font-display text-foreground text-lg">EvolvED</div>
           <p className="mt-1 text-xs">
-            A living teaching intelligence. © {new Date().getFullYear()}
+            A living teaching intelligence. (c) {new Date().getFullYear()}
           </p>
         </div>
         <nav className="flex flex-wrap gap-6 text-xs">
