@@ -1,14 +1,18 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/app/AppShell";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MathText } from "@/components/learning/MathText";
 import { motion } from "framer-motion";
 import { Lock } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useCurriculum } from "@/hooks/useCurriculum";
+import { fetchRoadmap } from "@/hooks/useLesson";
 import { useProgress } from "@/hooks/useProgress";
+import { constraintsFromBrief, makeInitialBrief, prefetchRoadmapLessons } from "@/lib/lesson-planning";
+import { getCompletedRoadmapLessonCount, setActiveRoadmapTopic } from "@/lib/lesson-progress";
 import { LESSON_ROADMAP_TOPIC_STORAGE_KEY } from "@/routes/lesson";
 import type { CurriculumItem } from "@/types/api";
 
@@ -31,22 +35,57 @@ type Node = { id: string; x: number; y: number; label: string; mastery: number; 
 function KnowledgePage() {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const curriculum = useCurriculum();
   const progress = useProgress(currentUser?.id);
-  const topicItems = filterItemsForSelectedTopic(curriculum.data?.items ?? [], currentUser?.learningTopic);
-  const nodes = buildNodes(topicItems, progress.data?.mastery ?? {});
-  const edges = buildEdges(topicItems);
+  const curriculumItems = curriculum.data?.items ?? [];
+  const topicItems = filterItemsForSelectedTopic(curriculumItems, currentUser?.learningTopic);
+  const visibleItems = topicItems.length > 0 ? topicItems : curriculumItems;
+  const nodes = buildNodes(visibleItems, progress.data?.mastery ?? {}, currentUser?.id);
+  const edges = buildEdges(visibleItems);
   const [active, setActive] = useState<string>("");
   const activeId = active && nodes.some((node) => node.id === active) ? active : nodes[0]?.id;
   const sel = nodes.find(n => n.id === activeId);
   const find = (id: string) => nodes.find(n => n.id === id);
-  const topicLabel = topicItems[0]?.topic ?? currentUser?.learningTopic ?? "Your topic";
+  const topicLabel = visibleItems[0]?.topic ?? currentUser?.learningTopic ?? "Your topic";
   const unlockedIds = unlockedNodeIds(nodes, edges);
   const completedIds = completedNodeIds(nodes);
   const suggestions = buildSuggestions(nodes, edges, unlockedIds, completedIds);
   const prerequisiteLabels = sel ? prerequisitesFor(sel, edges, find) : [];
   const unlockLabels = sel ? edges.filter(([a]) => a === sel.id).map(([,b]) => find(b)?.label).filter(Boolean) : [];
   const selectedLocked = Boolean(sel && !unlockedIds.has(sel.id));
+  const warmupBrief = useMemo(() => makeInitialBrief(currentUser), [currentUser]);
+  const selectedWarmupBrief = useMemo(
+    () => ({ ...warmupBrief, topic: !selectedLocked && sel?.label ? sel.label : "" }),
+    [sel?.label, selectedLocked, warmupBrief],
+  );
+  const [warmingLessons, setWarmingLessons] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const briefs = [warmupBrief, selectedWarmupBrief].filter((brief, index, all) => (
+      brief.topic && all.findIndex((candidate) => candidate.topic === brief.topic) === index
+    ));
+    if (!briefs.length) return;
+
+    let cancelled = false;
+    setWarmingLessons(true);
+    void Promise.allSettled(
+      briefs.map(async (brief) => {
+        const request = { learner_id: currentUser.id, topic: brief.topic, constraints: constraintsFromBrief(brief) };
+        const roadmap = await fetchRoadmap(queryClient, request);
+        if (!cancelled && roadmap.lessons.length) {
+          await prefetchRoadmapLessons(queryClient, currentUser.id, brief, roadmap.lessons);
+        }
+      }),
+    ).finally(() => {
+      if (!cancelled) setWarmingLessons(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, queryClient, selectedWarmupBrief, warmupBrief]);
 
   function openRoadmap(node: Node) {
     if (!unlockedIds.has(node.id)) {
@@ -57,12 +96,13 @@ function KnowledgePage() {
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem(LESSON_ROADMAP_TOPIC_STORAGE_KEY, node.label);
     }
+    setActiveRoadmapTopic(currentUser?.id, node.label);
 
     void navigate({ to: "/lesson", search: { topic: node.label } });
   }
 
   return (
-    <AppShell title={`${topicLabel} knowledge map`} subtitle="Concepts arranged by prerequisites, unlocks, and your current mastery." accent={curriculum.isFetching || progress.isFetching ? "Syncing" : "Live"}>
+    <AppShell title={`${topicLabel} knowledge map`} subtitle="Concepts arranged by prerequisites, unlocks, and your current mastery." accent={curriculum.isFetching || progress.isFetching ? "Syncing" : warmingLessons ? "Preparing lessons" : "Live"}>
       {(curriculum.isError || progress.isError) && (
         <div className="mb-6 rounded-2xl border border-rose/30 bg-rose/5 p-5">
           <div className="font-medium">Knowledge map could not be fully loaded</div>
@@ -143,7 +183,6 @@ function KnowledgePage() {
               );
             })}
           </svg>
-          <Legend />
         </div>
 
         <aside className="space-y-4">
@@ -204,21 +243,44 @@ function KnowledgePage() {
   );
 }
 
-function buildNodes(items: CurriculumItem[], mastery: Record<string, number>): Node[] {
+function buildNodes(items: CurriculumItem[], mastery: Record<string, number>, learnerId?: string): Node[] {
   const positions = layoutPositions(items.length);
+  const masteryByKey = normalizedMasteryMap(mastery);
 
   return items.map((item, index) => {
     const position = positions[index] ?? { x: 50, y: 50 };
+    const label = humanize(item.concept);
+    const backendMastery = masteryByKey.get(normalizeTopic(item.concept)) ?? masteryByKey.get(normalizeTopic(item.id)) ?? 0;
+    const roadmapMastery = localRoadmapMastery(learnerId, item, label);
     return {
       id: item.id,
       x: position.x,
       y: position.y,
-      label: humanize(item.concept),
-      mastery: mastery[item.concept] ?? mastery[item.id] ?? 0,
+      label,
+      mastery: Math.max(backendMastery, roadmapMastery),
       group: item.topic,
       item,
     };
   });
+}
+
+function localRoadmapMastery(learnerId: string | undefined, item: CurriculumItem, label: string) {
+  const completed = Math.max(
+    getCompletedRoadmapLessonCount(learnerId, label),
+    getCompletedRoadmapLessonCount(learnerId, item.concept),
+    getCompletedRoadmapLessonCount(learnerId, item.id),
+  );
+  return clamp01(completed / ROADMAP_MASTERY_TARGET_LESSONS);
+}
+
+function normalizedMasteryMap(mastery: Record<string, number>) {
+  const normalized = new Map<string, number>();
+  Object.entries(mastery).forEach(([key, value]) => {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return;
+    normalized.set(normalizeTopic(key), Math.max(normalized.get(normalizeTopic(key)) ?? 0, clamp01(score)));
+  });
+  return normalized;
 }
 
 function buildEdges(items: CurriculumItem[]): [string, string][] {
@@ -327,6 +389,10 @@ function normalizeTopic(value?: string) {
   return (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value));
+}
+
 function canonicalTrackTopic(value?: string) {
   const normalized = normalizeTopic(value);
   if (["linear_algebra", "linear_algebra_foundations", "vectors_matrices_norms_projections_eigenvalues_diagonalisation"].includes(normalized)) {
@@ -371,6 +437,7 @@ const REQUIRED_PREREQUISITES: Record<string, string[]> = {
 };
 
 const MASTERY_COMPLETE = 0.8;
+const ROADMAP_MASTERY_TARGET_LESSONS = 8;
 
 function Radial({ value }: { value: number }) {
   const c = 2 * Math.PI * 22;
@@ -390,14 +457,3 @@ function Radial({ value }: { value: number }) {
   );
 }
 
-function Legend() {
-  return (
-    <div className="absolute bottom-4 left-4 right-4 flex flex-wrap gap-3 text-[10px] text-muted-foreground">
-      {[["Foundations","oklch(0.55 0.18 295)"],["Core","oklch(0.7 0.16 305)"],["Applied","oklch(0.82 0.15 80)"],["Prereqs","oklch(0.92 0.008 70)"]].map(([k,c]) => (
-        <span key={k} className="inline-flex items-center gap-1.5 rounded-full bg-card/80 backdrop-blur px-2 py-1 border border-border">
-          <span className="size-2 rounded-full" style={{ background: c }} />{k}
-        </span>
-      ))}
-    </div>
-  );
-}

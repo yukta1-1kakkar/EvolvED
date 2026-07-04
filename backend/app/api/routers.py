@@ -159,11 +159,13 @@ async def generate_lesson(req: models.GenerateLessonRequest):
         }
         package = await lg_graph.generate_lesson_package(learner_profile, learner_state, lesson_topic, constraints)
         lesson = _normalize_generated_model(package["lesson"])
+        teaching_strategy = _normalize_generated_value(package["teaching_strategy"].model_dump())
+        generated_content = _normalize_generated_value(package["generated_content"].model_dump())
         await _finalize_lesson_media(lesson)
         await _retry_database(
             lambda: repo.persist_lesson(req.learner_id, lesson, {
-                "teaching_strategy": _normalize_generated_value(package["teaching_strategy"].model_dump()),
-                "generated_content": _normalize_generated_value(package["generated_content"].model_dump()),
+                "teaching_strategy": teaching_strategy,
+                "generated_content": generated_content,
             }),
             "lesson persistence",
         )

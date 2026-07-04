@@ -6,8 +6,9 @@ import { Flame, TrendingUp, Clock, Award, CheckCircle2, AlertCircle, Activity } 
 import { useMemo, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
+import { useCurriculum } from "@/hooks/useCurriculum";
 import { useProgress } from "@/hooks/useProgress";
-import type { ApiRecord } from "@/types/api";
+import type { ApiRecord, CurriculumItem } from "@/types/api";
 
 export const Route = createFileRoute("/progress")({
   head: () => ({
@@ -49,12 +50,11 @@ const RANGE_LABELS: Record<ProgressRange, string> = {
 function ProgressPage() {
   const { currentUser } = useAuth();
   const progress = useProgress(currentUser?.id);
+  const curriculum = useCurriculum();
   const [range, setRange] = useState<ProgressRange>("30d");
-  const masteryByTopic = Object.entries(progress.data?.mastery ?? {}).map(([t, v]) => ({ t, v }));
+  const masteryByTopic = subjectConceptMastery(progress.data?.mastery ?? {}, curriculum.data?.items ?? [], currentUser?.learningTopic);
   const masteredCount = masteryByTopic.filter((m) => m.v >= 0.8).length;
-  const averageMastery = masteryByTopic.length
-    ? masteryByTopic.reduce((sum, item) => sum + item.v, 0) / masteryByTopic.length
-    : 0;
+  const subjectMastery = averageMastery(masteryByTopic);
   const filteredHistory = useMemo(
     () => filterHistoryByRange(progress.data?.history ?? [], range),
     [progress.data?.history, range],
@@ -64,17 +64,18 @@ function ProgressPage() {
     [progress.data?.history],
   );
   const rangeLabel = RANGE_LABELS[range];
+  const loading = progress.isLoading || curriculum.isLoading;
 
   return (
-    <AppShell title="Progress" subtitle="Where you are, how fast you're moving, and what's compounding." accent={progress.isFetching ? "Syncing" : "Live"}>
+    <AppShell title="Progress" subtitle="Where you are, how fast you're moving, and what's compounding." accent={progress.isFetching || curriculum.isFetching ? "Syncing" : "Live"}>
       {progress.isError && <ErrorPanel message={progress.error.message} onRetry={() => void progress.refetch()} />}
       <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        {progress.isLoading ? (
+        {loading ? (
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-3xl" />)
         ) : (
           <>
             <Stat icon={Flame} k={`${progress.data?.learning_streak ?? 0} days`} v="learning streak" tone="gold" />
-            <Stat icon={TrendingUp} k={`${Math.round(averageMastery * 100)}%`} v="average mastery" tone="plum" />
+            <Stat icon={TrendingUp} k={`${Math.round(subjectMastery * 100)}%`} v={`${currentUser?.learningTopic ?? "subject"} mastery`} tone="plum" />
             <Stat icon={Clock} k={`${progress.data?.completed_lessons ?? 0}`} v="completed lessons" />
             <Stat icon={Award} k={String(masteredCount)} v="concepts mastered" />
           </>
@@ -101,13 +102,13 @@ function ProgressPage() {
               ))}
             </div>
           </div>
-          {progress.isLoading ? <Skeleton className="h-52 w-full rounded-2xl" /> : <MasteryChart history={filteredHistory} masteryValues={masteryByTopic.map((m) => m.v)} />}
+          {loading ? <Skeleton className="h-52 w-full rounded-2xl" /> : <MasteryChart history={filteredHistory} currentMastery={subjectMastery} />}
         </div>
 
         <div className="rounded-3xl border border-border bg-card p-6">
           <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-1">Confidence calibration</div>
           <h3 className="font-display text-xl mb-5">Readiness signal</h3>
-          {progress.isLoading ? <Skeleton className="h-40 rounded-2xl" /> : <CalibrationPanel items={masteryByTopic} />}
+          {loading ? <Skeleton className="h-40 rounded-2xl" /> : <CalibrationPanel items={masteryByTopic} subjectMastery={subjectMastery} />}
         </div>
       </div>
 
@@ -120,8 +121,8 @@ function ProgressPage() {
           <span className="text-xs text-muted-foreground">{masteryByTopic.length} tracked concepts</span>
         </div>
         <div className="grid sm:grid-cols-2 gap-x-10 gap-y-4">
-          {progress.isLoading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-8 rounded-xl" />)}
-          {!progress.isLoading && masteryByTopic.length === 0 && <p className="text-sm text-muted-foreground">No mastery records returned yet.</p>}
+          {loading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-8 rounded-xl" />)}
+          {!loading && masteryByTopic.length === 0 && <p className="text-sm text-muted-foreground">No mastery records returned yet.</p>}
           {masteryByTopic.map((m, i) => (
             <div key={m.t}>
               <div className="flex justify-between text-sm mb-1.5">
@@ -139,9 +140,67 @@ function ProgressPage() {
         </div>
       </div>
 
-      <HistoryTimeline loading={progress.isLoading} items={adaptationHistory} />
+      <HistoryTimeline loading={loading} items={adaptationHistory} />
     </AppShell>
   );
+}
+
+function subjectConceptMastery(mastery: Record<string, number>, curriculumItems: CurriculumItem[], learningTopic?: string) {
+  const masteryByKey = normalizedMasteryMap(mastery);
+  const topicItems = filterItemsForSelectedTopic(curriculumItems, learningTopic);
+  const scopedItems = topicItems.length > 0 ? topicItems : curriculumItems;
+  const concepts = scopedItems
+    .map((item) => {
+      const value = masteryByKey.get(normalizeTopic(item.concept)) ?? masteryByKey.get(normalizeTopic(item.id));
+      return typeof value === "number" ? { t: humanize(item.concept), v: value } : null;
+    })
+    .filter((item): item is { t: string; v: number } => Boolean(item));
+
+  if (concepts.length > 0) return concepts;
+
+  return Object.entries(mastery)
+    .map(([t, value]) => ({ t: humanize(t), v: clamp01(Number(value)) }))
+    .filter((item) => Number.isFinite(item.v));
+}
+
+function averageMastery(items: Array<{ v: number }>) {
+  return items.length ? items.reduce((sum, item) => sum + item.v, 0) / items.length : 0;
+}
+
+function normalizedMasteryMap(mastery: Record<string, number>) {
+  const normalized = new Map<string, number>();
+  Object.entries(mastery).forEach(([key, value]) => {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return;
+    const normalizedKey = normalizeTopic(key);
+    normalized.set(normalizedKey, Math.max(normalized.get(normalizedKey) ?? 0, clamp01(score)));
+  });
+  return normalized;
+}
+
+function filterItemsForSelectedTopic(items: CurriculumItem[], selectedTopic?: string): CurriculumItem[] {
+  const normalizedSelected = canonicalTrackTopic(selectedTopic);
+  if (!normalizedSelected) return items;
+
+  const exactTopic = items.filter((item) => normalizeTopic(item.topic) === normalizedSelected);
+  if (exactTopic.length > 0) return exactTopic;
+
+  const selectedConcept = items.find((item) => {
+    const concept = normalizeTopic(item.concept);
+    return concept === normalizedSelected || concept.includes(normalizedSelected) || normalizedSelected.includes(concept);
+  });
+  return selectedConcept ? items.filter((item) => normalizeTopic(item.topic) === normalizeTopic(selectedConcept.topic)) : [];
+}
+
+function normalizeTopic(value?: string) {
+  return (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function canonicalTrackTopic(value?: string) {
+  const normalized = normalizeTopic(value);
+  if (["linear_algebra", "linear_algebra_foundations", "vectors_matrices_norms_projections_eigenvalues_diagonalisation"].includes(normalized)) return "linear_algebra";
+  if (["calculus", "limits_derivatives_gradients_multivariate_calculus_hessians"].includes(normalized)) return "calculus";
+  return normalized;
 }
 
 function Stat({ icon: Icon, k, v, tone }: { icon: React.ElementType; k: string; v: string; tone?: "gold" | "plum" }) {
@@ -156,11 +215,11 @@ function Stat({ icon: Icon, k, v, tone }: { icon: React.ElementType; k: string; 
   );
 }
 
-function MasteryChart({ history, masteryValues }: { history: ApiRecord[]; masteryValues: number[] }) {
+function MasteryChart({ history, currentMastery }: { history: ApiRecord[]; currentMastery: number }) {
   const historyValues = history
     .map((entry) => numericProgressValue(entry))
     .filter((value): value is number => typeof value === "number");
-  const pts = historyValues.length > 1 ? historyValues : masteryValues;
+  const pts = historyValues.length > 1 ? [...historyValues.slice(0, -1), currentMastery] : [currentMastery];
   if (pts.length === 0) {
     return <div className="grid h-52 place-items-center rounded-2xl bg-muted/30 text-sm text-muted-foreground">No chart data returned.</div>;
   }
@@ -218,9 +277,8 @@ function MasteryChart({ history, masteryValues }: { history: ApiRecord[]; master
   );
 }
 
-function CalibrationPanel({ items }: { items: Array<{ t: string; v: number }> }) {
+function CalibrationPanel({ items, subjectMastery }: { items: Array<{ t: string; v: number }>; subjectMastery: number }) {
   const values = items.map((item) => clamp01(item.v));
-  const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   const mastered = values.filter((value) => value >= 0.8).length;
   const building = values.filter((value) => value >= 0.5 && value < 0.8).length;
   const review = values.filter((value) => value < 0.5).length;
@@ -236,10 +294,10 @@ function CalibrationPanel({ items }: { items: Array<{ t: string; v: number }> })
       <div className="rounded-2xl border border-border bg-background/70 p-4">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="font-display text-4xl">{Math.round(average * 100)}%</div>
+            <div className="font-display text-4xl">{Math.round(subjectMastery * 100)}%</div>
             <div className="text-xs text-muted-foreground">calibrated readiness</div>
           </div>
-          <SignalRing value={average} />
+          <SignalRing value={subjectMastery} />
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
           <CalibrationCount icon={CheckCircle2} value={mastered} label="mastered" tone="green" />

@@ -1,6 +1,7 @@
 import type { LessonRoadmapItem } from "@/types/api";
 
 const ACTIVE_ROADMAP_LESSON_KEY = "evolved.activeRoadmapLesson";
+const ACTIVE_ROADMAP_TOPIC_KEY = "evolved.activeRoadmapTopic";
 const LESSON_CONTEXT_STORAGE_KEY = "evolved.pendingLessonContext";
 const NEXT_ROADMAP_LESSON_CONTEXT_KEY = "evolved.nextRoadmapLessonContext";
 
@@ -10,6 +11,11 @@ type ActiveRoadmapLesson = {
   lessonId: string;
   lessonIndex?: number;
   lesson?: LessonRoadmapItem;
+};
+
+type ActiveRoadmapTopic = {
+  learnerId: string;
+  topic: string;
 };
 
 export function getCompletedRoadmapLessons(learnerId?: string, topic?: string): Set<string> {
@@ -43,6 +49,22 @@ export function getCompletedRoadmapLessonItems(learnerId?: string, topic?: strin
 export function setActiveRoadmapLesson(lesson: ActiveRoadmapLesson) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(ACTIVE_ROADMAP_LESSON_KEY, JSON.stringify(lesson));
+  setActiveRoadmapTopic(lesson.learnerId, lesson.topic);
+}
+
+export function setActiveRoadmapTopic(learnerId: string | undefined, topic: string | undefined) {
+  if (typeof window === "undefined" || !learnerId || !topic?.trim()) return;
+  window.localStorage.setItem(ACTIVE_ROADMAP_TOPIC_KEY, JSON.stringify({ learnerId, topic: topic.trim() }));
+}
+
+export function getActiveRoadmapTopic(learnerId?: string) {
+  if (typeof window === "undefined" || !learnerId) return "";
+  try {
+    const active = JSON.parse(window.localStorage.getItem(ACTIVE_ROADMAP_TOPIC_KEY) ?? "null") as ActiveRoadmapTopic | null;
+    return active?.learnerId === learnerId ? active.topic : "";
+  } catch {
+    return "";
+  }
 }
 
 export function setNextRoadmapLessonContext(context: unknown | null) {

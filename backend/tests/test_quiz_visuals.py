@@ -53,6 +53,41 @@ def test_question_specific_visual_is_renderable():
     assert question["visual_asset"]["imageUrl"].startswith("data:image/svg+xml")
 
 
+def test_duplicate_quiz_visuals_are_removed_from_later_questions():
+    questions = _normalize_quiz_questions(
+        [
+            {
+                "id": "q1",
+                "prompt": "Use the diagram to identify the vector magnitude.",
+                "concept": "Vector magnitude",
+                "options": ["Magnitude is 5", "Magnitude is 7", "x is 3", "y is 4"],
+                "correct_answers": ["Magnitude is 5", "x is 3", "y is 4"],
+                "visual_asset": {
+                    "title": "Vector components",
+                    "type": "graph",
+                    "data": [{"x": 0, "y": 0}, {"x": 3, "y": 4}],
+                },
+            },
+            {
+                "id": "q2",
+                "prompt": "Use the diagram to compare the components.",
+                "concept": "Vector components",
+                "options": ["x is 3", "y is 4", "Magnitude is 5", "Magnitude is 7"],
+                "correct_answers": ["x is 3", "y is 4", "Magnitude is 5"],
+                "visual_asset": {
+                    "title": "Vector components",
+                    "type": "graph",
+                    "data": [{"x": 0, "y": 0}, {"x": 3, "y": 4}],
+                },
+            },
+        ],
+        {"topic": "vectors"},
+    )
+
+    assert "visual_asset" in questions[0]
+    assert "visual_asset" not in questions[1]
+
+
 def test_fallback_questions_are_text_only_without_question_visuals():
     questions = _fallback_questions(
         {
@@ -69,4 +104,5 @@ def test_fallback_questions_are_text_only_without_question_visuals():
 if __name__ == "__main__":
     test_quiz_questions_do_not_invent_visuals()
     test_question_specific_visual_is_renderable()
+    test_duplicate_quiz_visuals_are_removed_from_later_questions()
     test_fallback_questions_are_text_only_without_question_visuals()

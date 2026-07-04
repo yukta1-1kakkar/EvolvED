@@ -5,7 +5,9 @@ type VectorArrowDiagramProps = {
 };
 
 export function VectorArrowDiagram({ title, description, data }: VectorArrowDiagramProps) {
-  const { x, y } = vectorPointFromText([title, description, data]);
+  const point = vectorPointFromText([title, description, data]);
+  if (!point) return null;
+  const { x, y } = point;
   const magnitude = Math.sqrt(x * x + y * y);
   const bounds = Math.max(5, Math.ceil(Math.max(Math.abs(x), Math.abs(y)) + 1));
   const width = 920;
@@ -73,7 +75,7 @@ function vectorPointFromText(values: unknown[]) {
     .map((match) => ({ x: Number(match[1]), y: Number(match[2]) }))
     .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
   const point = [...pairs, ...structuredPoints(values)].sort((a, b) => (b.x * b.x + b.y * b.y) - (a.x * a.x + a.y * a.y))[0];
-  return point && (point.x || point.y) ? point : { x: 3, y: 4 };
+  return point && (point.x || point.y) ? point : null;
 }
 
 function structuredPoints(values: unknown[]): Array<{ x: number; y: number }> {

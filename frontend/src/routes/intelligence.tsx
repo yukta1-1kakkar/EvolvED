@@ -94,13 +94,6 @@ function IntelligencePage() {
         </Card>
       </div>
 
-      <div className="rounded-3xl border border-border bg-card p-6">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">AI insights</div>
-        <ul className="mt-4 space-y-3 text-sm">
-          {(analytics.data?.insights ?? []).map((insight) => <li key={insight} className="rounded-2xl bg-muted/35 p-4">{insight}</li>)}
-        </ul>
-      </div>
-
     </AppShell>
   );
 }

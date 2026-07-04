@@ -3,8 +3,10 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { adaptLearning, generateQuiz, submitAssessment } from "@/lib/api";
 import type { AdaptationRequest, AssessmentSubmission, GenerateQuizRequest } from "@/types/api";
 
+const QUIZ_QUERY_VERSION = "ai-only-v2";
+
 export function quizQueryKey(request: GenerateQuizRequest) {
-  return ["quiz", request.learner_id, request.session_id] as const;
+  return ["quiz", QUIZ_QUERY_VERSION, request.learner_id, request.session_id] as const;
 }
 
 export function useSubmitAssessment() {

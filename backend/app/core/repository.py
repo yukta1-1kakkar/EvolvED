@@ -177,6 +177,10 @@ class AsyncRepository:
                 record.state = {**(record.state or {}), "status": "assessed", "latest_assessment": result.model_dump(), "latest_adaptation": decision.model_dump()}
             for concept, score in result.mastery_estimates.items():
                 await self._upsert_progress(session, learner.id, concept, min(float(score), float(result.score)))
+            lesson = (record.state or {}).get("lesson") if record else None
+            lesson_topic = str((lesson or {}).get("topic") or "").strip() if isinstance(lesson, dict) else ""
+            if lesson_topic:
+                await self._upsert_progress(session, learner.id, lesson_topic, float(result.score))
             await session.commit()
 
     async def save_lesson_blueprint(self, learner_id: str, lesson_id: str, lesson_structure: list) -> Dict[str, Any]:
@@ -200,8 +204,22 @@ class AsyncRepository:
                 return models.ProgressResponse(learner_id=learner_id)
             rows = (await session.scalars(sa.select(db_models.CurriculumProgress).where(db_models.CurriculumProgress.learner_id == learner.id))).all()
             adaptations = (await session.scalars(sa.select(db_models.Adaptation).where(db_models.Adaptation.learner_id == learner.id).order_by(db_models.Adaptation.created_at.desc()))).all()
+            assessed_sessions = (await session.scalars(sa.select(db_models.Session).where(db_models.Session.learner_id == learner.id, db_models.Session.state["status"].as_string() == "assessed"))).all()
             completed = await session.scalar(sa.select(sa.func.count(db_models.Session.id)).where(db_models.Session.learner_id == learner.id, db_models.Session.state["status"].as_string() == "assessed"))
-        mastery = {row.concept or row.curriculum_item_id: float(row.mastery_score or 0.0) for row in rows}
+        tracked_rows = [row for row in rows if float(row.mastery_score or 0.0) > 0 or row.status != "not_started"]
+        mastery: dict[str, float] = {}
+        for row in tracked_rows:
+            concept = _progress_display_concept(row)
+            mastery[concept] = max(mastery.get(concept, 0.0), float(row.mastery_score or 0.0))
+        for assessed in assessed_sessions:
+            state = assessed.state or {}
+            lesson = state.get("lesson") if isinstance(state.get("lesson"), dict) else {}
+            assessment = state.get("latest_assessment") if isinstance(state.get("latest_assessment"), dict) else {}
+            topic = str(lesson.get("topic") or "").strip()
+            score = assessment.get("score")
+            if topic and isinstance(score, (int, float)):
+                concept = str((_curriculum_item_for_concept(topic) or {}).get("concept") or topic)
+                mastery[concept] = max(mastery.get(concept, 0.0), float(score))
         history = [
             {"type": "mastery", "concept": row.concept, "status": row.status, "mastery_score": row.mastery_score, "timestamp": _iso(row.updated_at)}
             for row in rows
@@ -256,10 +274,17 @@ class AsyncRepository:
                 session.add(db_models.CurriculumProgress(learner_id=learner.id, curriculum_item_id=item["id"], topic=item["topic"], concept=item["concept"], status="recommended" if item["topic"].lower() in (learner.topic or "").lower() else "not_started", mastery_score=0.0, progress_metadata={}))
 
     async def _upsert_progress(self, session, learner_id: int, concept: str, score: float) -> None:
-        item_id = concept.lower().replace(" ", "_")[:128]
+        item = _curriculum_item_for_concept(concept)
+        item_id = str(item.get("id") if item else _progress_key(concept))[:128]
         record = await session.scalar(sa.select(db_models.CurriculumProgress).where(db_models.CurriculumProgress.learner_id == learner_id, db_models.CurriculumProgress.curriculum_item_id == item_id))
         if not record:
-            record = db_models.CurriculumProgress(learner_id=learner_id, curriculum_item_id=item_id, topic=concept, concept=concept, progress_metadata={})
+            record = db_models.CurriculumProgress(
+                learner_id=learner_id,
+                curriculum_item_id=item_id,
+                topic=str(item.get("topic") if item else concept),
+                concept=str(item.get("concept") if item else concept),
+                progress_metadata={},
+            )
             session.add(record)
         record.mastery_score = max(float(record.mastery_score or 0.0), float(score))
         record.status = "mastered" if record.mastery_score >= 0.8 else "in_progress"
@@ -280,7 +305,17 @@ def _verify_password(password: str, encoded: str) -> bool:
 
 
 def _auth_user(learner: db_models.Learner) -> models.AuthUser:
-    return models.AuthUser(id=learner.learner_id, full_name=learner.full_name or "Learner", email=learner.email or "", age=learner.age, profile_complete=learner.onboarding_status == "complete", learning_topic=learner.topic, learning_project=learner.learning_project, created_at=_iso(learner.created_at))
+    return models.AuthUser(
+        id=learner.learner_id,
+        full_name=learner.full_name or "Learner",
+        email=learner.email or "",
+        age=learner.age,
+        profile_complete=learner.onboarding_status == "complete",
+        learning_topic=learner.topic,
+        learning_project=learner.learning_project,
+        accessibility=learner.accessibility or {},
+        created_at=_iso(learner.created_at),
+    )
 
 
 def _initial_model() -> Dict[str, Any]:
@@ -294,6 +329,34 @@ def _age_group(age: int) -> str:
 def _curriculum() -> list[Dict[str, Any]]:
     path = Path(__file__).resolve().parents[2] / "data" / "initial_curriculum.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+
+
+def _progress_key(value: str | None) -> str:
+    text = str(value or "").strip().lower().replace("&", " and ")
+    compact = "".join(char if char.isalnum() else "_" for char in text)
+    return "_".join(part for part in compact.split("_") if part)
+
+
+def _curriculum_item_for_concept(concept: str | None) -> dict[str, Any] | None:
+    key = _progress_key(concept)
+    if not key:
+        return None
+    for item in _curriculum():
+        aliases = {
+            _progress_key(item.get("id")),
+            _progress_key(item.get("concept")),
+            _progress_key(str(item.get("concept", "")).replace("_", " ")),
+        }
+        if key in aliases:
+            return item
+    return None
+
+
+def _progress_display_concept(row: db_models.CurriculumProgress) -> str:
+    item = _curriculum_item_for_concept(row.curriculum_item_id) or _curriculum_item_for_concept(row.concept)
+    if item:
+        return str(item["concept"])
+    return str(row.concept or row.curriculum_item_id)
 
 
 def _iso(value) -> str:

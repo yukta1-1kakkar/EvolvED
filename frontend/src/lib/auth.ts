@@ -38,6 +38,7 @@ interface BackendAuthUser {
   profile_complete: boolean;
   learning_topic?: string | null;
   learning_project?: string | null;
+  accessibility?: Record<string, boolean> | null;
   created_at?: string | null;
 }
 
@@ -115,6 +116,7 @@ export async function mockForgotPassword(): Promise<void> {
 }
 
 function fromBackend(user: BackendAuthUser): AuthUser {
+  const accessibility = user.accessibility ?? {};
   return {
     id: user.id,
     fullName: user.full_name,
@@ -123,6 +125,7 @@ function fromBackend(user: BackendAuthUser): AuthUser {
     profileComplete: user.profile_complete,
     learningTopic: user.learning_topic ?? undefined,
     learningProject: user.learning_project ?? undefined,
+    accessibilitySupport: Boolean(accessibility.additional_support || accessibility.dyslexia_support),
     createdAt: user.created_at ?? undefined,
   };
 }

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.core import models
 from app.ai.factory import get_provider
+from app.ai.openrouter_provider import OpenRouterProvider
 from app.ai.router import ModelRouter
 from app.core.chroma_client import ChromaClient
 from app.core.config import settings
@@ -36,6 +37,9 @@ async def _call_layer(layer: str, messages: list[Dict[str, str]], **kwargs):
     except Exception as exc:
         fallback = settings.reasoning_model
         if fallback == primary:
+            openrouter_response = await _call_openrouter_layer(layer, messages, exc, **kwargs)
+            if openrouter_response is not None:
+                return openrouter_response
             raise
         logger.warning("%s model unavailable: %s; retrying with fallback %s: %s", layer, primary, fallback, exc)
         try:
@@ -44,7 +48,23 @@ async def _call_layer(layer: str, messages: list[Dict[str, str]], **kwargs):
             return response
         except Exception as fallback_exc:
             logger.error("%s fallback model unavailable: %s: %s", layer, fallback, fallback_exc)
+            openrouter_response = await _call_openrouter_layer(layer, messages, fallback_exc, **kwargs)
+            if openrouter_response is not None:
+                return openrouter_response
             raise
+
+
+async def _call_openrouter_layer(layer: str, messages: list[Dict[str, str]], original_exc: Exception, **kwargs):
+    if not settings.openrouter_api_key or settings.active_provider.lower() == "openrouter":
+        return None
+    openrouter = OpenRouterProvider()
+    try:
+        response = await openrouter.call_chat_model(messages, model=ModelRouter.get_model(layer), **kwargs)
+        logger.warning("%s Bedrock unavailable, generated with OpenRouter instead: %s", layer, original_exc)
+        return response
+    except Exception as exc:
+        logger.error("%s OpenRouter failover unavailable: %s", layer, exc)
+        return None
 
 
 async def _persist_lesson_embedding(blueprint: models.LessonBlueprint, learner_id: str, topic: str):
@@ -244,16 +264,38 @@ async def pedagogy_agent(state: Dict[str, Any]) -> models.TeachingStrategy:
     try:
         payload = _json_from_model_text(text)
         normalized = {
-            "strategy_type": payload.get("strategy_type") or payload.get("strategyType"),
-            "recommended_modalities": payload.get("recommended_modalities") or payload.get("recommendedModalities"),
-            "difficulty_level": payload.get("difficulty_level") or payload.get("difficultyLevel"),
-            "pacing_strategy": payload.get("pacing_strategy") or payload.get("pacingStrategy"),
-            "interaction_density": payload.get("interaction_density") or payload.get("interactionDensity"),
+            "strategy_type": _strategy_text(payload.get("strategy_type") or payload.get("strategyType")) or "adaptive",
+            "recommended_modalities": _strategy_list(payload.get("recommended_modalities") or payload.get("recommendedModalities")),
+            "difficulty_level": _strategy_text(payload.get("difficulty_level") or payload.get("difficultyLevel")),
+            "pacing_strategy": _strategy_text(payload.get("pacing_strategy") or payload.get("pacingStrategy")),
+            "interaction_density": _strategy_text(payload.get("interaction_density") or payload.get("interactionDensity")),
         }
 
         return models.TeachingStrategy(**normalized)
     except (ValueError, TypeError, ValidationError) as exc:
         raise RuntimeError(f"Pedagogy agent returned invalid JSON: {exc}") from exc
+
+
+def _strategy_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, list):
+        return ", ".join(filter(None, (_strategy_text(item) for item in value))) or None
+    if isinstance(value, dict):
+        parts = [f"{key}: {_strategy_text(item)}" for key, item in value.items() if _strategy_text(item)]
+        return "; ".join(parts) or None
+    return str(value)
+
+
+def _strategy_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [text for item in value if (text := _strategy_text(item))]
+    text = _strategy_text(value)
+    return [text] if text else []
 
 
 def _lesson_style_key(learning_style: str) -> str:
@@ -309,10 +351,14 @@ def _accessibility_contract(constraints: Dict[str, Any]) -> str:
     if not accessibility.get("additional_support") and not accessibility.get("dyslexia_support"):
         return "No additional accessibility preference was selected; still use clear language and explicit transitions."
     return (
-        "Accessibility support is active. Use dyslexia-aware instructional design: short paragraphs, predictable "
-        "sentence structure, plain language before notation, explicit step labels, low memory load, one idea per "
-        "sentence when possible, and frequent checks for confusion. Avoid dense walls of text, unexplained symbols, "
-        "ambiguous pronouns, and unnecessary jargon. Pair symbols with spoken/plain-language meaning."
+        "Accessibility support is active. Use dyslexia-aware instructional design based on current spacing and "
+        "readability evidence. Keep paragraphs to five lines or fewer, keep most sentences under 25 words, and place "
+        "the need-to-know point first. Use predictable headings, explicit step labels, plain language before notation, "
+        "and one idea per sentence when possible. Avoid dense walls of text, unexplained symbols, ambiguous pronouns, "
+        "unnecessary jargon, all-caps emphasis, italics, and fully justified prose. Pair symbols with spoken/plain-language "
+        "meaning. When visual material is useful, include relevant diagrams or coordinate visuals that reduce reading load. "
+        "Do not claim a special dyslexia font is required. The UI will handle readable spacing, about 1.5 line spacing, "
+        "modest letter spacing, proportional word spacing, left alignment, and a tinted low-glare reading surface."
     )
 
 
@@ -1683,16 +1729,14 @@ async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, A
         f"Learning style: {style}. Assessment contract: {json.dumps(style_contract)}. "
         f"Lesson: {json.dumps(lesson)}"
     )
-    try:
-        resp = await _call_layer("quiz", [{"role": "user", "content": prompt}], temperature=0.1)
-        payload = _json_from_model_text(resp["choices"][0]["message"]["content"])
-        questions = payload.get("questions")
-        if not isinstance(questions, list) or len(questions) < 3:
-            raise ValueError("quiz requires at least three questions")
-        questions = _normalize_quiz_questions(questions, lesson)
-    except Exception as exc:
-        logger.warning("Quiz model unavailable; using lesson checkpoint quiz: %s", exc)
-        questions = _fallback_questions(lesson, style)
+    resp = await _call_layer("quiz", [{"role": "user", "content": prompt}], temperature=0.1)
+    payload = _json_from_model_text(resp["choices"][0]["message"]["content"])
+    questions = payload.get("questions")
+    if not isinstance(questions, list) or len(questions) < 3:
+        raise ValueError("quiz requires at least three questions")
+    questions = _normalize_quiz_questions(questions, lesson)
+    if len(questions) < 3:
+        raise ValueError("quiz requires at least three valid questions")
     return models.QuizResponse(quiz_id=f"quiz:{uuid4()}", session_id=req.session_id, questions=questions)
 
 
@@ -1882,9 +1926,22 @@ def _normalize_quiz_questions(raw_questions: list[Any], lesson: Dict[str, Any]) 
         if visual_asset:
             question["visual_asset"] = visual_asset
         normalized.append(question)
-    if len(normalized) < 3:
-        normalized.extend(_fallback_questions(lesson, _lesson_style_from_payload(lesson))[len(normalized):])
-    return normalized[:4]
+    return _dedupe_quiz_visuals(normalized[:4])
+
+
+def _dedupe_quiz_visuals(questions: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    seen: set[str] = set()
+    for question in questions:
+        visual = question.get("visual_asset")
+        if not isinstance(visual, dict):
+            continue
+        identity = {"type": visual.get("type"), "data": visual.get("data")} if visual.get("data") else {"imageUrl": visual.get("imageUrl")}
+        key = json.dumps(identity, sort_keys=True, default=str).lower()
+        if key in seen:
+            question.pop("visual_asset", None)
+        else:
+            seen.add(key)
+    return questions
 
 
 def _quiz_options(raw: Dict[str, Any], concept: str, has_visual: bool = False) -> list[str]:

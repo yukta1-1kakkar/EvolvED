@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Check, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
@@ -55,6 +55,21 @@ function AssessmentPage() {
     void navigate({ to: hasNextLesson ? "/lesson-view" : "/lesson" });
   }
 
+  function retakeAssessment() {
+    setAnswers({});
+    setConfidence({});
+    submit.reset();
+    void quiz.refetch();
+  }
+
+  function followRecommendedAction(actionText: string) {
+    if (shouldRetakeAssessment(actionText)) {
+      retakeAssessment();
+      return;
+    }
+    void navigate({ to: "/lesson-view" });
+  }
+
   const questions = quiz.data?.questions ?? [];
   const incompleteQuestions = questions
     .map((question, index) => ({ id: questionId(question, index), number: index + 1 }))
@@ -105,6 +120,8 @@ function AssessmentPage() {
               score={submit.data.score}
               feedback={submit.data.detailed_feedback}
               nextAction={humanizeIdentifier(textValue(submit.data.adaptation.action))}
+              recommendationAction={recommendedActionText(submit.data.detailed_feedback, textValue(submit.data.adaptation.action))}
+              onRecommended={() => followRecommendedAction(`${textValue(submit.data.adaptation.action)} ${submit.data.detailed_feedback}`)}
               onNext={evolveNextLesson}
             />
           )}
@@ -118,11 +135,15 @@ function AssessmentResultCard({
   score,
   feedback,
   nextAction,
+  recommendationAction,
+  onRecommended,
   onNext,
 }: {
   score: number;
   feedback: string;
   nextAction: string;
+  recommendationAction: { label: string; mode: "review" | "retest" | "apply" };
+  onRecommended: () => void;
   onNext: () => void;
 }) {
   const result = splitAssessmentFeedback(feedback);
@@ -157,13 +178,23 @@ function AssessmentResultCard({
             text={nextAction || "Teaching strategy recalibrated from this result."}
           />
         </div>
-        <button
-          type="button"
-          onClick={onNext}
-          className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:opacity-90"
-        >
-          <ArrowRight className="size-4" /> Evolve my next lesson
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            onClick={onRecommended}
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-border bg-card px-5 py-2.5 text-sm text-foreground hover:border-plum/50"
+          >
+            {recommendationAction.mode === "retest" ? <RotateCcw className="size-4" /> : <BookOpen className="size-4" />}
+            {recommendationAction.label}
+          </button>
+          <button
+            type="button"
+            onClick={onNext}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:opacity-90"
+          >
+            <ArrowRight className="size-4" /> Evolve my next lesson
+          </button>
+        </div>
       </div>
     </section>
   );
@@ -294,9 +325,9 @@ function visualFromQuestion(question: ApiRecord): { imageUrl?: string; title?: s
     title: textValue(record.title),
     description: textValue(record.description),
     data: record.data,
-    isVector: isVectorVisualText(record) || isVectorVisualText(question.prompt),
+    isVector: isVectorVisualText(record),
   };
-  return rendered.imageUrl || rendered.title || rendered.description || rendered.isVector ? rendered : null;
+  return rendered.imageUrl || rendered.data || rendered.title || rendered.description ? rendered : null;
 }
 
 function arrayValue(value: ApiJson | undefined) {
@@ -317,4 +348,20 @@ function splitAssessmentFeedback(feedback: string) {
     evaluation: evaluation.trim() || "Assessment submitted.",
     recommendation: recommendation?.trim() ?? "",
   };
+}
+
+function recommendedActionText(feedback: string, adaptationAction: string) {
+  const text = `${adaptationAction} ${feedback}`.toLowerCase();
+  if (/\b(retest|resubmit|retry|try again)\b/.test(text) && !/\b(remediate|review|re-engage|practice)\b/.test(text)) {
+    return { label: "Retake assessment", mode: "retest" as const };
+  }
+  if (/\b(remediate|review|re-engage|practice|worked examples|not advance|do not advance)\b/.test(text)) {
+    return { label: "Review lesson again", mode: "review" as const };
+  }
+  return { label: "Apply suggestion", mode: "apply" as const };
+}
+
+function shouldRetakeAssessment(actionText: string) {
+  const text = actionText.toLowerCase();
+  return /\b(retest|resubmit|retry|try again)\b/.test(text) && !/\b(remediate|review|re-engage|practice|worked examples)\b/.test(text);
 }

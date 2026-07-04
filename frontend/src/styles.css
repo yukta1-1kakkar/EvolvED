@@ -142,18 +142,61 @@
 
   .reader-dyslexia article {
     font-family: var(--font-reading);
+    text-align: left;
+    --reader-bg: oklch(0.94 0.045 88);
+    --reader-panel: oklch(0.965 0.035 88);
+    --reader-muted: oklch(0.9 0.04 88);
+    --reader-text: oklch(0.25 0.035 255);
   }
 
-  .reader-dyslexia article p,
-  .reader-dyslexia article li,
-  .reader-dyslexia article textarea {
-    line-height: 2;
+  .reader-dyslexia article :where(p, li, textarea) {
+    max-width: 72ch;
+    line-height: 1.5;
+    letter-spacing: 0.035em;
+    word-spacing: 0.14em;
+    text-align: left;
+  }
+
+  .reader-dyslexia article :where(h1, h2, h3, h4) {
+    letter-spacing: 0;
+    line-height: 1.2;
+  }
+
+  .reader-dyslexia article :where(p, ul, ol) {
+    margin-block: 0.75rem;
+  }
+
+  .reader-dyslexia article :where(.inline-flex[title^="Formal notation"]) {
     letter-spacing: 0.01em;
-    word-spacing: 0.12em;
+    word-spacing: normal;
+    line-height: 1.35;
   }
 
   .reader-dyslexia article section {
-    background-color: color-mix(in oklab, var(--card) 88%, white 12%);
+    background-color: var(--reader-panel) !important;
+    color: var(--reader-text) !important;
+  }
+
+  .reader-dyslexia article > section:first-child > div:first-child {
+    background-color: var(--reader-bg) !important;
+    color: var(--reader-text) !important;
+  }
+
+  .reader-dyslexia article > section:first-child > div:first-child * {
+    color: var(--reader-text) !important;
+  }
+
+  .reader-dyslexia article :where(.bg-card, .bg-background, .bg-muted\/20, .bg-muted\/25, .bg-muted\/35, .bg-muted\/40) {
+    background-color: var(--reader-panel) !important;
+  }
+
+  .reader-dyslexia article :where(.text-foreground, .text-foreground\/80, .text-muted-foreground) {
+    color: var(--reader-text) !important;
+  }
+
+  .reader-dyslexia article :where(input, textarea, select, .inline-flex[title^="Formal notation"]) {
+    background-color: var(--reader-muted) !important;
+    color: var(--reader-text) !important;
   }
 
   .reader-focus article > section,

@@ -35,7 +35,8 @@ import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
 import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
-import { getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, peekNextRoadmapLessonContext, setActiveRoadmapLesson, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
+import { constraintsFromBrief, makeInitialBrief, prefetchRoadmapLessons, roadmapItemToRecord, type LessonBrief } from "@/lib/lesson-planning";
+import { getActiveRoadmapTopic, getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, peekNextRoadmapLessonContext, setActiveRoadmapLesson, setActiveRoadmapTopic, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import { ROUTES } from "@/lib/routes";
 import type { ApiJson, ApiRecord, LessonBlueprint, LessonRoadmapItem } from "@/types/api";
 
@@ -61,16 +62,6 @@ export const LESSON_ROADMAP_TOPIC_STORAGE_KEY = "evolved.pendingRoadmapTopic";
 
 type LessonSearch = {
   topic?: string;
-};
-
-export type LessonBrief = {
-  topic: string;
-  education_level: string;
-  familiarity_level: string;
-  pace: string;
-  learning_style: string;
-  availability: string;
-  accessibility_support: boolean;
 };
 
 export type LessonLaunchContext = {
@@ -100,7 +91,7 @@ function LessonPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { topic: searchTopic } = Route.useSearch();
-  const initialBrief = makeInitialBrief(currentUser, searchTopic);
+  const initialBrief = makeInitialBrief(currentUser, searchTopic ?? getActiveRoadmapTopic(currentUser?.id));
   const [draft, setDraft] = useState<LessonBrief>(initialBrief);
   const [brief, setBrief] = useState<LessonBrief>(initialBrief);
   const [completedLessonIds, setCompletedLessonIds] = useState<Set<string>>(new Set());
@@ -122,6 +113,7 @@ function LessonPage() {
     const topic = draft.topic.trim();
     if (!topic) return;
     const nextBrief = { ...draft, topic };
+    setActiveRoadmapTopic(currentUser?.id, topic);
     setBrief(nextBrief);
     if (JSON.stringify(nextBrief) === JSON.stringify(brief)) void roadmap.refetch();
   }
@@ -161,22 +153,10 @@ function LessonPage() {
       isRoadmapLessonUnlocked(roadmapLessons, index, completedLessonIds, completedLessonCount) &&
       !isRoadmapLessonCompleted(lesson, index, completedLessonIds, completedLessonCount)
     ));
-    if (!preloadLesson) return;
-
     const preloadBrief = launchBriefFromPreferences(brief, draft);
-    const request = {
-      learner_id: currentUser.id,
-      topic: preloadBrief.topic,
-      selected_lesson: roadmapItemToRecord(preloadLesson),
-      constraints: constraintsFromBrief(preloadBrief),
-    };
     let cancelled = false;
-    setPreloadingLessonId(preloadLesson.id);
-    void queryClient.prefetchQuery({
-      queryKey: lessonQueryKey(request),
-      queryFn: () => generateLesson(request),
-      staleTime: 5 * 60 * 1000,
-    }).finally(() => {
+    setPreloadingLessonId(preloadLesson?.id ?? "");
+    void prefetchRoadmapLessons(queryClient, currentUser.id, preloadBrief, roadmapLessons).finally(() => {
       if (!cancelled) setPreloadingLessonId("");
     });
 
@@ -186,9 +166,9 @@ function LessonPage() {
   }, [brief, completedLessonCount, completedLessonIds, currentUser?.id, draft, queryClient, roadmapLessons]);
 
   useEffect(() => {
-    const nextBrief = makeInitialBrief(currentUser, searchTopic);
-    const pendingTopic = consumePendingRoadmapTopic();
-    if (pendingTopic) nextBrief.topic = pendingTopic;
+    const activeTopic = searchTopic || consumePendingRoadmapTopic() || getActiveRoadmapTopic(currentUser?.id);
+    const nextBrief = makeInitialBrief(currentUser, activeTopic);
+    setActiveRoadmapTopic(currentUser?.id, nextBrief.topic);
     setDraft(nextBrief);
     setBrief(nextBrief);
   }, [currentUser, searchTopic]);
@@ -450,7 +430,7 @@ export function LessonExperience({
               </div>
             )}
             <div className="mt-3">
-              <SourceBadge source={lesson.data.generation_source} model={lesson.data.generation_model} inverse />
+              <SourceBadge source={lesson.data.generation_source} model={lesson.data.generation_model} kind="lesson" inverse />
             </div>
           </div>
           <div className="grid gap-4 px-6 py-5 md:grid-cols-[1fr_auto] md:items-center">
@@ -802,16 +782,17 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
   ];
   const audioAssets = mediaCandidates.filter((item) => item.type === "audio" && isValidMediaUrl(stringValue(item.audioUrl), "audio"));
   const visualCandidates = mediaCandidates.filter((item) => item.type !== "audio");
-  const visuals = Array.from(
+  const visuals = uniqueVisualRecords(
     new Map(
       visualCandidates.map((item, index) => [
         visualIdentity(item, index),
         item,
       ]),
     ).values(),
-  );
+  ).filter(shouldShowVisual);
   const conceptMaps = visuals.some((item) => stringValue(item.type) === "concept_map") ? [] : (lesson.conceptMaps ?? []);
-  const hasVisuals = visuals.length > 0 || Boolean(conceptMaps.length || lesson.flowDiagrams?.length);
+  const flowDiagrams = uniqueVisualRecords(lesson.flowDiagrams ?? []).filter(shouldShowFlowDiagram);
+  const hasVisuals = visuals.length > 0 || Boolean(conceptMaps.length || flowDiagrams.length);
   const practiceItems = [...(lesson.practiceExercises ?? []), ...(lesson.interactiveQuestions ?? [])];
 
   return (
@@ -826,7 +807,7 @@ function AdaptiveLessonPayload({ lesson }: { lesson: LessonBlueprint }) {
         <VisualLesson
           visualElements={visuals}
           conceptMaps={conceptMaps}
-          flowDiagrams={lesson.flowDiagrams ?? []}
+          flowDiagrams={flowDiagrams}
         />
       )}
       {practiceItems.length > 0 && <PracticeLesson items={practiceItems} />}
@@ -1005,7 +986,7 @@ function VisualLesson({
       ))}
       {visualElements.length > 0 && (
         <div className="mt-6 grid gap-6">
-          {visualElements.filter(shouldShowVisual).map((item, index) => (
+          {visualElements.map((item, index) => (
             <div
               key={recordKey(item, index)}
               className="rounded-3xl border border-border bg-muted/20 p-6 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
@@ -1096,6 +1077,7 @@ function ConceptMap({ map, index }: { map: ApiRecord; index: number }) {
 function FlowDiagram({ flow, index }: { flow: ApiRecord; index: number }) {
   const steps = recordsFrom(flow.steps);
   if (isVectorVisualText(flow)) {
+    if (!vectorCoordinateKey(flow)) return null;
     return (
       <div className="mt-5 animate-in fade-in-0 slide-in-from-bottom-2 duration-500">
         <VectorArrowDiagram title={recordTitle(flow, index)} description={stringValue(flow.description)} data={steps} />
@@ -1170,7 +1152,7 @@ function RoadmapCards({
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Personalized roadmap</div>
         <div className="flex items-center gap-2">
-          <SourceBadge source={generationSource} model={generationModel} />
+          <SourceBadge source={generationSource} model={generationModel} kind="roadmap" />
           {preloadingLessonId && <div className="text-xs text-muted-foreground">Preparing your next lesson...</div>}
         </div>
       </div>
@@ -1223,6 +1205,9 @@ function RoadmapCards({
 }
 
 function visualIdentity(item: ApiRecord, index: number) {
+  if (isVectorVisualText(item)) {
+    return `vector:${vectorCoordinateKey(item) || normalizedVisualText([recordTitle(item, index), stringValue(item.description)])}`;
+  }
   return [
     stringValue(item.id),
     stringValue(item.imageUrl),
@@ -1233,12 +1218,65 @@ function visualIdentity(item: ApiRecord, index: number) {
   ].filter(Boolean).join("|") || `visual-${index}`;
 }
 
+function uniqueVisualRecords(records: Iterable<ApiRecord>) {
+  const seen = new Set<string>();
+  return Array.from(records).filter((record, index) => {
+    const key = visualIdentity(record, index);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function shouldShowFlowDiagram(item: ApiRecord) {
+  if (isVectorVisualText(item)) return Boolean(vectorCoordinateKey(item));
+  return recordsFrom(item.steps).length > 1;
+}
+
 function shouldShowVisual(item: ApiRecord) {
-  const title = recordTitle(item, 0);
-  const description = stringValue(item.description);
   const hasImage = isValidMediaUrl(stringValue(item.imageUrl), "image");
-  const hasVector = isVectorVisualText(item);
-  return hasImage || hasVector || recordsFrom(item.items).length > 0 || Boolean(title && description);
+  const hasVector = isVectorVisualText(item) && Boolean(vectorCoordinateKey(item));
+  return hasImage || hasVector || recordsFrom(item.items).length > 0;
+}
+
+function vectorCoordinateKey(value: unknown) {
+  const text = flattenVisualText(value);
+  const textPoint = [...text.matchAll(/\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)/g)]
+    .map((match) => ({ x: Number(match[1]), y: Number(match[2]) }))
+    .find((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && (point.x || point.y));
+  const point = textPoint ?? structuredVectorPoint(value);
+  return point ? `${point.x},${point.y}` : "";
+}
+
+function structuredVectorPoint(value: unknown): { x: number; y: number } | null {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const point = structuredVectorPoint(item);
+      if (point) return point;
+    }
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const x = Number(record.x);
+  const y = Number(record.y);
+  if (Number.isFinite(x) && Number.isFinite(y) && (x || y)) return { x, y };
+  for (const item of Object.values(record)) {
+    const point = structuredVectorPoint(item);
+    if (point) return point;
+  }
+  return null;
+}
+
+function flattenVisualText(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(flattenVisualText).join(" ");
+  if (value && typeof value === "object") return Object.values(value).map(flattenVisualText).join(" ");
+  return "";
+}
+
+function normalizedVisualText(values: unknown[]) {
+  return values.map(flattenVisualText).join(" ").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 function uniqueRecords(records: ApiRecord[]) {
@@ -1272,9 +1310,10 @@ function mergeCompletedRoadmapLessons(generated: LessonRoadmapItem[], completed:
   return generated.map((lesson, index) => index < completedCount ? (completed[index] ?? lesson) : lesson);
 }
 
-function SourceBadge({ source, model, inverse = false }: { source?: string; model?: string | null; inverse?: boolean }) {
+function SourceBadge({ source, model, kind = "lesson", inverse = false }: { source?: string; model?: string | null; kind?: "lesson" | "roadmap"; inverse?: boolean }) {
   const isAi = source === "ai";
-  const label = isAi ? "AI generated" : "Generation pending";
+  const isFallback = source === "fallback";
+  const label = isAi ? "AI generated" : isFallback ? `Fallback ${kind}` : "Generation pending";
   const title = model ? `${label}: ${model}` : label;
   return (
     <span
@@ -1467,29 +1506,6 @@ function humanize(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function makeInitialBrief(
-  user: {
-    learningTopic?: string;
-    educationLevel?: string;
-    topicFamiliarity?: string;
-    pacePreference?: string;
-    preferredModality?: string;
-    learningAvailability?: string;
-    accessibilitySupport?: boolean;
-  } | null | undefined,
-  topicOverride?: string,
-): LessonBrief {
-  return {
-    topic: topicOverride?.trim() || (user?.learningTopic ?? ""),
-    education_level: user?.educationLevel || "Undergraduate",
-    familiarity_level: user?.topicFamiliarity || "beginner",
-    pace: user?.pacePreference || "balanced",
-    learning_style: user?.preferredModality || "reading",
-    availability: user?.learningAvailability || "30_min",
-    accessibility_support: Boolean(user?.accessibilitySupport),
-  };
-}
-
 function consumePendingRoadmapTopic() {
   if (typeof window === "undefined") return "";
   const topic = window.sessionStorage.getItem(LESSON_ROADMAP_TOPIC_STORAGE_KEY)?.trim() ?? "";
@@ -1506,75 +1522,6 @@ function launchBriefFromPreferences(roadmapBrief: LessonBrief, currentDraft: Les
     learning_style: currentDraft.learning_style,
     availability: currentDraft.availability,
     accessibility_support: currentDraft.accessibility_support,
-  };
-}
-
-function toEducationLabel(value?: string) {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "school") return "School";
-  if (normalized === "postgraduate") return "Postgraduate";
-  if (normalized.includes("professional") || normalized.includes("independent")) return "Professional or independent learner";
-  return "Undergraduate";
-}
-
-function toFamiliarityLabel(value?: string) {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "intermediate") return "Intermediate";
-  if (normalized === "advanced") return "Advanced";
-  return "Beginner";
-}
-
-function toPaceLabel(value?: string) {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "gentle") return "Gentle and Thorough";
-  if (normalized === "fast") return "Fast and Challenging";
-  return "Balanced";
-}
-
-function toLearningStyleLabel(value?: string) {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "visual") return "Visual Examples and Diagrams";
-  if (normalized === "audio") return "Audio Learning";
-  if (normalized === "reading" || normalized === "written") return "Detailed Written Explanations";
-  return "Detailed Written Explanations";
-}
-
-function toAvailabilityLabel(value?: string) {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "60_min" || normalized === "1 hr/day") return "1 hr/day";
-  if (normalized === "120_min" || normalized === "2 hr/day") return "2 hr/day";
-  return "30 min/day";
-}
-
-function constraintsFromBrief(brief: LessonBrief): ApiRecord {
-  return {
-    education_level: toEducationLabel(brief.education_level),
-    familiarity_level: toFamiliarityLabel(brief.familiarity_level),
-    pace: toPaceLabel(brief.pace),
-    learning_style: toLearningStyleLabel(brief.learning_style),
-    availability: toAvailabilityLabel(brief.availability),
-    accessibility: {
-      additional_support: brief.accessibility_support,
-      dyslexia_support: brief.accessibility_support,
-      chunked_explanations: brief.accessibility_support,
-      symbolic_math_required: isMathTopic(brief.topic),
-      focus_mode_available: true,
-    },
-  };
-}
-
-function isMathTopic(topic: string) {
-  return /\b(calculus|algebra|vector|matrix|matrices|eigen|derivative|gradient|hessian|limit|projection|norm)\b/i.test(topic);
-}
-
-function roadmapItemToRecord(item: LessonRoadmapItem): ApiRecord {
-  return {
-    id: item.id,
-    title: item.title,
-    description: item.description,
-    difficulty: item.difficulty,
-    estimated_duration: item.estimated_duration,
-    objectives: item.objectives,
   };
 }
 

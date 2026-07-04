@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
     active_provider: str = "bedrock"
+    openrouter_api_key: str | None = None
+    openrouter_reasoning_model: str = "anthropic/claude-sonnet-4"
+    openrouter_fast_model: str = "anthropic/claude-3.5-haiku"
     reasoning_model: str = BEDROCK_REASONING_MODEL
     fast_model: str = BEDROCK_FAST_MODEL
     learner_model: str = BEDROCK_REASONING_MODEL

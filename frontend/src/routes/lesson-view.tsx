@@ -53,7 +53,7 @@ function LessonViewPage() {
     >
       <button
         type="button"
-        onClick={() => void navigate({ to: "/lesson" })}
+        onClick={() => void navigate({ to: "/lesson", search: context?.brief.topic ? { topic: context.brief.topic } : undefined })}
         className="mb-5 inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" /> Roadmap

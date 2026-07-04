@@ -1,10 +1,32 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
 
 import { askTutor, generateLesson, generateRoadmap, generateTeachingStrategy, saveLesson } from "@/lib/api";
 import type { GenerateLessonRequest, SaveLessonRequest, TutorInteractionRequest } from "@/types/api";
 
+const LESSON_QUERY_VERSION = "ai-only-v2";
+
 export function lessonQueryKey(request: GenerateLessonRequest) {
-  return ["lesson", request.learner_id, request.topic, request.selected_lesson, request.constraints] as const;
+  return ["lesson", LESSON_QUERY_VERSION, request.learner_id, request.topic, request.selected_lesson, request.constraints] as const;
+}
+
+export function roadmapQueryKey(request: GenerateLessonRequest) {
+  return ["roadmap", request.learner_id, request.topic, request.constraints] as const;
+}
+
+export function fetchRoadmap(queryClient: QueryClient, request: GenerateLessonRequest) {
+  return queryClient.fetchQuery({
+    queryKey: roadmapQueryKey(request),
+    queryFn: () => generateRoadmap(request),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function prefetchRoadmap(queryClient: QueryClient, request: GenerateLessonRequest) {
+  return queryClient.prefetchQuery({
+    queryKey: roadmapQueryKey(request),
+    queryFn: () => generateRoadmap(request),
+    staleTime: 5 * 60 * 1000,
+  });
 }
 
 export function useLesson(request: GenerateLessonRequest) {
@@ -19,7 +41,7 @@ export function useLesson(request: GenerateLessonRequest) {
 
 export function useRoadmap(request: GenerateLessonRequest) {
   return useQuery({
-    queryKey: ["roadmap", request.learner_id, request.topic, request.constraints],
+    queryKey: roadmapQueryKey(request),
     queryFn: () => generateRoadmap(request),
     enabled: Boolean(request.learner_id && request.topic),
     retry: 2,

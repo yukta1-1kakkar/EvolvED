@@ -71,7 +71,13 @@ function ProfileSetupPage() {
         preferred_modality: [values.preferredModality],
         topic: values.interests,
         topic_familiarity: values.topicFamiliarity,
-        accessibility: { additional_support: values.accessibility },
+        accessibility: {
+          additional_support: values.accessibility,
+          dyslexia_support: values.accessibility,
+          chunked_explanations: values.accessibility,
+          readable_spacing: values.accessibility,
+          focus_mode_available: true,
+        },
         learning_availability: values.learningAvailability,
       });
       completeProfile(values.interests, "", {
@@ -170,7 +176,7 @@ function ProfileSetupPage() {
 
         <label className="flex items-start gap-3 rounded-xl border border-border bg-background/45 p-3 text-sm text-muted-foreground">
           <input type="checkbox" className="mt-0.5 size-4 accent-plum" {...register("accessibility")} />
-          <span>I would like additional accessibility support and clearer step-by-step explanations.</span>
+          <span>I would like dyslexia-aware spacing, chunked explanations, focus mode, and clearer step-by-step lessons.</span>
         </label>
 
         {errors.root?.message && (
