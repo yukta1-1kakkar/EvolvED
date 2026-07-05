@@ -20,7 +20,7 @@ export function useGenerateQuiz(request: GenerateQuizRequest) {
     queryKey: quizQueryKey(request),
     queryFn: () => generateQuiz(request),
     enabled: Boolean(request.learner_id && request.session_id),
-    retry: 1,
+    retry: 0,
     staleTime: 5 * 60 * 1000,
   });
 }

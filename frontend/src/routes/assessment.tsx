@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, BookOpen, Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
+import { Accessibility, ArrowRight, BookOpen, Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
@@ -31,6 +31,7 @@ function AssessmentPage() {
   const [sessionId, setSessionId] = useState("");
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [confidence, setConfidence] = useState<Record<string, number>>({});
+  const [readerMode, setReaderMode] = useState<ReaderMode>(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
   const quiz = useGenerateQuiz({ learner_id: currentUser?.id ?? "", session_id: sessionId });
   const submit = useSubmitAssessment();
 
@@ -80,55 +81,96 @@ function AssessmentPage() {
     : "Ready to submit.";
   return (
     <AppShell title="Adaptive assessment" subtitle="Multiple-select checks plus written reasoning from lesson visuals." accent={submit.isPending ? "Evolving" : "Adaptive"}>
-      {!sessionId && <p className="text-sm text-muted-foreground">Select a lesson from your roadmap before starting an assessment.</p>}
-      {quiz.isLoading && <p className="text-sm text-muted-foreground">Generating a quiz from your current lesson...</p>}
-      {quiz.isError && <p className="text-sm text-destructive">{quiz.error.message}</p>}
-      {questions.length > 0 && (
-        <div className="max-w-5xl space-y-4">
-          {questions.map((question, index) => {
-            const id = questionId(question, index);
-            return (
-              <QuestionCard
-                key={id}
-                question={question}
-                index={index}
-                answer={answers[id] ?? emptyAnswer()}
-                confidence={confidence[id] ?? 70}
-                onAnswer={(value) => setAnswers((current) => ({ ...current, [id]: value }))}
-                onConfidence={(value) => setConfidence((current) => ({ ...current, [id]: value }))}
-              />
-            );
-          })}
-          {!submit.data && (
+      <div className={readerModeClass(readerMode)}>
+        <article className="max-w-5xl space-y-4">
+          <ReaderControls mode={readerMode} onChange={setReaderMode} />
+          {!sessionId && <p className="text-sm text-muted-foreground">Select a lesson from your roadmap before starting an assessment.</p>}
+          {quiz.isLoading && <p className="text-sm text-muted-foreground">Generating an AI assessment from your current lesson. This can take a minute on the first run...</p>}
+          {quiz.isError && <p className="text-sm text-destructive">{quiz.error.message}</p>}
+          {questions.length > 0 && (
             <>
-              <button
-                type="button"
-                onClick={submitQuiz}
-                disabled={!canSubmit}
-                title={submitHint}
-                className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50"
-              >
-                {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                Submit and evaluate
-              </button>
-              {!canSubmit && !submit.isPending && <p className="text-xs text-muted-foreground">{submitHint}</p>}
+              {questions.map((question, index) => {
+                const id = questionId(question, index);
+                return (
+                  <QuestionCard
+                    key={id}
+                    question={question}
+                    index={index}
+                    answer={answers[id] ?? emptyAnswer()}
+                    confidence={confidence[id] ?? 70}
+                    onAnswer={(value) => setAnswers((current) => ({ ...current, [id]: value }))}
+                    onConfidence={(value) => setConfidence((current) => ({ ...current, [id]: value }))}
+                  />
+                );
+              })}
+              {!submit.data && (
+                <>
+                  <button
+                    type="button"
+                    onClick={submitQuiz}
+                    disabled={!canSubmit}
+                    title={submitHint}
+                    className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50"
+                  >
+                    {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                    Submit and evaluate
+                  </button>
+                  {!canSubmit && !submit.isPending && <p className="text-xs text-muted-foreground">{submitHint}</p>}
+                </>
+              )}
+              {submit.isError && <p className="text-sm text-destructive">{submit.error.message}</p>}
+              {submit.data && (
+                <AssessmentResultCard
+                  score={submit.data.score}
+                  feedback={submit.data.detailed_feedback}
+                  nextAction={humanizeIdentifier(textValue(submit.data.adaptation.action))}
+                  recommendationAction={recommendedActionText(submit.data.detailed_feedback, textValue(submit.data.adaptation.action))}
+                  onRecommended={() => followRecommendedAction(`${textValue(submit.data.adaptation.action)} ${submit.data.detailed_feedback}`)}
+                  onNext={evolveNextLesson}
+                />
+              )}
             </>
           )}
-          {submit.isError && <p className="text-sm text-destructive">{submit.error.message}</p>}
-          {submit.data && (
-            <AssessmentResultCard
-              score={submit.data.score}
-              feedback={submit.data.detailed_feedback}
-              nextAction={humanizeIdentifier(textValue(submit.data.adaptation.action))}
-              recommendationAction={recommendedActionText(submit.data.detailed_feedback, textValue(submit.data.adaptation.action))}
-              onRecommended={() => followRecommendedAction(`${textValue(submit.data.adaptation.action)} ${submit.data.detailed_feedback}`)}
-              onNext={evolveNextLesson}
-            />
-          )}
-        </div>
-      )}
+        </article>
+      </div>
     </AppShell>
   );
+}
+
+type ReaderMode = "standard" | "dyslexia" | "focus";
+
+function ReaderControls({ mode, onChange }: { mode: ReaderMode; onChange: (mode: ReaderMode) => void }) {
+  return (
+    <section className="rounded-3xl border border-border bg-card p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          <Accessibility className="size-3.5 text-plum" /> Reader accessibility
+        </div>
+        <div className="grid grid-cols-3 rounded-2xl border border-border bg-muted/25 p-1 text-xs">
+          {[
+            { value: "standard", label: "Standard" },
+            { value: "dyslexia", label: "Dyslexia" },
+            { value: "focus", label: "Focus" },
+          ].map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => onChange(item.value as ReaderMode)}
+              className={`rounded-xl px-3 py-2 font-medium ${mode === item.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function readerModeClass(mode: ReaderMode) {
+  if (mode === "dyslexia") return "reader-dyslexia";
+  if (mode === "focus") return "reader-focus";
+  return "";
 }
 
 function AssessmentResultCard({

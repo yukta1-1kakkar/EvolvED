@@ -33,10 +33,14 @@ class Settings(BaseSettings):
     aws_secret_access_key: str | None = None
     aws_session_token: str | None = None
     database_url: str | None = None
-    database_pool_size: int = 10
-    database_max_overflow: int = 20
+    database_pool_size: int = 2
+    database_max_overflow: int = 2
     database_pool_recycle: int = 1800
     database_pool_pre_ping: bool = True
+    database_pool_use_lifo: bool = True
+    database_connect_timeout_seconds: int = 8
+    database_command_timeout_seconds: int = 90
+    database_pool_timeout_seconds: int = 30
     chroma_tenant: str | None = None
     chroma_database: str | None = None
     chroma_api_key: str | None = None

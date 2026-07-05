@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm import declarative_base
@@ -8,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from app.core.config import settings
 
 Base = declarative_base()
+logger = logging.getLogger(__name__)
 
 
 def _normalise_database_url(database_url: str | None) -> tuple[str, dict]:
@@ -26,7 +29,10 @@ def _normalise_database_url(database_url: str | None) -> tuple[str, dict]:
     query.pop("channel_binding", None)
     normalised = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
-    connect_args = {}
+    connect_args = {
+        "timeout": settings.database_connect_timeout_seconds,
+        "command_timeout": settings.database_command_timeout_seconds,
+    }
     if sslmode and sslmode != "disable":
         connect_args["ssl"] = True
 
@@ -43,6 +49,8 @@ engine = create_async_engine(
     max_overflow=settings.database_max_overflow,
     pool_recycle=settings.database_pool_recycle,
     pool_pre_ping=settings.database_pool_pre_ping,
+    pool_use_lifo=settings.database_pool_use_lifo,
+    pool_timeout=settings.database_pool_timeout_seconds,
     connect_args=CONNECT_ARGS,
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -55,7 +63,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db():
     # Connect to DB to ensure configuration; migrations managed by Alembic.
-    async with AsyncSessionLocal() as session:
-        await session.execute(text("SELECT 1"))
-        await session.commit()
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+            await session.commit()
+    except Exception as exc:
+        logger.warning("Database startup check failed; continuing with degraded local fallback mode: %r", exc)
 

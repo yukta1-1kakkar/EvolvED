@@ -27,6 +27,7 @@ function IntelligencePage() {
   const analytics = useAnalytics(currentUser?.id);
   const engagement = analytics.data?.engagement_trends ?? {};
   const performance = analytics.data?.performance_trends ?? {};
+  const statedConfidence = numericValue(performance.stated_confidence);
 
   return (
     <AppShell title="What EvolvED knows about you" subtitle="A transparent view of learner analytics and adaptation signals." accent={analytics.isFetching ? "Syncing" : "Reasoning"}>
@@ -85,11 +86,11 @@ function IntelligencePage() {
           <div className="font-display text-4xl">{Number(performance.assessment_count ?? 0)}</div>
           <p className="mt-2 text-xs text-muted-foreground">Completed assessment checkpoints used to update this model.</p>
         </Card>
-        <Card icon={Eye} title="Confidence estimate">
-          <div className="font-display text-4xl">{firstNumeric(engagement).toFixed(2)}</div>
-          <p className="text-xs text-muted-foreground mt-2">First numeric engagement signal from GET /analytics.</p>
+        <Card icon={Eye} title="Stated confidence">
+          <div className="font-display text-4xl">{statedConfidence.toFixed(2)}</div>
+          <p className="text-xs text-muted-foreground mt-2">Average confidence you selected while submitting assessments.</p>
           <div className="mt-4 h-1.5 rounded-full bg-muted overflow-hidden">
-            <motion.div initial={{ width: 0 }} animate={{ width: `${firstNumeric(engagement) * 100}%` }} transition={{ duration: 1 }} className="h-full" style={{ backgroundImage: "var(--gradient-warm)" }} />
+            <motion.div initial={{ width: 0 }} animate={{ width: `${statedConfidence * 100}%` }} transition={{ duration: 1 }} className="h-full" style={{ backgroundImage: "var(--gradient-warm)" }} />
           </div>
         </Card>
       </div>
@@ -153,8 +154,8 @@ function analyticsPairs(record: ApiRecord): [string, string][] {
   return Object.entries(record).slice(0, 5).map(([key, value]) => [humanize(key), valueToText(value)]);
 }
 
-function firstNumeric(record: ApiRecord) {
-  return numericPairs(record)[0]?.[1] ?? 0;
+function numericValue(value: ApiJson | undefined) {
+  return typeof value === "number" ? Math.min(1, Math.max(0, value)) : 0;
 }
 
 function humanize(value: string) {

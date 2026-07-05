@@ -11,7 +11,7 @@ import {
   Search,
   MessageSquarePlus,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { EvolvedLogo } from "@/components/brand/EvolvedLogo";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
@@ -41,6 +41,9 @@ export function AppShell({
 }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const { currentUser, logout } = useAuth();
+  const [showStatusBrief, setShowStatusBrief] = useState(false);
+  const statusLabel = accent ?? "Adapting";
+  const statusBrief = statusBriefFor(statusLabel);
 
   return (
     <ProtectedRoute>
@@ -119,9 +122,24 @@ export function AppShell({
             </div>
             <div className="ml-auto flex items-center gap-2 text-xs">
               <span className="hidden md:inline text-muted-foreground">Calibrated 2m ago</span>
-              <span className="rounded-full border border-border px-2.5 py-1 text-muted-foreground flex items-center gap-1.5">
-                <Sparkles className="size-3 text-gold" /> {accent ?? "Adapting"}
-              </span>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowStatusBrief((value) => !value)}
+                  className="rounded-full border border-border px-2.5 py-1 text-muted-foreground flex items-center gap-1.5 transition-colors hover:border-plum/40 hover:text-foreground"
+                  aria-expanded={showStatusBrief}
+                  aria-label={`What ${statusLabel} means`}
+                >
+                  <Sparkles className="size-3 text-gold" /> {statusLabel}
+                </button>
+                {showStatusBrief && (
+                  <div className="absolute right-0 top-8 z-50 w-72 rounded-2xl border border-border bg-card p-4 text-sm shadow-soft">
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Status brief</div>
+                    <div className="mt-1 font-medium text-foreground">{statusLabel}</div>
+                    <p className="mt-2 leading-6 text-muted-foreground">{statusBrief}</p>
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
@@ -162,4 +180,19 @@ export function AppShell({
       </div>
     </ProtectedRoute>
   );
+}
+
+function statusBriefFor(label: string) {
+  const key = label.toLowerCase();
+  if (key.includes("reasoning")) return "The AI is interpreting your learner model, assessment evidence, and recent activity to explain or adapt decisions.";
+  if (key.includes("syncing")) return "EvolvED is refreshing learner data, progress, or analytics from the backend.";
+  if (key.includes("live")) return "This page is showing the latest available learner state and progress signals.";
+  if (key.includes("composing")) return "The system is preparing the selected lesson context and assembling the next learning experience.";
+  if (key.includes("planning")) return "The roadmap agent is organizing concepts, prerequisites, and lesson order.";
+  if (key.includes("ready")) return "The generated roadmap or lesson state is available for use.";
+  if (key.includes("evolving")) return "The system is evaluating your submission and updating the next teaching move.";
+  if (key.includes("adaptive")) return "The page is using your learner profile, confidence, and progress to personalize the experience.";
+  if (key.includes("feedback")) return "Peer review signals are being collected for the human-in-the-loop refinement cycle.";
+  if (key.includes("missing")) return "A required lesson or roadmap selection is missing, so the page needs a valid selection first.";
+  return "EvolvED is adjusting the page based on the current learner workflow and available model signals.";
 }

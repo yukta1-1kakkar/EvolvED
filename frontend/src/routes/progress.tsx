@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useCurriculum } from "@/hooks/useCurriculum";
 import { useProgress } from "@/hooks/useProgress";
+import { getCompletedRoadmapLessonCount } from "@/lib/lesson-progress";
 import type { ApiRecord, CurriculumItem } from "@/types/api";
 
 export const Route = createFileRoute("/progress")({
@@ -52,7 +53,7 @@ function ProgressPage() {
   const progress = useProgress(currentUser?.id);
   const curriculum = useCurriculum();
   const [range, setRange] = useState<ProgressRange>("30d");
-  const masteryByTopic = subjectConceptMastery(progress.data?.mastery ?? {}, curriculum.data?.items ?? [], currentUser?.learningTopic);
+  const masteryByTopic = subjectConceptMastery(progress.data?.mastery ?? {}, curriculum.data?.items ?? [], currentUser?.learningTopic, currentUser?.id);
   const masteredCount = masteryByTopic.filter((m) => m.v >= 0.8).length;
   const subjectMastery = averageMastery(masteryByTopic);
   const filteredHistory = useMemo(
@@ -145,22 +146,32 @@ function ProgressPage() {
   );
 }
 
-function subjectConceptMastery(mastery: Record<string, number>, curriculumItems: CurriculumItem[], learningTopic?: string) {
+function subjectConceptMastery(mastery: Record<string, number>, curriculumItems: CurriculumItem[], learningTopic?: string, learnerId?: string) {
   const masteryByKey = normalizedMasteryMap(mastery);
   const topicItems = filterItemsForSelectedTopic(curriculumItems, learningTopic);
   const scopedItems = topicItems.length > 0 ? topicItems : curriculumItems;
   const concepts = scopedItems
     .map((item) => {
-      const value = masteryByKey.get(normalizeTopic(item.concept)) ?? masteryByKey.get(normalizeTopic(item.id));
-      return typeof value === "number" ? { t: humanize(item.concept), v: value } : null;
+      const backendValue = masteryByKey.get(normalizeTopic(item.concept)) ?? masteryByKey.get(normalizeTopic(item.id)) ?? 0;
+      const localValue = localRoadmapMastery(learnerId, item, humanize(item.concept));
+      return { t: humanize(item.concept), v: Math.max(backendValue, localValue) };
     })
-    .filter((item): item is { t: string; v: number } => Boolean(item));
+    .filter((item) => Number.isFinite(item.v));
 
   if (concepts.length > 0) return concepts;
 
   return Object.entries(mastery)
     .map(([t, value]) => ({ t: humanize(t), v: clamp01(Number(value)) }))
     .filter((item) => Number.isFinite(item.v));
+}
+
+function localRoadmapMastery(learnerId: string | undefined, item: CurriculumItem, label: string) {
+  const completed = Math.max(
+    getCompletedRoadmapLessonCount(learnerId, label),
+    getCompletedRoadmapLessonCount(learnerId, item.concept),
+    getCompletedRoadmapLessonCount(learnerId, item.id),
+  );
+  return clamp01(completed / ROADMAP_MASTERY_TARGET_LESSONS);
 }
 
 function averageMastery(items: Array<{ v: number }>) {
@@ -202,6 +213,8 @@ function canonicalTrackTopic(value?: string) {
   if (["calculus", "limits_derivatives_gradients_multivariate_calculus_hessians"].includes(normalized)) return "calculus";
   return normalized;
 }
+
+const ROADMAP_MASTERY_TARGET_LESSONS = 8;
 
 function Stat({ icon: Icon, k, v, tone }: { icon: React.ElementType; k: string; v: string; tone?: "gold" | "plum" }) {
   return (

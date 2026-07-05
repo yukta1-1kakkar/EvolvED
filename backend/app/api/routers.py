@@ -87,9 +87,10 @@ async def _retry_database(operation, label: str, attempts: int = 3):
             if attempt == attempts - 1:
                 break
             delay = 0.5 * (2**attempt)
-            logger.warning("Database %s attempt %s/%s failed; retrying in %.1fs: %s", label, attempt + 1, attempts, delay, exc)
+            logger.warning("Database %s attempt %s/%s failed; retrying in %.1fs: %s: %r", label, attempt + 1, attempts, delay, type(exc).__name__, exc)
             await asyncio.sleep(delay)
-    raise RuntimeError(f"Database {label} failed after {attempts} attempts: {last_error}") from last_error
+    error_name = type(last_error).__name__ if last_error else "UnknownError"
+    raise RuntimeError(f"Database {label} failed after {attempts} attempts: {error_name}: {last_error!r}") from last_error
 
 
 def _normalize_generated_value(value: Any) -> Any:
@@ -107,12 +108,11 @@ def _normalize_generated_model(model):
 
 
 async def _learner_context(repo: repository.AsyncRepository, learner_id: str):
-    async def load():
-        profile = await repo.get_learner_profile(learner_id)
-        state = await repo.get_learner_state(learner_id)
-        return profile, state
-
-    return await _retry_database(load, "learner context load")
+    try:
+        return await _retry_database(lambda: repo.get_learner_context(learner_id), "learner context load", attempts=1)
+    except Exception as exc:
+        logger.warning("Using default learner context because database is unavailable: learner_id=%s error=%s: %r", learner_id, type(exc).__name__, exc)
+        return models.LearnerProfile(learner_id=learner_id), models.LearnerState(learner_id=learner_id)
 
 
 @router.post("/auth/signup", response_model=models.AuthUser)
@@ -431,8 +431,11 @@ async def get_curriculum():
 @router.get("/progress", response_model=models.ProgressResponse)
 async def get_progress(learner_id: str):
     repo = repository.AsyncRepository()
-    prog = await repo.get_progress(learner_id)
-    return prog
+    try:
+        return await asyncio.wait_for(repo.get_progress(learner_id), timeout=10)
+    except Exception as exc:
+        logger.warning("Progress endpoint returned safe fallback: learner_id=%s error=%s: %r", learner_id, type(exc).__name__, exc)
+        return models.ProgressResponse(learner_id=learner_id)
 
 
 @router.get("/analytics", response_model=models.AnalyticsResponse)

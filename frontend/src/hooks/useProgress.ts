@@ -7,6 +7,6 @@ export function useProgress(learnerId: string | undefined) {
     queryKey: ["progress", learnerId],
     queryFn: () => getProgress(learnerId ?? ""),
     enabled: Boolean(learnerId),
-    retry: 1,
+    retry: 0,
   });
 }

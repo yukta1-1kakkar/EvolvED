@@ -20,7 +20,7 @@ export function generateQuiz(request: GenerateQuizRequest) {
   return apiRequest<QuizResponse, GenerateQuizRequest>("/generate-quiz", {
     method: "POST",
     body: request,
-    timeoutMs: 60000,
+    timeoutMs: 240000,
   });
 }
 
