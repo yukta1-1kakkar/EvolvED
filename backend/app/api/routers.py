@@ -249,10 +249,25 @@ def _syllabus_stages(topic: str) -> list[tuple[str, str, str]]:
 @router.post("/teaching-strategy", response_model=models.TeachingStrategy)
 async def get_teaching_strategy(req: models.GenerateLessonRequest):
     repo = repository.AsyncRepository()
-    learner_profile = await repo.get_learner_profile(req.learner_id)
+    learner_profile, learner_state = await _learner_context(repo, req.learner_id)
     topic = req.topic.strip() or learner_profile.topic or learner_profile.learning_goal or "foundational learning"
+    constraints = req.constraints or {}
     try:
-        return await lg_graph.generate_strategy(learner_profile, topic)
+        return await langgraph_nodes.pedagogy_agent(
+            {
+                "learner_profile": learner_profile.model_dump(),
+                "learner_state": learner_state.model_dump(),
+                "topic_context": {
+                    "current_topic": topic,
+                    "constraints": constraints,
+                    "adaptation_context": learner_state.adaptation_history[-3:],
+                    "weak_topics": learner_state.weak_topics,
+                    "strong_topics": learner_state.strong_topics,
+                    "confidence_score": learner_state.confidence_score,
+                    "cognitive_load_estimate": learner_state.cognitive_load_estimate,
+                },
+            }
+        )
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

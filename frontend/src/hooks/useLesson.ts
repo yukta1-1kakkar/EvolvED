@@ -57,10 +57,11 @@ export function useTutorInteraction() {
 
 export function useTeachingStrategy(request: GenerateLessonRequest) {
   return useQuery({
-    queryKey: ["teaching-strategy", request.learner_id, request.topic],
+    queryKey: ["teaching-strategy", request.learner_id, request.topic, request.constraints],
     queryFn: () => generateTeachingStrategy(request),
     enabled: Boolean(request.learner_id),
     retry: 1,
+    staleTime: 0,
   });
 }
 
