@@ -259,7 +259,6 @@ function QuestionCard({
 }) {
   const options = optionsFromQuestion(question);
   const visual = visualFromQuestion(question);
-  const explanation = textValue(question.explanation);
   const needsOption = answer.selected_options.length === 0;
   const answerLength = answer.long_answer.trim().length;
   const needsLongAnswer = answerLength < MIN_LONG_ANSWER_CHARS;
@@ -275,7 +274,6 @@ function QuestionCard({
     <section className="rounded-3xl border border-border bg-card p-6">
       <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Question {index + 1} - Multiple select + long answer</div>
       <MathText as="h2" className="mt-3 font-display text-2xl" text={textValue(question.prompt)} />
-      {explanation && <MathText as="p" className="mt-3 text-sm leading-relaxed text-muted-foreground" text={explanation} />}
       {visual && (
         <figure className="mt-5">
           {visual.isVector ? (
@@ -354,7 +352,7 @@ function optionsFromQuestion(question: ApiRecord) {
 
 function visualFromQuestion(question: ApiRecord): { imageUrl?: string; title?: string; description?: string; data?: unknown; isVector?: boolean } | null {
   const visual = question.visual_asset ?? question.visualAsset ?? question.diagram;
-  if (typeof visual !== "object" || visual === null || Array.isArray(visual)) return null;
+  if (typeof visual !== "object" || visual === null || Array.isArray(visual)) return vectorVisualFromQuestionText(question);
   const record = visual as ApiRecord;
   const rendered = {
     imageUrl: textValue(record.imageUrl),
@@ -364,6 +362,20 @@ function visualFromQuestion(question: ApiRecord): { imageUrl?: string; title?: s
     isVector: isVectorVisualText(record),
   };
   return rendered.imageUrl || rendered.data || rendered.title || rendered.description ? rendered : null;
+}
+
+function vectorVisualFromQuestionText(question: ApiRecord) {
+  const prompt = textValue(question.prompt);
+  const options = optionsFromQuestion(question).join(" ");
+  const text = `${prompt} ${options}`;
+  const coordinateCount = text.match(/\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)/g)?.length ?? 0;
+  if (coordinateCount < 2 || !/\b(diagram|arrow|vector)\b/i.test(text) || !isVectorVisualText(text)) return null;
+  return {
+    title: "Vector diagram",
+    description: prompt,
+    data: [prompt],
+    isVector: true,
+  };
 }
 
 function arrayValue(value: ApiJson | undefined) {

@@ -1967,6 +1967,8 @@ def _normalize_quiz_questions(raw_questions: list[Any], lesson: Dict[str, Any]) 
         visual_asset = _quiz_visual_asset(raw.get("visual_asset") or raw.get("visualAsset") or raw.get("diagram"), concept, index)
         if not prompt:
             prompt = f"Use the visual to identify and explain the key idea in {concept}." if visual_asset else f"Identify and explain the key idea in {concept}."
+        if not visual_asset:
+            visual_asset = _quiz_visual_asset_from_prompt(prompt, concept, index)
         options = _quiz_options(raw, concept, bool(visual_asset))
         correct_answers = raw.get("correct_answers") or raw.get("correctAnswers") or raw.get("answer") or raw.get("expected_options")
         if isinstance(correct_answers, str):
@@ -2034,6 +2036,23 @@ def _quiz_options(raw: Dict[str, Any], concept: str, has_visual: bool = False) -
         if option not in cleaned:
             cleaned.append(option)
     return cleaned[:6]
+
+
+def _quiz_visual_asset_from_prompt(prompt: str, concept: str, index: int) -> Dict[str, Any] | None:
+    coordinate_count = len(re.findall(r"\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)", prompt))
+    if coordinate_count < 2 or not re.search(r"\b(diagram|arrow|vector)\b", prompt, re.I):
+        return None
+    return _quiz_visual_asset(
+        {
+            "id": f"quiz-visual-{index + 1}",
+            "title": "Vector diagram",
+            "description": prompt,
+            "type": "diagram",
+            "data": [prompt],
+        },
+        concept,
+        index,
+    )
 
 
 def _quiz_visual_asset(raw_visual: Any, concept: str, index: int) -> Dict[str, Any] | None:
