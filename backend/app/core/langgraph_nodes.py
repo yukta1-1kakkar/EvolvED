@@ -1778,7 +1778,8 @@ async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, A
         "Every question must combine multiple-select checking with a long written answer. "
         "Every item must include id, type='msq_long_answer', prompt, options, correct_answers, "
         "long_answer_prompt, expected_answer, concept, and explanation. "
-        "options must contain 4 to 6 short choices and correct_answers must contain 1 to 3 exact option strings. "
+        "options must contain 4 to 6 short choices. correct_answers must contain 1 to 2 exact option strings for 4 or 5 options, "
+        "or at most 3 exact option strings only when there are 6 options. Every question must include at least two plausible incorrect distractors. "
         "long_answer_prompt must ask the learner to justify, derive, explain, or interpret in 3 to 6 sentences. "
         "Include visual_asset only when a diagram, flowchart, graph, or process is needed for that specific question. "
         "Do not reuse the same visual for unrelated questions. visual_asset must be an object with title, description, type, and data, using the same schema as lesson visualAssets: "
@@ -1972,7 +1973,7 @@ def _normalize_quiz_questions(raw_questions: list[Any], lesson: Dict[str, Any]) 
             correct_answers = [correct_answers]
         if not isinstance(correct_answers, list):
             correct_answers = options[:2]
-        correct = [str(item) for item in correct_answers if str(item) in options][:3] or options[:1]
+        correct = _balanced_correct_answers(correct_answers, options)
         question = {
                 "id": question_id,
                 "type": "msq_long_answer",
@@ -2003,6 +2004,19 @@ def _dedupe_quiz_visuals(questions: list[Dict[str, Any]]) -> list[Dict[str, Any]
         else:
             seen.add(key)
     return questions
+
+
+def _balanced_correct_answers(correct_answers: list[Any], options: list[str]) -> list[str]:
+    requested = [str(item) for item in correct_answers if str(item) in options]
+    max_correct = 3 if len(options) >= 6 else 2
+    max_correct = min(max_correct, max(1, len(options) - 2))
+    correct: list[str] = []
+    for option in requested:
+        if option not in correct:
+            correct.append(option)
+        if len(correct) >= max_correct:
+            break
+    return correct or options[:1]
 
 
 def _quiz_options(raw: Dict[str, Any], concept: str, has_visual: bool = False) -> list[str]:
@@ -2090,7 +2104,7 @@ def _fallback_questions(lesson: Dict[str, Any], learning_style: str) -> list[Dic
             "A correct answer should justify the selected claims",
             "Any unrelated formula is enough",
         ]
-        correct_answers = options[:3]
+        correct_answers = options[:2]
         question = {
                 "id": f"checkpoint-{index + 1}",
                 "type": "msq_long_answer",
