@@ -114,13 +114,24 @@ function vectorArrowsFromText(values: unknown[]): VectorArrow[] {
     start: { x: Number(match[2]), y: Number(match[3]) },
     end: { x: Number(match[4]), y: Number(match[5]) },
   }));
-  return arrows.filter((arrow) => (
+  const validArrows = arrows.filter((arrow) => (
     Number.isFinite(arrow.start.x) &&
     Number.isFinite(arrow.start.y) &&
     Number.isFinite(arrow.end.x) &&
     Number.isFinite(arrow.end.y) &&
     (arrow.start.x !== arrow.end.x || arrow.start.y !== arrow.end.y)
   ));
+  if (validArrows.length) return validArrows;
+
+  if (!/\bequal vectors?\b/i.test(text)) return [];
+  const pairs = [...text.matchAll(/\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)/g)]
+    .map((match) => ({ x: Number(match[1]), y: Number(match[2]) }))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+  if (pairs.length < 4) return [];
+  return [
+    { label: "A", start: pairs[0], end: pairs[1] },
+    { label: "B", start: pairs[2], end: pairs[3] },
+  ].filter((arrow) => arrow.start.x !== arrow.end.x || arrow.start.y !== arrow.end.y);
 }
 
 function vectorPointFromText(values: unknown[]) {

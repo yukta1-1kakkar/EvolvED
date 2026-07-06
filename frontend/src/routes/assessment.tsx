@@ -287,11 +287,6 @@ function QuestionCard({
               className="max-h-[520px] w-full rounded-2xl border border-border bg-background object-contain"
             />
           )}
-          {(visual.title || visual.description) && (
-            <figcaption className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              <MathText as="span" text={`${visual.title}${visual.title && visual.description ? " - " : ""}${visual.description}`} />
-            </figcaption>
-          )}
         </figure>
       )}
       <div className="mt-5">
@@ -315,8 +310,7 @@ function QuestionCard({
           })}
         </div>
       </div>
-      <label className="mt-5 block text-xs font-medium text-muted-foreground">
-        <MathText as="span" text={textValue(question.long_answer_prompt) || "Explain your reasoning in 3 to 6 sentences"} />
+      <label className="mt-5 block">
         <textarea
           value={answer.long_answer}
           onChange={(event) => onAnswer({ ...answer, long_answer: event.target.value })}

@@ -555,10 +555,72 @@ def _vector_visual_svg_body(title: str, description: str, data: list[Any], font:
         for item in data
         if isinstance(item, dict) and _is_number_like(item.get("x")) and _is_number_like(item.get("y"))
     )
+    arrows = [
+        (label.upper(), (float(sx), float(sy)), (float(ex), float(ey)))
+        for label, sx, sy, ex, ey in re.findall(
+            r"\b(?:arrow|vector)\s+([a-z])\b.{0,80}?\bfrom\s*\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)\s*\bto\s*\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)",
+            text,
+            re.I,
+        )
+    ]
+    if not arrows and re.search(r"\bequal vectors?\b", text, re.I) and len(pairs) >= 4:
+        arrows = [("A", pairs[0], pairs[1]), ("B", pairs[2], pairs[3])]
+    arrows = [arrow for arrow in arrows if arrow[1] != arrow[2]]
+    if arrows:
+        points = [(0.0, 0.0)] + [point for _, start, end in arrows for point in (start, end)]
+        bounds = max(5, int(max(max(abs(x), abs(y)) for x, y in points)) + 1)
+        left, right, top, bottom = 120, 1160, 140, 610
+        plot_width, plot_height = right - left, bottom - top
+
+        def px(value: float) -> float:
+            return left + ((value + bounds) / (bounds * 2)) * plot_width
+
+        def py(value: float) -> float:
+            return bottom - ((value + bounds) / (bounds * 2)) * plot_height
+
+        def fmt(value: float) -> str:
+            return f"{value:g}"
+
+        origin_x, origin_y = px(0), py(0)
+        grid = []
+        for value in range(-bounds, bounds + 1):
+            grid.append(f'<line x1="{px(value):.1f}" y1="{top}" x2="{px(value):.1f}" y2="{bottom}" stroke="#e5ddf3" stroke-width="1"/>')
+            grid.append(f'<line x1="{left}" y1="{py(value):.1f}" x2="{right}" y2="{py(value):.1f}" stroke="#e5ddf3" stroke-width="1"/>')
+        colors = ["#7c3aed", "#0f766e", "#2563eb", "#c2410c"]
+        markers = [
+            f'<marker id="vectorArrow{index}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">'
+            f'<path d="M1,1.5 L9,5 L1,8.5 Z" fill="{color}"/></marker>'
+            for index, color in enumerate(colors)
+        ]
+        arrow_lines = []
+        for index, (label, start, end) in enumerate(arrows):
+            color = colors[index % len(colors)]
+            sx, sy = px(start[0]), py(start[1])
+            ex, ey = px(end[0]), py(end[1])
+            arrow_lines.append(
+                f'<line x1="{sx:.1f}" y1="{sy:.1f}" x2="{ex:.1f}" y2="{ey:.1f}" stroke="{color}" stroke-width="6" marker-end="url(#vectorArrow{index % len(colors)})"/>'
+                f'<circle cx="{sx:.1f}" cy="{sy:.1f}" r="6" fill="#30263b"/>'
+                f'<circle cx="{ex:.1f}" cy="{ey:.1f}" r="4" fill="{color}"/>'
+                f'<text x="{(sx + ex) / 2 + 12:.1f}" y="{(sy + ey) / 2 - 16:.1f}" font-family="{font}" font-size="24" font-weight="800" fill="{color}">Arrow {label}</text>'
+                f'<text x="{ex + 16:.1f}" y="{ey - 14:.1f}" font-family="{font}" font-size="22" font-weight="800" fill="{color}">({fmt(end[0])},{fmt(end[1])})</text>'
+                f'<text x="{sx + 12:.1f}" y="{sy + 30:.1f}" font-family="{font}" font-size="18" font-weight="700" fill="#30263b">({fmt(start[0])},{fmt(start[1])})</text>'
+            )
+        return (
+            '<defs>'
+            + "".join(markers) +
+            '<marker id="axisArrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">'
+            '<path d="M1,2 L7,4 L1,6 Z" fill="#65566f"/></marker></defs>'
+            '<rect x="90" y="115" width="1120" height="560" rx="20" fill="#ffffff" stroke="#d8cdeb"/>'
+            + "".join(grid) +
+            f'<line x1="{left}" y1="{origin_y:.1f}" x2="{right + 28}" y2="{origin_y:.1f}" stroke="#65566f" stroke-width="3" marker-end="url(#axisArrow)"/>'
+            f'<line x1="{origin_x:.1f}" y1="{bottom}" x2="{origin_x:.1f}" y2="{top - 28}" stroke="#65566f" stroke-width="3" marker-end="url(#axisArrow)"/>'
+            + "".join(arrow_lines) +
+            f'<text x="{right + 36}" y="{origin_y + 6:.1f}" font-family="{font}" font-size="22" font-weight="700" fill="#65566f">x</text>'
+            f'<text x="{origin_x - 8:.1f}" y="{top - 38}" font-family="{font}" font-size="22" font-weight="700" fill="#65566f">y</text>'
+        )
     x, y = max(pairs, key=lambda point: point[0] * point[0] + point[1] * point[1], default=(3.0, 4.0))
     if x == 0 and y == 0:
         x, y = 3.0, 4.0
-    magnitude = (x * x + y * y) ** 0.5
     bounds = max(5, int(max(abs(x), abs(y))) + 1)
     left, right, top, bottom = 120, 1160, 140, 610
     plot_width, plot_height = right - left, bottom - top
@@ -599,7 +661,6 @@ def _vector_visual_svg_body(title: str, description: str, data: list[Any], font:
         f'<text x="{end_x + 16:.1f}" y="{(origin_y + end_y) / 2:.1f}" font-family="{font}" font-size="22" font-weight="700" fill="#c2410c">y = {fmt(y)}</text>'
         f'<text x="{end_x + 16:.1f}" y="{end_y - 16:.1f}" font-family="{font}" font-size="23" font-weight="800" fill="#7c3aed">({fmt(x)},{fmt(y)})</text>'
         f'<text x="{(origin_x + end_x) / 2 + 12:.1f}" y="{(origin_y + end_y) / 2 - 20:.1f}" font-family="{font}" font-size="24" font-weight="800" fill="#5b21b6">vector v</text>'
-        f'<text x="120" y="705" font-family="{font}" font-size="22" font-weight="700" fill="#30263b">|v| = {fmt(magnitude)} from sqrt({fmt(x)}^2 + {fmt(y)}^2)</text>'
     )
 
 
