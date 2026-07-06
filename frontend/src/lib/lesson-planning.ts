@@ -4,6 +4,8 @@ import { lessonQueryKey } from "@/hooks/useLesson";
 import { generateLesson } from "@/lib/api";
 import type { ApiRecord, LessonRoadmapItem } from "@/types/api";
 
+const activeLessonPreloads = new Set<string>();
+
 export type LessonBrief = {
   topic: string;
   education_level: string;
@@ -82,11 +84,15 @@ export function prefetchRoadmapLessons(queryClient: QueryClient, learnerId: stri
           selected_lesson: roadmapItemToRecord(lesson),
           constraints: constraintsFromBrief(brief),
         };
+        const queryKey = lessonQueryKey(request);
+        const preloadKey = JSON.stringify(queryKey);
+        if (activeLessonPreloads.has(preloadKey)) return Promise.resolve();
+        activeLessonPreloads.add(preloadKey);
         return queryClient.prefetchQuery({
-          queryKey: lessonQueryKey(request),
+          queryKey,
           queryFn: () => generateLesson(request),
           staleTime: 5 * 60 * 1000,
-        });
+        }).finally(() => activeLessonPreloads.delete(preloadKey));
       }),
   );
 }
