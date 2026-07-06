@@ -114,6 +114,14 @@ function vectorArrowsFromText(values: unknown[]): VectorArrow[] {
     start: { x: Number(match[2]), y: Number(match[3]) },
     end: { x: Number(match[4]), y: Number(match[5]) },
   }));
+  if (!arrows.length) {
+    const startEndPattern = /\bstarts?\s+at\s*\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)\s*(?:,|\band\b)?\s*ends?\s+at\s*\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)/gi;
+    arrows.push(...[...text.matchAll(startEndPattern)].map((match, index) => ({
+      label: String.fromCharCode(65 + index),
+      start: { x: Number(match[1]), y: Number(match[2]) },
+      end: { x: Number(match[3]), y: Number(match[4]) },
+    })));
+  }
   const validArrows = arrows.filter((arrow) => (
     Number.isFinite(arrow.start.x) &&
     Number.isFinite(arrow.start.y) &&

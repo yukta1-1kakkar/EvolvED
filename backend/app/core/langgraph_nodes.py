@@ -563,6 +563,17 @@ def _vector_visual_svg_body(title: str, description: str, data: list[Any], font:
             re.I,
         )
     ]
+    if not arrows:
+        arrows = [
+            (chr(65 + index), (float(sx), float(sy)), (float(ex), float(ey)))
+            for index, (sx, sy, ex, ey) in enumerate(
+                re.findall(
+                    r"\bstarts?\s+at\s*\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)\s*(?:,|\band\b)?\s*ends?\s+at\s*\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)",
+                    text,
+                    re.I,
+                )
+            )
+        ]
     if not arrows and re.search(r"\bequal vectors?\b", text, re.I) and len(pairs) >= 4:
         arrows = [("A", pairs[0], pairs[1]), ("B", pairs[2], pairs[3])]
     arrows = [arrow for arrow in arrows if arrow[1] != arrow[2]]
