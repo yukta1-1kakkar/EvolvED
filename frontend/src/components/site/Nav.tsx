@@ -2,9 +2,14 @@ import { Link } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 
 import { EvolvedLogo } from "@/components/brand/EvolvedLogo";
+import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
 
 export function Nav() {
+  const { isAuthenticated } = useAuth();
+  const appEntry = isAuthenticated ? ROUTES.KNOWLEDGE : ROUTES.LOGIN;
+  const appSearch = isAuthenticated ? undefined : { redirect: ROUTES.KNOWLEDGE };
+
   return (
     <motion.header
       initial={{ y: -20, opacity: 0 }}
@@ -18,19 +23,19 @@ export function Nav() {
           <span className="font-display text-lg tracking-tight">EvolvED</span>
         </Link>
         <div className="hidden md:flex items-center gap-7 text-sm text-muted-foreground">
-          <Link to={ROUTES.KNOWLEDGE} className="hover:text-foreground transition-colors">
+          <Link to={appEntry} search={appSearch} className="hover:text-foreground transition-colors">
             Knowledge
           </Link>
-          <Link to={ROUTES.LESSON} className="hover:text-foreground transition-colors">
+          <Link to={isAuthenticated ? ROUTES.LESSON : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.LESSON }} className="hover:text-foreground transition-colors">
             Lesson
           </Link>
-          <Link to={ROUTES.PROGRESS} className="hover:text-foreground transition-colors">
+          <Link to={isAuthenticated ? ROUTES.PROGRESS : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.PROGRESS }} className="hover:text-foreground transition-colors">
             Progress
           </Link>
-          <Link to={ROUTES.INTELLIGENCE} className="hover:text-foreground transition-colors">
+          <Link to={isAuthenticated ? ROUTES.INTELLIGENCE : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.INTELLIGENCE }} className="hover:text-foreground transition-colors">
             Intelligence
           </Link>
-          <Link to={ROUTES.PEDAGOGY} className="hover:text-foreground transition-colors">
+          <Link to={isAuthenticated ? ROUTES.PEDAGOGY : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.PEDAGOGY }} className="hover:text-foreground transition-colors">
             Pedagogy
           </Link>
         </div>
@@ -42,7 +47,8 @@ export function Nav() {
             Sign in
           </Link>
           <Link
-            to={ROUTES.LESSON}
+            to={appEntry}
+            search={appSearch}
             className="rounded-full bg-foreground text-background text-sm px-4 py-2 hover:opacity-90 transition-opacity"
           >
             Enter EvolvED

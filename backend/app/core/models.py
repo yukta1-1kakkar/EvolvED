@@ -192,7 +192,8 @@ class SignupRequest(BaseModel):
     full_name: str
     email: str
     password: str
-    age: int
+    age: Optional[int] = None
+    role: str = "student"
 
 
 class LoginRequest(BaseModel):
@@ -204,12 +205,93 @@ class AuthUser(BaseModel):
     id: str
     full_name: str
     email: str
+    role: str = "student"
     age: Optional[int] = None
     profile_complete: bool = False
     learning_topic: Optional[str] = None
     learning_project: Optional[str] = None
     accessibility: Dict[str, bool] = Field(default_factory=dict)
     created_at: Optional[str] = None
+
+
+class ClassCreateRequest(BaseModel):
+    leader_id: str
+    name: str
+    description: str = ""
+    max_students: Optional[int] = None
+
+
+class ClassSummary(BaseModel):
+    class_id: str
+    name: str
+    description: str = ""
+    join_code: str
+    invite_link: str
+    max_students: Optional[int] = None
+    active: bool = True
+    created_at: Optional[str] = None
+    student_count: int = 0
+
+
+class JoinClassRequest(BaseModel):
+    learner_id: str
+    join_code: str
+
+
+class TeacherStudentSummary(BaseModel):
+    learner_id: str
+    name: str
+    progress: float = 0.0
+    current_lesson: str = "Not started"
+    average_score: float = 0.0
+    rank: int = 0
+    accessibility_settings: Dict[str, Any] = Field(default_factory=dict)
+    last_active: Optional[str] = None
+    status: str = "in_progress"
+
+
+class ContentDraftRequest(BaseModel):
+    leader_id: str
+    class_id: Optional[str] = None
+    kind: str = Field(pattern="^(lesson|assessment)$")
+    title: str
+    source_material: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ContentDraftResponse(BaseModel):
+    draft_id: str
+    kind: str
+    title: str
+    status: str
+    source_material: Dict[str, Any] = Field(default_factory=dict)
+    generated_content: Dict[str, Any] = Field(default_factory=dict)
+    approval: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalRequest(BaseModel):
+    leader_id: str
+    decision: str = Field(pattern="^(accept|reject|request_changes)$")
+    instructions: str = ""
+
+
+class TeacherDashboardResponse(BaseModel):
+    leader_id: str
+    classes: List[ClassSummary] = Field(default_factory=list)
+    students: List[TeacherStudentSummary] = Field(default_factory=list)
+    drafts: List[ContentDraftResponse] = Field(default_factory=list)
+    totals: Dict[str, Any] = Field(default_factory=dict)
+
+
+class StudentAnalyticsResponse(BaseModel):
+    student: TeacherStudentSummary
+    learning_style: List[str] = Field(default_factory=list)
+    behaviour_analysis: Dict[str, Any] = Field(default_factory=dict)
+    assessment_history: List[Dict[str, Any]] = Field(default_factory=list)
+    strengths: List[str] = Field(default_factory=list)
+    weaknesses: List[str] = Field(default_factory=list)
+    recommendations: List[str] = Field(default_factory=list)
+    concept_mastery: Dict[str, float] = Field(default_factory=dict)
+    tutor_usage: int = 0
 
 
 class TutorInteractionRequest(BaseModel):

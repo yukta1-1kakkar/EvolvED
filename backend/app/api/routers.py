@@ -1,12 +1,16 @@
 import asyncio
 import logging
 import re
+import zlib
+import zipfile
 from time import perf_counter
 from datetime import datetime, timezone
 from pathlib import Path
+import io
 import json
+import xml.etree.ElementTree as ET
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from app.core import models, repository, langgraph_nodes
 from app.core.audio_generator import generate_lesson_audio, synthesize_lesson_speech
@@ -129,6 +133,264 @@ async def login(req: models.LoginRequest):
         return await repository.AsyncRepository().authenticate(req)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@router.post("/classes", response_model=models.ClassSummary)
+async def create_class(req: models.ClassCreateRequest):
+    try:
+        return await repository.AsyncRepository().create_class(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/classes/join", response_model=models.ClassSummary)
+async def join_class(req: models.JoinClassRequest):
+    try:
+        return await repository.AsyncRepository().join_class(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/teacher/dashboard", response_model=models.TeacherDashboardResponse)
+async def teacher_dashboard(leader_id: str):
+    try:
+        return await repository.AsyncRepository().teacher_dashboard(leader_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/teacher/students/{student_id}/analytics", response_model=models.StudentAnalyticsResponse)
+async def teacher_student_analytics(student_id: str, leader_id: str):
+    try:
+        return await repository.AsyncRepository().teacher_student_analytics(leader_id, student_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/content-drafts", response_model=models.ContentDraftResponse)
+async def create_content_draft(req: models.ContentDraftRequest):
+    try:
+        return await repository.AsyncRepository().create_content_draft(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/content-drafts/upload", response_model=models.ContentDraftResponse)
+async def upload_content_draft(
+    leader_id: str = Form(...),
+    kind: str = Form(...),
+    title: str = Form(...),
+    class_id: str | None = Form(None),
+    notes: str = Form(""),
+    file: UploadFile | None = File(None),
+):
+    if kind not in {"lesson", "assessment"}:
+        raise HTTPException(status_code=422, detail="Draft kind must be lesson or assessment.")
+    source: dict[str, Any] = {"notes": notes.strip()}
+    if file:
+        content = await file.read()
+        source.update(_uploaded_source(file.filename or "uploaded-source", content))
+    if not source.get("text") and notes.strip():
+        source["text"] = notes.strip()
+    if not source.get("text"):
+        raise HTTPException(status_code=422, detail="Upload a supported file or paste source notes.")
+    try:
+        return await repository.AsyncRepository().create_content_draft(
+            models.ContentDraftRequest(
+                leader_id=leader_id,
+                class_id=class_id or None,
+                kind=kind,
+                title=title,
+                source_material=source,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/content-drafts/{draft_id}/approval", response_model=models.ContentDraftResponse)
+async def approve_content_draft(draft_id: str, req: models.ApprovalRequest):
+    try:
+        return await repository.AsyncRepository().approve_content_draft(draft_id, req)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _uploaded_source(filename: str, content: bytes) -> dict[str, Any]:
+    suffix = Path(filename).suffix.lower()
+    extractors = {
+        ".txt": _decode_text,
+        ".md": _decode_text,
+        ".markdown": _decode_text,
+        ".docx": _extract_docx,
+        ".pptx": _extract_pptx,
+        ".pdf": _extract_pdf,
+    }
+    if suffix not in extractors:
+        raise HTTPException(status_code=415, detail="Supported uploads: PDF, PPTX, DOCX, Markdown, and text.")
+    text = _clean_extracted_text(extractors[suffix](content))
+    if not _is_readable_source_text(text):
+        detail = (
+            "Could not extract readable text from this PDF. Upload a text-based PDF, DOCX, PPTX, Markdown, or paste OCR text in the notes box."
+            if suffix == ".pdf"
+            else "No readable text could be extracted from the uploaded file."
+        )
+        raise HTTPException(status_code=422, detail=detail)
+    return {
+        "filename": Path(filename).name,
+        "content_type": suffix.lstrip("."),
+        "text": text[:60000],
+        "characters": len(text),
+    }
+
+
+def _decode_text(content: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="ignore")
+
+
+def _extract_docx(content: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        names = [name for name in archive.namelist() if name.startswith("word/") and name.endswith(".xml")]
+        return "\n".join(_xml_text(archive.read(name)) for name in names)
+
+
+def _extract_pptx(content: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        names = sorted(name for name in archive.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml"))
+        return "\n".join(_xml_text(archive.read(name)) for name in names)
+
+
+def _xml_text(content: bytes) -> str:
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        return ""
+    values = [node.text.strip() for node in root.iter() if node.text and node.text.strip()]
+    return " ".join(values)
+
+
+def _extract_pdf(content: bytes) -> str:
+    chunks: list[str] = []
+    for stream in _pdf_streams(content):
+        chunks.extend(_pdf_text_chunks(stream.decode("latin-1", errors="ignore")))
+    if not chunks:
+        chunks.extend(_pdf_text_chunks(content.decode("latin-1", errors="ignore")))
+    return " ".join(chunks)
+
+
+def _pdf_streams(content: bytes) -> list[bytes]:
+    streams = []
+    for match in re.finditer(rb"<<(?P<meta>.*?)>>\s*stream\r?\n(?P<data>.*?)\r?\nendstream", content, flags=re.S):
+        data = match.group("data").strip(b"\r\n")
+        meta = match.group("meta")
+        if b"/FlateDecode" in meta:
+            try:
+                data = zlib.decompress(data)
+            except zlib.error:
+                continue
+        streams.append(data)
+    return streams
+
+
+def _pdf_text_chunks(value: str) -> list[str]:
+    chunks: list[str] = []
+    for array in re.findall(r"\[(.*?)\]\s*TJ", value, flags=re.S):
+        parts = [_decode_pdf_string(item) for item in re.findall(r"\((?:\\.|[^\\()])*\)|<[0-9A-Fa-f\s]+>", array)]
+        joined = "".join(part for part in parts if part)
+        if joined.strip():
+            chunks.append(joined)
+    for token in re.findall(r"(\((?:\\.|[^\\()])*\)|<[0-9A-Fa-f\s]+>)\s*(?:Tj|'|\")", value):
+        decoded = _decode_pdf_string(token)
+        if decoded.strip():
+            chunks.append(decoded)
+    return chunks
+
+
+def _decode_pdf_string(token: str) -> str:
+    if token.startswith("<"):
+        raw_hex = re.sub(r"\s+", "", token.strip("<>"))
+        if len(raw_hex) % 2:
+            raw_hex += "0"
+        try:
+            data = bytes.fromhex(raw_hex)
+        except ValueError:
+            return ""
+        for encoding in ("utf-16-be", "latin-1"):
+            text = data.decode(encoding, errors="ignore")
+            if sum(ch.isalpha() for ch in text) >= 3:
+                return text
+        return data.decode("latin-1", errors="ignore")
+    body = token[1:-1]
+    output = []
+    index = 0
+    escapes = {"n": "\n", "r": "\n", "t": "\t", "b": "", "f": "", "(": "(", ")": ")", "\\": "\\"}
+    while index < len(body):
+        char = body[index]
+        if char != "\\":
+            output.append(char)
+            index += 1
+            continue
+        index += 1
+        if index >= len(body):
+            break
+        escaped = body[index]
+        if escaped in escapes:
+            output.append(escapes[escaped])
+            index += 1
+            continue
+        if escaped in "01234567":
+            octal = escaped
+            index += 1
+            while index < len(body) and len(octal) < 3 and body[index] in "01234567":
+                octal += body[index]
+                index += 1
+            output.append(chr(int(octal, 8)))
+            continue
+        output.append(escaped)
+        index += 1
+    return "".join(output)
+
+
+def _clean_extracted_text(value: str) -> str:
+    text = re.sub(r"(?<=\w)-\s+(?=\w)", "", value)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _is_readable_source_text(value: str) -> bool:
+    words = re.findall(r"[A-Za-z][A-Za-z-]{2,}", value)
+    if len(words) < 20:
+        return False
+    lower = value.lower()
+    pdf_markers = sum(lower.count(marker) for marker in (" obj", " endobj", " xref", " trailer", " linearized", " startxref"))
+    digit_ratio = sum(char.isdigit() for char in value) / max(1, len(value))
+    alpha_ratio = sum(char.isalpha() for char in value) / max(1, len(value))
+    return not (
+        value.startswith("PDF-")
+        or pdf_markers >= 3
+        or (digit_ratio > 0.28 and alpha_ratio < 0.45)
+        or _english_signal(words) < 0.04
+    )
+
+
+def _english_signal(words: list[str]) -> float:
+    if len(words) < 80:
+        return 1.0
+    common = {
+        "the", "of", "and", "to", "in", "for", "is", "are", "as", "with", "from", "by", "on", "that", "this", "it",
+        "be", "or", "an", "has", "have", "was", "were", "can", "will", "should", "chapter", "image", "images",
+        "imaging", "medical", "digital", "system", "systems", "data", "learning", "artificial", "intelligence",
+        "technology", "technologies", "development", "healthcare", "source", "content", "analysis", "process",
+        "use", "used", "using", "between", "into", "these", "their", "which", "such", "more", "also",
+    }
+    hits = sum(1 for word in (item.lower() for item in words) if word in common)
+    return hits / max(1, len(words))
 
 
 @router.post("/learner-profile", response_model=models.LearnerState)

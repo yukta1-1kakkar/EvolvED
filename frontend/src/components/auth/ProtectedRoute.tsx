@@ -24,7 +24,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to={ROUTES.LOGIN} search={{ redirect: pathname }} replace />;
   }
 
-  if (!currentUser?.profileComplete) {
+  if (!currentUser?.profileComplete && currentUser?.role !== "module_leader") {
     return <Navigate to={ROUTES.PROFILE_SETUP} replace />;
   }
 

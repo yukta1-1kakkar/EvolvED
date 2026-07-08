@@ -23,6 +23,7 @@ class Learner(Base):
     full_name = Column(String(160), nullable=True)
     email = Column(String(320), unique=True, index=True, nullable=True)
     password_hash = Column(String(512), nullable=True)
+    role = Column(String(32), nullable=False, default="student")
     age = Column(Integer, nullable=True)
     onboarding_status = Column(String(64), nullable=False, default="profile_pending")
     age_group = Column(String(64), nullable=True)
@@ -40,6 +41,60 @@ class Learner(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     sessions = relationship("Session", back_populates="learner")
+
+
+class LearningModule(Base):
+    __tablename__ = "learning_modules"
+    id = Column(Integer, primary_key=True, index=True)
+    module_id = Column(String(128), unique=True, index=True, nullable=False)
+    leader_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    name = Column(String(160), nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    active = Column(Boolean, default=True)
+
+
+class ClassGroup(Base):
+    __tablename__ = "class_groups"
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(String(128), unique=True, index=True, nullable=False)
+    module_id = Column(Integer, ForeignKey("learning_modules.id"), nullable=True)
+    leader_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    name = Column(String(160), nullable=False)
+    description = Column(Text, nullable=True)
+    join_code = Column(String(32), unique=True, index=True, nullable=False)
+    invite_link = Column(String(512), nullable=False)
+    max_students = Column(Integer, nullable=True)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Enrollment(Base):
+    __tablename__ = "enrollments"
+    __table_args__ = (
+        UniqueConstraint("class_id", "student_id", name="uq_enrollment_class_student"),
+    )
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer, ForeignKey("class_groups.id"), nullable=False)
+    student_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    status = Column(String(32), nullable=False, default="active")
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ContentDraft(Base):
+    __tablename__ = "content_drafts"
+    id = Column(Integer, primary_key=True, index=True)
+    draft_id = Column(String(128), unique=True, index=True, nullable=False)
+    leader_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("class_groups.id"), nullable=True)
+    kind = Column(String(32), nullable=False)
+    title = Column(String(180), nullable=False)
+    source_material = Column(JSON, default=dict)
+    generated_content = Column(JSON, default=dict)
+    status = Column(String(32), nullable=False, default="draft")
+    approval = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class Session(Base):

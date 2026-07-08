@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { AlertCircle, CheckCircle2, Eye, EyeOff, Loader2, UserPlus } from "lucide-react";
+import { AlertCircle, CheckCircle2, Eye, EyeOff, GraduationCap, Loader2, UserPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -22,11 +22,7 @@ const signupSchema = z
   .object({
     fullName: z.string().min(2, "Enter your full name."),
     email: z.string().min(1, "Email is required.").email("Enter a valid email address."),
-    age: z.coerce
-      .number()
-      .int("Age must be a whole number.")
-      .min(8, "Learners must be at least 8.")
-      .max(120, "Enter a valid age."),
+    age: z.coerce.number().optional(),
     password: z
       .string()
       .min(8, "Use at least 8 characters.")
@@ -34,7 +30,18 @@ const signupSchema = z
       .regex(/[a-z]/, "Add a lowercase letter.")
       .regex(/\d/, "Add a number."),
     confirmPassword: z.string().min(1, "Confirm your password."),
+    role: z.enum(["student", "module_leader"]),
     termsAccepted: z.boolean().refine(Boolean, "Accept the terms to continue."),
+  })
+  .superRefine((values, context) => {
+    if (values.role !== "student") return;
+    if (!Number.isInteger(values.age) || values.age < 8 || values.age > 120) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["age"],
+        message: "Enter a valid learner age from 8 to 120.",
+      });
+    }
   })
   .refine((values) => values.password === values.confirmPassword, {
     message: "Passwords do not match.",
@@ -64,30 +71,34 @@ function SignupPage() {
     watch,
     formState: { errors },
     setError,
+    setValue,
   } = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
     defaultValues: {
       fullName: "",
       email: "",
-      age: 16,
+      age: undefined,
       password: "",
       confirmPassword: "",
+      role: "student",
       termsAccepted: false,
     },
   });
 
   const password = watch("password");
+  const role = watch("role");
   const strength = useMemo(() => getPasswordStrength(password), [password]);
 
   async function onSubmit(values: SignupFormValues) {
     try {
-      await signup({
+      const user = await signup({
         fullName: values.fullName,
         email: values.email,
         password: values.password,
-        age: values.age,
+        age: values.role === "student" ? values.age : undefined,
+        role: values.role,
       });
-      await navigate({ to: ROUTES.PROFILE_SETUP, replace: true });
+      await navigate({ to: user.role === "module_leader" ? ROUTES.TEACHER : ROUTES.PROFILE_SETUP, replace: true });
     } catch (error) {
       setError("root", {
         message: error instanceof Error ? error.message : "Signup failed. Please try again.",
@@ -99,15 +110,36 @@ function SignupPage() {
     <AuthLayout
       eyebrow="Begin intelligently"
       title="Create a learner profile EvolvED can grow around."
-      subtitle="The first step is simple: a profile that lets EvolvED remember, adapt, and teach with continuity."
+      subtitle={role === "module_leader" ? "Create a module leader workspace for classes, approvals, and student analytics." : "The first step is simple: a profile that lets EvolvED remember, adapt, and teach with continuity."}
     >
       <div>
         <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">New profile</div>
-        <h2 className="mt-3 font-display text-3xl leading-tight">Sign up</h2>
-        <p className="mt-2 text-sm text-muted-foreground">Build your adaptive learning space.</p>
+        <h2 className="mt-3 font-display text-3xl leading-tight">{role === "module_leader" ? "Create a module leader account" : "Create a student account"}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">{role === "module_leader" ? "You will go straight to the teacher dashboard after signup." : "Build your adaptive learning space."}</p>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="mt-7 space-y-4" noValidate>
+        <input type="hidden" {...register("role")} />
+        <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border bg-background/45 p-1.5">
+          <RoleButton
+            active={role === "student"}
+            icon={GraduationCap}
+            label="Student"
+            detail="Learner profile and adaptive lessons"
+            onClick={() => setValue("role", "student", { shouldValidate: true })}
+          />
+          <RoleButton
+            active={role === "module_leader"}
+            icon={Users}
+            label="Module leader"
+            detail="Classes, approvals, analytics"
+            onClick={() => {
+              setValue("role", "module_leader", { shouldValidate: true });
+              setValue("age", undefined, { shouldValidate: true });
+            }}
+          />
+        </div>
+
         <Field label="Full name" htmlFor="fullName" error={errors.fullName?.message}>
           <Input
             id="fullName"
@@ -127,17 +159,19 @@ function SignupPage() {
           />
         </Field>
 
-        <Field label="Age" htmlFor="age" error={errors.age?.message}>
-          <Input
-            id="age"
-            type="number"
-            inputMode="numeric"
-            min={8}
-            max={120}
-            className="h-12 rounded-xl bg-background/70 px-4"
-            {...register("age")}
-          />
-        </Field>
+        {role === "student" && (
+          <Field label="Age" htmlFor="age" error={errors.age?.message}>
+            <Input
+              id="age"
+              type="number"
+              inputMode="numeric"
+              min={8}
+              max={120}
+              className="h-12 rounded-xl bg-background/70 px-4"
+              {...register("age")}
+            />
+          </Field>
+        )}
 
         <Field label="Password" htmlFor="password" error={errors.password?.message}>
           <div className="relative">
@@ -181,8 +215,9 @@ function SignupPage() {
             {...register("termsAccepted")}
           />
           <span>
-            I agree to EvolvED using my learner profile to personalize lessons and progress
-            insights.
+            {role === "module_leader"
+              ? "I agree to EvolvED using my account to manage classes, content approvals, and student analytics."
+              : "I agree to EvolvED using my learner profile to personalize lessons and progress insights."}
           </span>
         </label>
         {errors.termsAccepted?.message && (
@@ -201,7 +236,7 @@ function SignupPage() {
 
         <Button type="submit" className="h-12 w-full rounded-xl" disabled={loading}>
           {loading ? <Loader2 className="animate-spin" /> : <UserPlus />}
-          Create profile
+          {role === "module_leader" ? "Create teacher workspace" : "Create learner profile"}
         </Button>
       </form>
 
@@ -215,6 +250,37 @@ function SignupPage() {
         </Link>
       </p>
     </AuthLayout>
+  );
+}
+
+function RoleButton({
+  active,
+  icon: Icon,
+  label,
+  detail,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ElementType;
+  label: string;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-xl px-3 py-3 text-left transition-colors ${
+        active ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:bg-background hover:text-foreground"
+      }`}
+      aria-pressed={active}
+    >
+      <span className="flex items-center gap-2 text-sm font-medium">
+        <Icon className="size-4" />
+        {label}
+      </span>
+      <span className={`mt-1 block text-xs leading-5 ${active ? "text-background/75" : "text-muted-foreground"}`}>{detail}</span>
+    </button>
   );
 }
 

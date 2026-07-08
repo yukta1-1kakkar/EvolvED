@@ -11,4 +11,6 @@ export const ROUTES = {
   INTELLIGENCE: "/intelligence",
   PEDAGOGY: "/pedagogy",
   FEEDBACK: "/feedback",
+  TEACHER: "/teacher",
+  JOIN_CLASS: "/join-class",
 } as const;

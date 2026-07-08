@@ -61,7 +61,7 @@ function LoginPage() {
     try {
       const user = await login(values);
       await navigate({
-        to: !user.profileComplete ? ROUTES.PROFILE_SETUP : safeRedirect(redirect),
+        to: user.role === "module_leader" ? ROUTES.TEACHER : !user.profileComplete ? ROUTES.PROFILE_SETUP : safeRedirect(redirect),
         replace: true,
       });
     } catch (error) {

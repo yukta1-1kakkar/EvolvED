@@ -54,6 +54,8 @@ function ProfileSetupPage() {
   useEffect(() => {
     if (!loading && !currentUser) {
       void navigate({ to: ROUTES.LOGIN, replace: true });
+    } else if (!loading && currentUser?.role === "module_leader") {
+      void navigate({ to: ROUTES.TEACHER, replace: true });
     }
   }, [currentUser, loading, navigate]);
 

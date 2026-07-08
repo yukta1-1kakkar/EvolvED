@@ -157,3 +157,37 @@ export async function apiBlobRequest<TBody extends ApiJson | undefined = undefin
     globalThis.clearTimeout(timeout);
   }
 }
+
+export async function apiFormRequest<TResponse>(
+  path: string,
+  formData: FormData,
+  options: Pick<ApiRequestOptions, "query" | "timeoutMs"> = {},
+): Promise<TResponse> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(buildUrl(path, options.query), {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      body: formData,
+      signal: controller.signal,
+    });
+
+    const payload = await parseResponse(response);
+
+    if (!response.ok) {
+      throw new ApiError(getErrorMessage(payload, `Request failed with status ${response.status}.`), response.status, payload);
+    }
+
+    return payload as TResponse;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError("The server took too long to respond. Please try again.", 408);
+    }
+    throw new ApiError("We could not reach EvolvED services. Check that the backend is running.", 0);
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}

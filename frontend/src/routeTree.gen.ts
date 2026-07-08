@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TeacherRouteImport } from './routes/teacher'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as ProgressRouteImport } from './routes/progress'
 import { Route as ProfileSetupRouteImport } from './routes/profile-setup'
@@ -17,12 +18,19 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as LessonViewRouteImport } from './routes/lesson-view'
 import { Route as LessonRouteImport } from './routes/lesson'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
+import { Route as JoinClassRouteImport } from './routes/join-class'
 import { Route as IntelligenceRouteImport } from './routes/intelligence'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as AssessmentRouteImport } from './routes/assessment'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as JoinCodeRouteImport } from './routes/join.$code'
 
+const TeacherRoute = TeacherRouteImport.update({
+  id: '/teacher',
+  path: '/teacher',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
@@ -63,6 +71,11 @@ const KnowledgeRoute = KnowledgeRouteImport.update({
   path: '/knowledge',
   getParentRoute: () => rootRouteImport,
 } as any)
+const JoinClassRoute = JoinClassRouteImport.update({
+  id: '/join-class',
+  path: '/join-class',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IntelligenceRoute = IntelligenceRouteImport.update({
   id: '/intelligence',
   path: '/intelligence',
@@ -88,6 +101,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const JoinCodeRoute = JoinCodeRouteImport.update({
+  id: '/join/$code',
+  path: '/join/$code',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -95,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/feedback': typeof FeedbackRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/intelligence': typeof IntelligenceRoute
+  '/join-class': typeof JoinClassRoute
   '/knowledge': typeof KnowledgeRoute
   '/lesson': typeof LessonRoute
   '/lesson-view': typeof LessonViewRoute
@@ -103,6 +122,8 @@ export interface FileRoutesByFullPath {
   '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
   '/signup': typeof SignupRoute
+  '/teacher': typeof TeacherRoute
+  '/join/$code': typeof JoinCodeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -110,6 +131,7 @@ export interface FileRoutesByTo {
   '/feedback': typeof FeedbackRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/intelligence': typeof IntelligenceRoute
+  '/join-class': typeof JoinClassRoute
   '/knowledge': typeof KnowledgeRoute
   '/lesson': typeof LessonRoute
   '/lesson-view': typeof LessonViewRoute
@@ -118,6 +140,8 @@ export interface FileRoutesByTo {
   '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
   '/signup': typeof SignupRoute
+  '/teacher': typeof TeacherRoute
+  '/join/$code': typeof JoinCodeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -126,6 +150,7 @@ export interface FileRoutesById {
   '/feedback': typeof FeedbackRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/intelligence': typeof IntelligenceRoute
+  '/join-class': typeof JoinClassRoute
   '/knowledge': typeof KnowledgeRoute
   '/lesson': typeof LessonRoute
   '/lesson-view': typeof LessonViewRoute
@@ -134,6 +159,8 @@ export interface FileRoutesById {
   '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
   '/signup': typeof SignupRoute
+  '/teacher': typeof TeacherRoute
+  '/join/$code': typeof JoinCodeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -143,6 +170,7 @@ export interface FileRouteTypes {
     | '/feedback'
     | '/forgot-password'
     | '/intelligence'
+    | '/join-class'
     | '/knowledge'
     | '/lesson'
     | '/lesson-view'
@@ -151,6 +179,8 @@ export interface FileRouteTypes {
     | '/profile-setup'
     | '/progress'
     | '/signup'
+    | '/teacher'
+    | '/join/$code'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -158,6 +188,7 @@ export interface FileRouteTypes {
     | '/feedback'
     | '/forgot-password'
     | '/intelligence'
+    | '/join-class'
     | '/knowledge'
     | '/lesson'
     | '/lesson-view'
@@ -166,6 +197,8 @@ export interface FileRouteTypes {
     | '/profile-setup'
     | '/progress'
     | '/signup'
+    | '/teacher'
+    | '/join/$code'
   id:
     | '__root__'
     | '/'
@@ -173,6 +206,7 @@ export interface FileRouteTypes {
     | '/feedback'
     | '/forgot-password'
     | '/intelligence'
+    | '/join-class'
     | '/knowledge'
     | '/lesson'
     | '/lesson-view'
@@ -181,6 +215,8 @@ export interface FileRouteTypes {
     | '/profile-setup'
     | '/progress'
     | '/signup'
+    | '/teacher'
+    | '/join/$code'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -189,6 +225,7 @@ export interface RootRouteChildren {
   FeedbackRoute: typeof FeedbackRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   IntelligenceRoute: typeof IntelligenceRoute
+  JoinClassRoute: typeof JoinClassRoute
   KnowledgeRoute: typeof KnowledgeRoute
   LessonRoute: typeof LessonRoute
   LessonViewRoute: typeof LessonViewRoute
@@ -197,10 +234,19 @@ export interface RootRouteChildren {
   ProfileSetupRoute: typeof ProfileSetupRoute
   ProgressRoute: typeof ProgressRoute
   SignupRoute: typeof SignupRoute
+  TeacherRoute: typeof TeacherRoute
+  JoinCodeRoute: typeof JoinCodeRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/teacher': {
+      id: '/teacher'
+      path: '/teacher'
+      fullPath: '/teacher'
+      preLoaderRoute: typeof TeacherRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
@@ -257,6 +303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KnowledgeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/join-class': {
+      id: '/join-class'
+      path: '/join-class'
+      fullPath: '/join-class'
+      preLoaderRoute: typeof JoinClassRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/intelligence': {
       id: '/intelligence'
       path: '/intelligence'
@@ -292,6 +345,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/join/$code': {
+      id: '/join/$code'
+      path: '/join/$code'
+      fullPath: '/join/$code'
+      preLoaderRoute: typeof JoinCodeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -301,6 +361,7 @@ const rootRouteChildren: RootRouteChildren = {
   FeedbackRoute: FeedbackRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   IntelligenceRoute: IntelligenceRoute,
+  JoinClassRoute: JoinClassRoute,
   KnowledgeRoute: KnowledgeRoute,
   LessonRoute: LessonRoute,
   LessonViewRoute: LessonViewRoute,
@@ -309,6 +370,8 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileSetupRoute: ProfileSetupRoute,
   ProgressRoute: ProgressRoute,
   SignupRoute: SignupRoute,
+  TeacherRoute: TeacherRoute,
+  JoinCodeRoute: JoinCodeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

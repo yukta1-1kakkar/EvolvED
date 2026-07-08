@@ -4,6 +4,7 @@ export interface AuthUser {
   id: string;
   fullName: string;
   email: string;
+  role: "student" | "module_leader";
   age?: number;
   profileComplete?: boolean;
   learningTopic?: string;
@@ -27,7 +28,8 @@ export interface SignupCredentials {
   fullName: string;
   email: string;
   password: string;
-  age: number;
+  age?: number;
+  role?: "student" | "module_leader";
 }
 
 interface BackendAuthUser {
@@ -36,6 +38,7 @@ interface BackendAuthUser {
   email: string;
   age?: number | null;
   profile_complete: boolean;
+  role?: "student" | "module_leader" | null;
   learning_topic?: string | null;
   learning_project?: string | null;
   accessibility?: Record<string, boolean> | null;
@@ -95,6 +98,7 @@ export async function mockLogin({ rememberMe, ...credentials }: LoginCredentials
   const response = await apiRequest<BackendAuthUser, Omit<LoginCredentials, "rememberMe">>("/auth/login", {
     method: "POST",
     body: credentials,
+    timeoutMs: 45000,
   });
   const user = fromBackend(response);
   persistUser(user, rememberMe ?? true);
@@ -102,9 +106,10 @@ export async function mockLogin({ rememberMe, ...credentials }: LoginCredentials
 }
 
 export async function mockSignup(credentials: SignupCredentials): Promise<AuthUser> {
-  const response = await apiRequest<BackendAuthUser, { full_name: string; email: string; password: string; age: number }>("/auth/signup", {
+  const response = await apiRequest<BackendAuthUser, { full_name: string; email: string; password: string; age?: number; role?: string }>("/auth/signup", {
     method: "POST",
-    body: { full_name: credentials.fullName, email: credentials.email, password: credentials.password, age: credentials.age },
+    body: { full_name: credentials.fullName, email: credentials.email, password: credentials.password, age: credentials.age, role: credentials.role },
+    timeoutMs: 45000,
   });
   const user = fromBackend(response);
   persistUser(user, true);
@@ -121,6 +126,7 @@ function fromBackend(user: BackendAuthUser): AuthUser {
     id: user.id,
     fullName: user.full_name,
     email: user.email,
+    role: user.role === "module_leader" ? "module_leader" : "student",
     age: user.age ?? undefined,
     profileComplete: user.profile_complete,
     learningTopic: user.learning_topic ?? undefined,

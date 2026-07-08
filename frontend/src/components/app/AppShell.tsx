@@ -10,6 +10,8 @@ import {
   Sparkles,
   Search,
   MessageSquarePlus,
+  Users,
+  UserRoundPlus,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -26,7 +28,10 @@ const nav = [
   { to: ROUTES.INTELLIGENCE, label: "Intelligence", icon: Brain },
   { to: ROUTES.PEDAGOGY, label: "Pedagogy", icon: Compass },
   { to: ROUTES.FEEDBACK, label: "Feedback", icon: MessageSquarePlus },
+  { to: ROUTES.JOIN_CLASS, label: "Join class", icon: UserRoundPlus },
 ] as const;
+
+const teacherNav = [{ to: ROUTES.TEACHER, label: "Teacher", icon: Users }] as const;
 
 export function AppShell({
   children,
@@ -44,6 +49,7 @@ export function AppShell({
   const [showStatusBrief, setShowStatusBrief] = useState(false);
   const statusLabel = accent ?? "Adapting";
   const statusBrief = statusBriefFor(statusLabel);
+  const visibleNav = currentUser?.role === "module_leader" ? [...teacherNav, ...nav] : nav;
 
   return (
     <ProtectedRoute>
@@ -62,7 +68,7 @@ export function AppShell({
           </div>
 
           <nav className="flex flex-col gap-0.5">
-            {nav.map((n) => {
+            {visibleNav.map((n) => {
               const active = path.startsWith(n.to);
               return (
                 <Link
@@ -163,7 +169,7 @@ export function AppShell({
 
         {/* Mobile nav */}
         <nav className="lg:hidden fixed bottom-4 inset-x-4 z-40 glass rounded-2xl px-2 py-2 flex justify-between">
-          {nav.map((n) => {
+          {visibleNav.map((n) => {
             const active = path.startsWith(n.to);
             return (
               <Link
