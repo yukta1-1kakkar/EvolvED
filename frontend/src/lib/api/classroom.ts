@@ -16,6 +16,7 @@ export interface ClassSummary {
 export interface TeacherStudentSummary {
   learner_id: string;
   name: string;
+  class_ids?: string[];
   progress: number;
   current_lesson: string;
   average_score: number;
@@ -48,6 +49,40 @@ export interface ContentDraft {
   source_material: ApiRecord;
   generated_content: ApiRecord;
   approval: ApiRecord;
+}
+
+export interface StudentClassAlert {
+  alert_id: string;
+  class_id: string;
+  class_name: string;
+  leader_name: string;
+  kind: "lesson" | "assessment";
+  title: string;
+  draft_id: string;
+  message: string;
+  created_at?: string | null;
+}
+
+export interface StudentAssessmentResultSummary {
+  result_id: string;
+  session_id?: string | null;
+  title: string;
+  score: number;
+  feedback: string;
+  created_at?: string | null;
+}
+
+export interface StudentClassroomResponse {
+  learner_id: string;
+  classes: ClassSummary[];
+  alerts: StudentClassAlert[];
+  results: StudentAssessmentResultSummary[];
+}
+
+export function getStudentClassroom(learnerId: string) {
+  return apiRequest<StudentClassroomResponse>("/student/classroom", {
+    query: { learner_id: learnerId },
+  });
 }
 
 export function getTeacherDashboard(leaderId: string) {

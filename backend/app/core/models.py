@@ -194,6 +194,7 @@ class SignupRequest(BaseModel):
     password: str
     age: Optional[int] = None
     role: str = "student"
+    module_leader_code: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -241,6 +242,7 @@ class JoinClassRequest(BaseModel):
 class TeacherStudentSummary(BaseModel):
     learner_id: str
     name: str
+    class_ids: List[str] = Field(default_factory=list)
     progress: float = 0.0
     current_lesson: str = "Not started"
     average_score: float = 0.0
@@ -292,6 +294,34 @@ class StudentAnalyticsResponse(BaseModel):
     recommendations: List[str] = Field(default_factory=list)
     concept_mastery: Dict[str, float] = Field(default_factory=dict)
     tutor_usage: int = 0
+
+
+class StudentClassAlert(BaseModel):
+    alert_id: str
+    class_id: str
+    class_name: str
+    leader_name: str
+    kind: str
+    title: str
+    draft_id: str
+    message: str
+    created_at: Optional[str] = None
+
+
+class StudentAssessmentResultSummary(BaseModel):
+    result_id: str
+    session_id: Optional[str] = None
+    title: str
+    score: float = 0.0
+    feedback: str = ""
+    created_at: Optional[str] = None
+
+
+class StudentClassroomResponse(BaseModel):
+    learner_id: str
+    classes: List[ClassSummary] = Field(default_factory=list)
+    alerts: List[StudentClassAlert] = Field(default_factory=list)
+    results: List[StudentAssessmentResultSummary] = Field(default_factory=list)
 
 
 class TutorInteractionRequest(BaseModel):

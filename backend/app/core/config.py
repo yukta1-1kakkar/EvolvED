@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     database_connect_timeout_seconds: int = 8
     database_command_timeout_seconds: int = 90
     database_pool_timeout_seconds: int = 30
+    module_leader_signup_code: str | None = None
     chroma_tenant: str | None = None
     chroma_database: str | None = None
     chroma_api_key: str | None = None

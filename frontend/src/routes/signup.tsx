@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { AlertCircle, CheckCircle2, Eye, EyeOff, GraduationCap, Loader2, UserPlus, Users } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, Eye, EyeOff, GraduationCap, Loader2, UserPlus, UserRoundPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -9,6 +9,9 @@ import { AuthLayout } from "@/components/auth/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
+import { createLearnerProfile } from "@/lib/api";
+import { joinClass } from "@/lib/api/classroom";
+import type { AuthUser } from "@/lib/auth";
 import { ROUTES } from "@/lib/routes";
 
 const passwordRules = {
@@ -29,24 +32,49 @@ const signupSchema = z
       .regex(/[A-Z]/, "Add an uppercase letter.")
       .regex(/[a-z]/, "Add a lowercase letter.")
       .regex(/\d/, "Add a number."),
-    confirmPassword: z.string().min(1, "Confirm your password."),
-    role: z.enum(["student", "module_leader"]),
-    termsAccepted: z.boolean().refine(Boolean, "Accept the terms to continue."),
+    confirmPassword: z.string().optional(),
+    role: z.enum(["student", "class_student", "module_leader"]),
+    moduleLeaderCode: z.string().optional(),
+    termsAccepted: z.boolean(),
   })
   .superRefine((values, context) => {
-    if (values.role !== "student") return;
-    if (!Number.isInteger(values.age) || values.age < 8 || values.age > 120) {
+    if (values.role !== "module_leader" && (!Number.isInteger(values.age) || values.age < 8 || values.age > 120)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["age"],
         message: "Enter a valid learner age from 8 to 120.",
       });
     }
+    if (values.role !== "class_student" && !values.confirmPassword) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["confirmPassword"],
+        message: "Confirm your password.",
+      });
+    }
+    if (values.role !== "class_student" && values.password !== values.confirmPassword) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["confirmPassword"],
+        message: "Passwords do not match.",
+      });
+    }
+    if (values.role !== "class_student" && !values.termsAccepted) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["termsAccepted"],
+        message: "Accept the terms to continue.",
+      });
+    }
+    if (values.role === "module_leader" && !values.moduleLeaderCode?.trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["moduleLeaderCode"],
+        message: "Enter the module leader access code.",
+      });
+    }
   })
-  .refine((values) => values.password === values.confirmPassword, {
-    message: "Passwords do not match.",
-    path: ["confirmPassword"],
-  });
+;
 
 type SignupFormValues = z.infer<typeof signupSchema>;
 
@@ -61,9 +89,11 @@ export const Route = createFileRoute("/signup")({
 });
 
 function SignupPage() {
-  const { signup, loading } = useAuth();
+  const { signup, completeProfile, loading } = useAuth();
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
+  const [classCode, setClassCode] = useState("");
+  const [classStudent, setClassStudent] = useState<AuthUser | null>(null);
 
   const {
     register,
@@ -81,6 +111,7 @@ function SignupPage() {
       password: "",
       confirmPassword: "",
       role: "student",
+      moduleLeaderCode: "",
       termsAccepted: false,
     },
   });
@@ -88,6 +119,7 @@ function SignupPage() {
   const password = watch("password");
   const role = watch("role");
   const strength = useMemo(() => getPasswordStrength(password), [password]);
+  const classJoin = useClassJoinMutation(classStudent, classCode, completeProfile, navigate);
 
   async function onSubmit(values: SignupFormValues) {
     try {
@@ -95,9 +127,14 @@ function SignupPage() {
         fullName: values.fullName,
         email: values.email,
         password: values.password,
-        age: values.role === "student" ? values.age : undefined,
-        role: values.role,
+        age: values.role !== "module_leader" ? values.age : undefined,
+        role: values.role === "module_leader" ? "module_leader" : "student",
+        moduleLeaderCode: values.role === "module_leader" ? values.moduleLeaderCode?.trim() : undefined,
       });
+      if (values.role === "class_student") {
+        setClassStudent(user);
+        return;
+      }
       await navigate({ to: user.role === "module_leader" ? ROUTES.TEACHER : ROUTES.PROFILE_SETUP, replace: true });
     } catch (error) {
       setError("root", {
@@ -106,27 +143,88 @@ function SignupPage() {
     }
   }
 
+  if (classStudent) {
+    return (
+      <AuthLayout
+        eyebrow="Join your classroom"
+        title="Enter the class code from your module leader."
+        subtitle="This connects your new student account to the correct classroom."
+      >
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Class student</div>
+          <h2 className="mt-3 font-display text-3xl leading-tight">Join a class</h2>
+          <p className="mt-2 text-sm text-muted-foreground">Signed up as {classStudent.fullName}. Add the class code to continue.</p>
+        </div>
+        <form
+          className="mt-7 space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (classCode.trim()) classJoin.join();
+          }}
+        >
+          <Field label="Class code" htmlFor="classCode" error={classJoin.error}>
+            <Input
+              id="classCode"
+              value={classCode}
+              onChange={(event) => setClassCode(event.target.value.toUpperCase())}
+              placeholder="ABC123"
+              className="h-12 rounded-xl bg-background/70 px-4 text-lg tracking-[0.2em]"
+            />
+          </Field>
+          {classJoin.success && (
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700">
+              <div className="flex items-center gap-2 font-medium">
+                <CheckCircle2 className="size-4" />
+                Joined {classJoin.success}
+              </div>
+            </div>
+          )}
+          <Button type="submit" className="h-12 w-full rounded-xl" disabled={!classCode.trim() || classJoin.pending}>
+            {classJoin.pending ? <Loader2 className="animate-spin" /> : <UserRoundPlus />}
+            Join class and continue
+          </Button>
+        </form>
+      </AuthLayout>
+    );
+  }
+
   return (
     <AuthLayout
       eyebrow="Begin intelligently"
       title="Create a learner profile EvolvED can grow around."
-      subtitle={role === "module_leader" ? "Create a module leader workspace for classes, approvals, and student analytics." : "The first step is simple: a profile that lets EvolvED remember, adapt, and teach with continuity."}
+      subtitle={signupSubtitle(role)}
     >
       <div>
         <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">New profile</div>
-        <h2 className="mt-3 font-display text-3xl leading-tight">{role === "module_leader" ? "Create a module leader account" : "Create a student account"}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">{role === "module_leader" ? "You will go straight to the teacher dashboard after signup." : "Build your adaptive learning space."}</p>
+        <h2 className="mt-3 font-display text-3xl leading-tight">{signupTitle(role)}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">{signupDetail(role)}</p>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="mt-7 space-y-4" noValidate>
         <input type="hidden" {...register("role")} />
-        <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border bg-background/45 p-1.5">
+        <div className="grid gap-2 rounded-2xl border border-border bg-background/45 p-1.5 sm:grid-cols-3">
           <RoleButton
             active={role === "student"}
             icon={GraduationCap}
-            label="Student"
-            detail="Learner profile and adaptive lessons"
-            onClick={() => setValue("role", "student", { shouldValidate: true })}
+            label="Individual student"
+            detail="Full learner profile"
+            onClick={() => {
+              setValue("role", "student", { shouldValidate: true });
+              setValue("moduleLeaderCode", "", { shouldValidate: true });
+              setValue("termsAccepted", false, { shouldValidate: true });
+            }}
+          />
+          <RoleButton
+            active={role === "class_student"}
+            icon={UserRoundPlus}
+            label="Class student"
+            detail="Join with class code"
+            onClick={() => {
+              setValue("role", "class_student", { shouldValidate: true });
+              setValue("moduleLeaderCode", "", { shouldValidate: true });
+              setValue("confirmPassword", "", { shouldValidate: true });
+              setValue("termsAccepted", true, { shouldValidate: true });
+            }}
           />
           <RoleButton
             active={role === "module_leader"}
@@ -136,6 +234,7 @@ function SignupPage() {
             onClick={() => {
               setValue("role", "module_leader", { shouldValidate: true });
               setValue("age", undefined, { shouldValidate: true });
+              setValue("termsAccepted", false, { shouldValidate: true });
             }}
           />
         </div>
@@ -159,7 +258,7 @@ function SignupPage() {
           />
         </Field>
 
-        {role === "student" && (
+        {role !== "module_leader" && (
           <Field label="Age" htmlFor="age" error={errors.age?.message}>
             <Input
               id="age"
@@ -169,6 +268,18 @@ function SignupPage() {
               max={120}
               className="h-12 rounded-xl bg-background/70 px-4"
               {...register("age")}
+            />
+          </Field>
+        )}
+
+        {role === "module_leader" && (
+          <Field label="Module leader access code" htmlFor="moduleLeaderCode" error={errors.moduleLeaderCode?.message}>
+            <Input
+              id="moduleLeaderCode"
+              type="password"
+              autoComplete="off"
+              className="h-12 rounded-xl bg-background/70 px-4"
+              {...register("moduleLeaderCode")}
             />
           </Field>
         )}
@@ -194,33 +305,37 @@ function SignupPage() {
           <PasswordStrength password={password} strength={strength} />
         </Field>
 
-        <Field
-          label="Confirm password"
-          htmlFor="confirmPassword"
-          error={errors.confirmPassword?.message}
-        >
-          <Input
-            id="confirmPassword"
-            type={showPassword ? "text" : "password"}
-            autoComplete="new-password"
-            className="h-12 rounded-xl bg-background/70 px-4"
-            {...register("confirmPassword")}
-          />
-        </Field>
+        {role !== "class_student" && (
+          <>
+            <Field
+              label="Confirm password"
+              htmlFor="confirmPassword"
+              error={errors.confirmPassword?.message}
+            >
+              <Input
+                id="confirmPassword"
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                className="h-12 rounded-xl bg-background/70 px-4"
+                {...register("confirmPassword")}
+              />
+            </Field>
 
-        <label className="flex items-start gap-3 rounded-xl border border-border bg-background/45 p-3 text-sm text-muted-foreground">
-          <input
-            type="checkbox"
-            className="mt-0.5 size-4 rounded border-border accent-plum"
-            {...register("termsAccepted")}
-          />
-          <span>
-            {role === "module_leader"
-              ? "I agree to EvolvED using my account to manage classes, content approvals, and student analytics."
-              : "I agree to EvolvED using my learner profile to personalize lessons and progress insights."}
-          </span>
-        </label>
-        {errors.termsAccepted?.message && (
+            <label className="flex items-start gap-3 rounded-xl border border-border bg-background/45 p-3 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 rounded border-border accent-plum"
+                {...register("termsAccepted")}
+              />
+              <span>
+                {role === "module_leader"
+                  ? "I agree to EvolvED using my account to manage classes, content approvals, and student analytics."
+                  : "I agree to EvolvED using my learner profile to personalize lessons and progress insights."}
+              </span>
+            </label>
+          </>
+        )}
+        {role !== "class_student" && errors.termsAccepted?.message && (
           <p className="-mt-2 text-sm text-destructive">{errors.termsAccepted.message}</p>
         )}
 
@@ -235,8 +350,8 @@ function SignupPage() {
         )}
 
         <Button type="submit" className="h-12 w-full rounded-xl" disabled={loading}>
-          {loading ? <Loader2 className="animate-spin" /> : <UserPlus />}
-          {role === "module_leader" ? "Create teacher workspace" : "Create learner profile"}
+          {loading ? <Loader2 className="animate-spin" /> : role === "class_student" ? <ArrowRight /> : <UserPlus />}
+          {submitLabel(role)}
         </Button>
       </form>
 
@@ -282,6 +397,98 @@ function RoleButton({
       <span className={`mt-1 block text-xs leading-5 ${active ? "text-background/75" : "text-muted-foreground"}`}>{detail}</span>
     </button>
   );
+}
+
+function useClassJoinMutation(
+  classStudent: AuthUser | null,
+  classCode: string,
+  completeProfile: (learningTopic: string, learningProject?: string, preferences?: { accountType?: "individual_student" | "class_student"; educationLevel?: string; pacePreference?: string; preferredModality?: string; topicFamiliarity?: string; learningAvailability?: string; accessibilitySupport?: boolean }) => void,
+  navigate: ReturnType<typeof useNavigate>,
+) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  return {
+    pending,
+    error,
+    success,
+    join: async () => {
+      if (!classStudent || !classCode.trim()) return;
+      setPending(true);
+      setError("");
+      setSuccess("");
+      try {
+        const joinedClass = await joinClass(classStudent.id, classCode.trim());
+        await createLearnerProfile({
+          learner_id: classStudent.id,
+          age_group: getAgeGroup(classStudent.age),
+          education_level: "Classroom learner",
+          learning_goal: `Learn with ${joinedClass.name}.`,
+          pace_preference: "balanced",
+          preferred_modality: ["reading"],
+          topic: "Classroom learning",
+          topic_familiarity: "beginner",
+          accessibility: {
+            class_student: true,
+            additional_support: false,
+            dyslexia_support: false,
+            chunked_explanations: false,
+            readable_spacing: false,
+            focus_mode_available: true,
+          },
+          learning_availability: "30_min",
+          learning_project: joinedClass.name,
+        });
+        completeProfile("Classroom learning", joinedClass.name, {
+          accountType: "class_student",
+          educationLevel: "Classroom learner",
+          pacePreference: "balanced",
+          preferredModality: "reading",
+          topicFamiliarity: "beginner",
+          learningAvailability: "30_min",
+          accessibilitySupport: false,
+        });
+        setSuccess(joinedClass.name);
+        await navigate({ to: ROUTES.KNOWLEDGE, replace: true });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not join this class. Check the code and try again.");
+      } finally {
+        setPending(false);
+      }
+    },
+  };
+}
+
+function signupSubtitle(role: SignupFormValues["role"]) {
+  if (role === "module_leader") return "Create a module leader workspace for classes, approvals, and student analytics.";
+  if (role === "class_student") return "Create a simple student account, then join a module leader's class with a code.";
+  return "The first step is simple: a profile that lets EvolvED remember, adapt, and teach with continuity.";
+}
+
+function signupTitle(role: SignupFormValues["role"]) {
+  if (role === "module_leader") return "Create a module leader account";
+  if (role === "class_student") return "Create a class student account";
+  return "Create an individual student account";
+}
+
+function signupDetail(role: SignupFormValues["role"]) {
+  if (role === "module_leader") return "You will go straight to the teacher dashboard after signup.";
+  if (role === "class_student") return "Use only your basic details now; the class code comes next.";
+  return "Build your adaptive learning space.";
+}
+
+function submitLabel(role: SignupFormValues["role"]) {
+  if (role === "module_leader") return "Create teacher workspace";
+  if (role === "class_student") return "Next: enter class code";
+  return "Create learner profile";
+}
+
+function getAgeGroup(age: number | undefined) {
+  if (!age) return null;
+  if (age < 13) return "child";
+  if (age < 18) return "teen";
+  return "adult";
 }
 
 function Field({

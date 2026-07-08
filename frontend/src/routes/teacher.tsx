@@ -1,13 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowDownUp, Check, Clipboard, FileText, Loader2, Plus, Search, ShieldCheck, Upload, Users, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, FileText, Loader2, ShieldCheck, Upload, X } from "lucide-react";
+import { useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { createClass, decideContentDraft, getTeacherDashboard, uploadContentDraft, type ContentDraft, type TeacherStudentSummary } from "@/lib/api/classroom";
+import { decideContentDraft, getTeacherDashboard, uploadContentDraft, type ContentDraft } from "@/lib/api/classroom";
 import { useAuth } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/teacher")({
@@ -20,16 +19,9 @@ export const Route = createFileRoute("/teacher")({
   component: TeacherDashboard,
 });
 
-type SortKey = "name" | "rank" | "progress" | "average_score" | "last_active";
-type FilterKey = "all" | "completed" | "in_progress" | "needs_help";
-
 function TeacherDashboard() {
   const { currentUser } = useAuth();
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<SortKey>("rank");
-  const [filter, setFilter] = useState<FilterKey>("all");
-  const [className, setClassName] = useState("");
   const [draftKind, setDraftKind] = useState<"lesson" | "assessment">("lesson");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftClassId, setDraftClassId] = useState("");
@@ -37,19 +29,12 @@ function TeacherDashboard() {
   const [draftFile, setDraftFile] = useState<File | null>(null);
   const [selectedDraftId, setSelectedDraftId] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [copiedClassId, setCopiedClassId] = useState("");
-  const copyResetRef = useRef<number | undefined>(undefined);
   const dashboard = useQuery({
     queryKey: ["teacher-dashboard", currentUser?.id],
     queryFn: () => getTeacherDashboard(currentUser?.id ?? ""),
     enabled: Boolean(currentUser?.id && currentUser.role === "module_leader"),
-  });
-  const addClass = useMutation({
-    mutationFn: () => createClass(currentUser?.id ?? "", className.trim()),
-    onSuccess: async () => {
-      setClassName("");
-      await queryClient.invalidateQueries({ queryKey: ["teacher-dashboard", currentUser?.id] });
-    },
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
   const uploadDraft = useMutation({
     mutationFn: () => uploadContentDraft({
@@ -69,7 +54,12 @@ function TeacherDashboard() {
     },
   });
   const decideDraft = useMutation({
-    mutationFn: (decision: "accept" | "reject" | "request_changes") => decideContentDraft(selectedDraft?.draft_id ?? "", currentUser?.id ?? "", decision, instructions),
+    mutationFn: (decision: "accept" | "reject" | "request_changes") => decideContentDraft(
+      selectedDraft?.draft_id ?? "",
+      currentUser?.id ?? "",
+      decision,
+      decision === "request_changes" && !instructions.trim() ? "Please revise this draft and regenerate the preview." : instructions,
+    ),
     onSuccess: async (draft) => {
       setInstructions("");
       setSelectedDraftId(draft.draft_id);
@@ -77,123 +67,29 @@ function TeacherDashboard() {
     },
   });
 
-  const students = useMemo(
-    () => filterStudents(dashboard.data?.students ?? [], search, sortBy, filter),
-    [dashboard.data?.students, filter, search, sortBy],
-  );
   const drafts = dashboard.data?.drafts ?? [];
-  const selectedDraft = drafts.find((draft) => draft.draft_id === selectedDraftId) ?? drafts[0];
-
-  useEffect(() => () => {
-    if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
-  }, []);
-
-  const copyInviteLink = (classId: string, href: string) => {
-    void navigator.clipboard?.writeText(href);
-    setCopiedClassId(classId);
-    if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
-    copyResetRef.current = window.setTimeout(() => setCopiedClassId(""), 1800);
-  };
+  const activeDrafts = drafts.filter((draft) => draft.status !== "rejected");
+  const selectedDraft = activeDrafts.find((draft) => draft.draft_id === selectedDraftId) ?? activeDrafts[0];
 
   if (currentUser?.role !== "module_leader") {
     return (
       <AppShell title="Teacher dashboard" subtitle="Module leader access is required." accent="Protected">
         <div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">
-          Sign in with a module leader account to manage classes, approvals, and classroom analytics.
+          Sign in with a module leader account to manage content drafts and approvals.
         </div>
       </AppShell>
     );
   }
 
   return (
-    <AppShell title="Module leader dashboard" subtitle="Classes, approvals, learner analytics, and ranking in one teaching workspace." accent={dashboard.isFetching ? "Syncing" : "Live"}>
+    <AppShell title="Module leader dashboard" subtitle="Content uploads, draft previews, and publishing approvals." accent={dashboard.isFetching ? "Syncing" : "Live"}>
       {dashboard.isError && (
         <div className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           {dashboard.error.message}
         </div>
       )}
 
-      <div className="mb-6 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-        {dashboard.isLoading ? (
-          Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-2xl" />)
-        ) : (
-          <>
-            <Stat label="Total students" value={dashboard.data?.totals.total_students ?? 0} />
-            <Stat label="Average progress" value={pct(dashboard.data?.totals.average_progress)} />
-            <Stat label="Average score" value={pct(dashboard.data?.totals.average_assessment_score)} />
-            <Stat label="Lessons published" value={dashboard.data?.totals.lessons_published ?? 0} />
-            <Stat label="Lesson approvals" value={dashboard.data?.totals.pending_lesson_approvals ?? 0} />
-            <Stat label="Assessment approvals" value={dashboard.data?.totals.pending_assessment_approvals ?? 0} />
-          </>
-        )}
-      </div>
-
-      <section className="mb-6 grid gap-4 xl:grid-cols-[1fr_1.2fr]">
-        <div className="rounded-2xl border border-border bg-card p-5">
-          <div className="mb-4 flex items-center gap-2">
-            <Users className="size-4 text-plum" />
-            <h2 className="font-display text-xl">Classes</h2>
-          </div>
-          <form
-            className="mb-4 flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (className.trim()) addClass.mutate();
-            }}
-          >
-            <Input value={className} onChange={(event) => setClassName(event.target.value)} placeholder="Create class" className="h-10" />
-            <Button type="submit" disabled={!className.trim() || addClass.isPending}>
-              {addClass.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
-              Add
-            </Button>
-          </form>
-          <div className="space-y-3">
-            {(dashboard.data?.classes ?? []).map((item) => (
-              <div key={item.class_id} className="rounded-xl border border-border bg-background/70 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-medium">{item.name}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{item.student_count} students</div>
-                  </div>
-                  <span className="rounded-full bg-plum/10 px-2.5 py-1 text-xs text-plum">{item.active ? "Active" : "Inactive"}</span>
-                </div>
-                <div className="mt-3 flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs">
-                  <Clipboard className="size-3.5" />
-                  <span className="text-muted-foreground">Join code</span>
-                  <strong className="ml-auto tracking-[0.2em]">{item.join_code}</strong>
-                </div>
-                <div className="mt-2 grid gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs sm:grid-cols-[1fr_auto] sm:items-center">
-                  <span className="truncate text-muted-foreground">{inviteHref(item.invite_link, item.join_code)}</span>
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center rounded-md border border-border bg-background px-2.5 py-1 font-medium hover:bg-muted"
-                    onClick={() => copyInviteLink(item.class_id, inviteHref(item.invite_link, item.join_code))}
-                  >
-                    {copiedClassId === item.class_id ? "Copied to clipboard" : "Copy link"}
-                  </button>
-                </div>
-              </div>
-            ))}
-            {!dashboard.isLoading && (dashboard.data?.classes ?? []).length === 0 && (
-              <div className="rounded-xl bg-muted/30 p-5 text-sm text-muted-foreground">Create a class to get a join code and invite link.</div>
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-border bg-card p-5">
-          <div className="mb-4 flex items-center gap-2">
-            <ShieldCheck className="size-4 text-plum" />
-            <h2 className="font-display text-xl">Approval workflow</h2>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <WorkflowStep title="Upload" detail="PDF, PPT, DOCX, Markdown, or text source is attached to a draft." />
-            <WorkflowStep title="Preview" detail="AI output remains private while the module leader reviews it." />
-            <WorkflowStep title="Publish" detail="Accepted lessons personalize per student; assessments stay identical." />
-          </div>
-        </div>
-      </section>
-
-      <section className="mb-6 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+      <section className="mb-6 grid gap-4">
         <div className="rounded-2xl border border-border bg-card p-5">
           <div className="mb-4 flex items-center gap-2">
             <Upload className="size-4 text-plum" />
@@ -235,7 +131,13 @@ function TeacherDashboard() {
                 type="file"
                 accept=".pdf,.pptx,.docx,.md,.markdown,.txt"
                 className="sr-only"
-                onChange={(event) => setDraftFile(event.target.files?.[0] ?? null)}
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setDraftFile(file);
+                  if (file && !draftTitle.trim()) {
+                    setDraftTitle(file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "));
+                  }
+                }}
               />
             </label>
             <textarea
@@ -257,18 +159,6 @@ function TeacherDashboard() {
             <ShieldCheck className="size-4 text-plum" />
             <h2 className="font-display text-xl">Draft preview and approval</h2>
           </div>
-          <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-            {drafts.map((draft) => (
-              <button
-                key={draft.draft_id}
-                type="button"
-                onClick={() => setSelectedDraftId(draft.draft_id)}
-                className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${selectedDraft?.draft_id === draft.draft_id ? "border-plum bg-plum/10 text-plum" : "border-border text-muted-foreground"}`}
-              >
-                {draft.kind}: {draft.title}
-              </button>
-            ))}
-          </div>
           {selectedDraft ? (
             <DraftPreview
               draft={selectedDraft}
@@ -286,90 +176,8 @@ function TeacherDashboard() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-border bg-card p-5">
-        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Student list</div>
-            <h2 className="mt-1 font-display text-xl">Class analytics</h2>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search students" className="h-10 w-56 pl-9" />
-            </div>
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as SortKey)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="rank">Rank</option>
-              <option value="name">Name</option>
-              <option value="progress">Progress</option>
-              <option value="average_score">Average score</option>
-              <option value="last_active">Last active</option>
-            </select>
-            <select value={filter} onChange={(event) => setFilter(event.target.value as FilterKey)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="all">All</option>
-              <option value="completed">Completed</option>
-              <option value="in_progress">In progress</option>
-              <option value="needs_help">Needs help</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="border-b border-border text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              <tr>
-                {["Name", "Progress", "Current lesson", "Average score", "Rank", "Accessibility", "Last active"].map((heading) => (
-                  <th key={heading} className="py-3 pr-4 font-medium">
-                    <span className="inline-flex items-center gap-1">{heading}<ArrowDownUp className="size-3" /></span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {students.map((student) => (
-                <tr key={student.learner_id} className="border-b border-border/60">
-                  <td className="py-3 pr-4 font-medium">{student.name}</td>
-                  <td className="py-3 pr-4">{pct(student.progress)}</td>
-                  <td className="max-w-56 truncate py-3 pr-4 text-muted-foreground">{student.current_lesson}</td>
-                  <td className="py-3 pr-4">{pct(student.average_score)}</td>
-                  <td className="py-3 pr-4">#{student.rank || "-"}</td>
-                  <td className="py-3 pr-4 text-muted-foreground">{accessibilityLabel(student.accessibility_settings)}</td>
-                  <td className="py-3 pr-4 text-muted-foreground">{formatDate(student.last_active)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {!dashboard.isLoading && students.length === 0 && (
-          <div className="grid min-h-32 place-items-center rounded-xl bg-muted/30 text-sm text-muted-foreground">
-            No students match the current search and filters.
-          </div>
-        )}
-      </section>
     </AppShell>
   );
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-2xl border border-border bg-card p-4">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-2 font-display text-2xl">{value}</div>
-    </div>
-  );
-}
-
-function WorkflowStep({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-background/70 p-4">
-      <div className="font-medium">{title}</div>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{detail}</p>
-    </div>
-  );
-}
-
-function inviteHref(path: string, joinCode: string) {
-  const relative = path.startsWith("/join-class") ? path : `/join-class?code=${encodeURIComponent(joinCode)}`;
-  return typeof window === "undefined" ? relative : new URL(relative, window.location.origin).toString();
 }
 
 function DraftPreview({
@@ -394,6 +202,7 @@ function DraftPreview({
   const sections = unreadableSource ? [] : arrayValue(content.sections);
   const questions = unreadableSource ? [] : arrayValue(content.questions);
   const readableMessage = "This upload was not converted into readable teaching text. Upload a text-based PDF, DOCX, PPTX, Markdown, or paste OCR text in the notes box.";
+  const finalDraft = draft.status === "accepted" || draft.status === "rejected";
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-border bg-background/70 p-4">
@@ -411,8 +220,6 @@ function DraftPreview({
         )}
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           <Mini label="Duration" value={`${numberValue(content.estimated_duration)} min`} />
-          <Mini label="Difficulty" value={unreadableSource ? "Needs readable source" : textValue(content.difficulty) || "Draft"} />
-          <Mini label="Source chars" value={String(numberValue(draft.source_material.characters))} />
         </div>
       </div>
 
@@ -446,9 +253,19 @@ function DraftPreview({
                   <span>{textValue(record.bloom_level) || "understand"}</span>
                 </div>
                 <h4 className="font-medium">{textValue(record.question)}</h4>
-                <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
-                  {arrayValue(record.options).map((option, optionIndex) => <li key={optionIndex}>{String(option)}</li>)}
-                </ol>
+                {arrayValue(record.options).length > 0 && (
+                  <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+                    {arrayValue(record.options).map((option, optionIndex) => <li key={optionIndex}>{String(option)}</li>)}
+                  </ol>
+                )}
+                {textValue(record.answer) && (
+                  <div className="mt-3 rounded-lg bg-muted/40 p-3 text-sm">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Answer</div>
+                    <p className="mt-1 text-muted-foreground">{textValue(record.answer)}</p>
+                  </div>
+                )}
+                <Panel title="Rubric" items={arrayValue(record.rubric).map(String)} compact />
+                {textValue(record.explanation) && <p className="mt-3 text-sm leading-6 text-muted-foreground">{textValue(record.explanation)}</p>}
               </article>
             );
           })}
@@ -462,14 +279,14 @@ function DraftPreview({
         className="min-h-24 w-full rounded-xl border border-input bg-background/70 px-3 py-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
       />
       <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => onDecision("accept")} disabled={deciding || draft.status === "accepted" || unreadableSource}>
+        <Button type="button" onClick={() => onDecision("accept")} disabled={deciding || finalDraft || unreadableSource}>
           {deciding ? <Loader2 className="animate-spin" /> : <Check />}
           Accept and publish
         </Button>
-        <Button type="button" variant="outline" onClick={() => onDecision("request_changes")} disabled={deciding || !instructions.trim()}>
+        <Button type="button" variant="outline" onClick={() => onDecision("request_changes")} disabled={deciding || finalDraft}>
           Request changes
         </Button>
-        <Button type="button" variant="outline" onClick={() => onDecision("reject")} disabled={deciding}>
+        <Button type="button" variant="outline" onClick={() => onDecision("reject")} disabled={deciding || finalDraft}>
           <X />
           Reject and regenerate
         </Button>
@@ -523,51 +340,5 @@ function isUnreadableSourceText(value: string) {
   const pdfMarkers = [" obj", " endobj", " xref", " trailer", " linearized", " startxref"].filter((marker) => lower.includes(marker)).length;
   const digitRatio = [...text].filter((char) => /\d/.test(char)).length / Math.max(1, text.length);
   const alphaRatio = [...text].filter((char) => /[a-z]/i.test(char)).length / Math.max(1, text.length);
-  const words = lower.match(/[a-z][a-z-]{2,}/g) ?? [];
-  return text.startsWith("PDF-") || pdfMarkers >= 2 || (digitRatio > 0.28 && alphaRatio < 0.45) || englishSignal(words) < 0.04;
-}
-
-function englishSignal(words: string[]) {
-  if (words.length < 80) return 1;
-  const common = new Set([
-    "the", "of", "and", "to", "in", "for", "is", "are", "as", "with", "from", "by", "on", "that", "this", "it",
-    "be", "or", "an", "has", "have", "was", "were", "can", "will", "should", "chapter", "image", "images",
-    "imaging", "medical", "digital", "system", "systems", "data", "learning", "artificial", "intelligence",
-    "technology", "technologies", "development", "healthcare", "source", "content", "analysis", "process",
-    "use", "used", "using", "between", "into", "these", "their", "which", "such", "more", "also",
-  ]);
-  return words.filter((word) => common.has(word)).length / Math.max(1, words.length);
-}
-
-function filterStudents(students: TeacherStudentSummary[], search: string, sortBy: SortKey, filter: FilterKey) {
-  const query = search.trim().toLowerCase();
-  return students
-    .filter((student) => filter === "all" || student.status === filter)
-    .filter((student) => !query || student.name.toLowerCase().includes(query) || student.current_lesson.toLowerCase().includes(query))
-    .sort((a, b) => {
-      if (sortBy === "name") return a.name.localeCompare(b.name);
-      if (sortBy === "last_active") return safeTime(b.last_active) - safeTime(a.last_active);
-      if (sortBy === "rank") return Number(a.rank || 9999) - Number(b.rank || 9999);
-      return Number(b[sortBy] ?? 0) - Number(a[sortBy] ?? 0);
-    });
-}
-
-function pct(value?: number) {
-  return `${Math.round((value ?? 0) * 100)}%`;
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return "No activity";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "No activity" : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function safeTime(value?: string | null) {
-  const parsed = Date.parse(value ?? "");
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function accessibilityLabel(settings: Record<string, unknown>) {
-  const enabled = Object.entries(settings).filter(([, value]) => Boolean(value)).map(([key]) => key.replaceAll("_", " "));
-  return enabled.length ? enabled.slice(0, 2).join(", ") : "Default";
+  return text.startsWith("PDF-") || pdfMarkers >= 2 || (digitRatio > 0.28 && alphaRatio < 0.45);
 }

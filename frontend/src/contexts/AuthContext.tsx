@@ -61,9 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       },
       completeProfile: (learningTopic, learningProject, preferences) => {
-        if (currentUser) {
-          setCurrentUser(completeStoredProfile(currentUser, learningTopic, learningProject, preferences));
-        }
+        setCurrentUser((user) => user ? completeStoredProfile(user, learningTopic, learningProject, preferences) : user);
       },
       forgotPassword: async (email) => {
         setLoading(true);

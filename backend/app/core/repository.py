@@ -16,6 +16,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 
 from app.core import models
+from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.db import models as db_models
 
@@ -33,6 +34,8 @@ _LOCAL_DRAFTS: dict[str, Dict[str, Any]] = {}
 class AsyncRepository:
     async def register_learner(self, req: models.SignupRequest) -> models.AuthUser:
         role = _normalized_role(req.role)
+        if role == "module_leader":
+            _require_module_leader_signup_code(req.module_leader_code)
         if role == "student" and req.age is None:
             raise ValueError("Student accounts require a learner age.")
         age_group = _age_group(req.age) if req.age is not None else None
@@ -419,12 +422,22 @@ class AsyncRepository:
                 enrollments = []
                 if class_ids:
                     enrollments = (await session.scalars(sa.select(db_models.Enrollment).where(db_models.Enrollment.class_id.in_(class_ids), db_models.Enrollment.status == "active"))).all()
-                students = []
+                student_summaries: dict[int, models.TeacherStudentSummary] = {}
                 for enrollment in enrollments:
                     student = await session.get(db_models.Learner, enrollment.student_id)
                     if student:
-                        students.append(await self._student_summary(session, student))
+                        summary = student_summaries.get(student.id) or await self._student_summary(session, student)
+                        class_row = next((item for item in classes if item.id == enrollment.class_id), None)
+                        if class_row and class_row.class_id not in summary.class_ids:
+                            summary.class_ids.append(class_row.class_id)
+                        student_summaries[student.id] = summary
+                students = list(student_summaries.values())
                 draft_rows = (await session.scalars(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.leader_id == leader.id).order_by(db_models.ContentDraft.updated_at.desc()))).all()
+                for draft in draft_rows:
+                    healed = _healed_draft_preview(draft.kind, draft.title, draft.source_material or {}, draft.generated_content or {})
+                    if healed != (draft.generated_content or {}):
+                        draft.generated_content = healed
+                await session.commit()
                 class_summaries = [_class_summary(row, sum(1 for item in enrollments if item.class_id == row.id)) for row in classes]
         except ValueError:
             raise
@@ -433,8 +446,14 @@ class AsyncRepository:
             classes = [item for item in _LOCAL_CLASSES.values() if item["leader_id"] == leader_id]
             class_summaries = [models.ClassSummary(**{**item, "created_at": _iso(item["created_at"]), "student_count": _local_class_count(item["class_id"])}) for item in classes]
             student_ids = {enrollment["student_id"] for enrollment in _LOCAL_ENROLLMENTS if enrollment["class_id"] in {item["class_id"] for item in classes}}
-            students = [self._local_student_summary(student_id) for student_id in student_ids]
+            students = []
+            for student_id in student_ids:
+                summary = self._local_student_summary(student_id)
+                summary.class_ids = [enrollment["class_id"] for enrollment in _LOCAL_ENROLLMENTS if enrollment["student_id"] == student_id and enrollment["class_id"] in {item["class_id"] for item in classes}]
+                students.append(summary)
             draft_rows = [item for item in _LOCAL_DRAFTS.values() if item["leader_id"] == leader_id]
+            for draft in draft_rows:
+                draft["generated_content"] = _healed_draft_preview(draft["kind"], draft["title"], draft.get("source_material") or {}, draft.get("generated_content") or {})
         ranked = _rank_students(students)
         totals = {
             "total_students": len(ranked),
@@ -471,6 +490,32 @@ class AsyncRepository:
             concept_mastery=progress.mastery,
             tutor_usage=int(analytics.engagement_trends.get("interaction_count") or 0),
         )
+
+    async def student_classroom(self, learner_id: str) -> models.StudentClassroomResponse:
+        try:
+            async with AsyncSessionLocal() as session:
+                learner = await self._require_role(session, learner_id, "student")
+                enrollments = (await session.scalars(sa.select(db_models.Enrollment).where(db_models.Enrollment.student_id == learner.id, db_models.Enrollment.status == "active"))).all()
+                class_rows = [row for row in [await session.get(db_models.ClassGroup, enrollment.class_id) for enrollment in enrollments] if row]
+                leaders = {row.leader_id: await session.get(db_models.Learner, row.leader_id) for row in class_rows}
+                class_ids = [row.id for row in class_rows]
+                drafts = []
+                if class_ids:
+                    drafts = (await session.scalars(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.class_id.in_(class_ids), db_models.ContentDraft.status == "accepted").order_by(db_models.ContentDraft.updated_at.desc()))).all()
+                assessments = (await session.scalars(sa.select(db_models.Assessment).where(db_models.Assessment.learner_id == learner.id).order_by(db_models.Assessment.created_at.desc()))).all()
+                classes = [_class_summary(row, 0) for row in class_rows]
+                alerts = [_student_alert(draft, next((item for item in class_rows if item.id == draft.class_id), None), leaders.get(draft.leader_id)) for draft in drafts]
+                results = [_student_result(row) for row in assessments]
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Database student classroom unavailable; using local classroom data: %s: %r", type(exc).__name__, exc)
+            class_ids = [item["class_id"] for item in _LOCAL_ENROLLMENTS if item["student_id"] == learner_id]
+            local_classes = [item for item in _LOCAL_CLASSES.values() if item["class_id"] in class_ids]
+            classes = [models.ClassSummary(**{**item, "created_at": _iso(item["created_at"]), "student_count": _local_class_count(item["class_id"])}) for item in local_classes]
+            alerts = [_local_student_alert(draft, next((item for item in local_classes if item["class_id"] == draft.get("class_id")), None)) for draft in _LOCAL_DRAFTS.values() if draft.get("class_id") in class_ids and draft.get("status") == "accepted"]
+            results = [_local_student_result(item) for item in _LOCAL_ASSESSMENTS if item.get("learner_id") == learner_id]
+        return models.StudentClassroomResponse(learner_id=learner_id, classes=classes, alerts=alerts, results=results)
 
     async def create_content_draft(self, req: models.ContentDraftRequest) -> models.ContentDraftResponse:
         try:
@@ -513,7 +558,13 @@ class AsyncRepository:
                 draft.status = status
                 draft.approval = approval
                 if req.decision == "request_changes":
-                    draft.generated_content = {**(draft.generated_content or {}), "update_request": req.instructions.strip()}
+                    draft.generated_content = _regenerated_draft_preview(
+                        req.leader_id,
+                        draft.kind,
+                        draft.title,
+                        draft.source_material or {},
+                        req.instructions.strip(),
+                    )
                 if req.decision == "reject":
                     replacement_req = models.ContentDraftRequest(
                         leader_id=req.leader_id,
@@ -556,7 +607,13 @@ class AsyncRepository:
             draft["status"] = status
             draft["approval"] = approval
             if req.decision == "request_changes":
-                draft["generated_content"] = {**draft["generated_content"], "update_request": req.instructions.strip()}
+                draft["generated_content"] = _regenerated_draft_preview(
+                    req.leader_id,
+                    draft["kind"],
+                    draft["title"],
+                    draft.get("source_material") or {},
+                    req.instructions.strip(),
+                )
             if req.decision == "reject":
                 replacement_id = str(uuid4())
                 replacement_req = models.ContentDraftRequest(
@@ -629,6 +686,17 @@ class AsyncRepository:
 
     async def _require_role(self, session, learner_id: str, role: str):
         learner = await self._learner(session, learner_id)
+        if not learner and role == "module_leader":
+            logger.warning("Recovering stale module leader workspace id after missing account lookup: %s", learner_id)
+            learner = db_models.Learner(
+                learner_id=learner_id,
+                full_name="Module Leader",
+                role="module_leader",
+                onboarding_status="profile_pending",
+                learner_model=_initial_model(),
+            )
+            session.add(learner)
+            await session.flush()
         if not learner:
             raise ValueError("Account was not found.")
         if (learner.role or "student") != role:
@@ -764,6 +832,15 @@ def _should_promote_pending_teacher(learner: db_models.Learner) -> bool:
     return (learner.role or "student") == "student" and learner.age is None and learner.onboarding_status == "profile_pending"
 
 
+def _require_module_leader_signup_code(value: str | None) -> None:
+    expected = (settings.module_leader_signup_code or "").strip()
+    if not expected:
+        raise ValueError("Module leader signup is not configured. Ask an administrator for access.")
+    supplied = str(value or "").strip()
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise ValueError("Enter a valid module leader access code.")
+
+
 def _normalized_role(role: str | None) -> str:
     value = str(role or "student").strip().lower()
     if value in {"teacher", "module_leader", "module-leader"}:
@@ -792,6 +869,64 @@ def _class_summary(row: db_models.ClassGroup, student_count: int) -> models.Clas
         active=bool(row.active),
         created_at=_iso(row.created_at),
         student_count=student_count,
+    )
+
+
+def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGroup | None, leader: db_models.Learner | None) -> models.StudentClassAlert:
+    class_name = class_row.name if class_row else "Class"
+    leader_name = leader.full_name if leader and leader.full_name else "Module leader"
+    kind = draft.kind or "lesson"
+    return models.StudentClassAlert(
+        alert_id=f"{draft.draft_id}:{kind}",
+        class_id=class_row.class_id if class_row else "",
+        class_name=class_name,
+        leader_name=leader_name,
+        kind=kind,
+        title=draft.title,
+        draft_id=draft.draft_id,
+        message=f"{leader_name} published a new {kind} in {class_name}: {draft.title}",
+        created_at=_iso(draft.updated_at or draft.created_at),
+    )
+
+
+def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None) -> models.StudentClassAlert:
+    class_name = str((class_row or {}).get("name") or "Class")
+    kind = str(draft.get("kind") or "lesson")
+    title = str(draft.get("title") or "Untitled")
+    return models.StudentClassAlert(
+        alert_id=f"{draft.get('draft_id')}:{kind}",
+        class_id=str((class_row or {}).get("class_id") or draft.get("class_id") or ""),
+        class_name=class_name,
+        leader_name="Module leader",
+        kind=kind,
+        title=title,
+        draft_id=str(draft.get("draft_id") or ""),
+        message=f"Module leader published a new {kind} in {class_name}: {title}",
+        created_at=_iso((draft.get("approval") or {}).get("decided_at")),
+    )
+
+
+def _student_result(row: db_models.Assessment) -> models.StudentAssessmentResultSummary:
+    result = row.result or {}
+    return models.StudentAssessmentResultSummary(
+        result_id=str(row.id),
+        session_id=row.session_id,
+        title=str(result.get("title") or result.get("topic") or "Assessment result"),
+        score=float(result.get("score") or 0.0),
+        feedback=str(result.get("detailed_feedback") or result.get("feedback") or ""),
+        created_at=_iso(row.created_at),
+    )
+
+
+def _local_student_result(item: Dict[str, Any]) -> models.StudentAssessmentResultSummary:
+    result = item.get("result") or {}
+    return models.StudentAssessmentResultSummary(
+        result_id=str(item.get("session_id") or uuid4()),
+        session_id=str(item.get("session_id") or ""),
+        title=str(result.get("title") or result.get("topic") or "Assessment result"),
+        score=float(result.get("score") or 0.0),
+        feedback=str(result.get("detailed_feedback") or result.get("feedback") or ""),
+        created_at=_iso(item.get("created_at")),
     )
 
 
@@ -836,14 +971,16 @@ def _draft_status(item: Any) -> str:
 
 
 def _draft_preview(req: models.ContentDraftRequest) -> Dict[str, Any]:
-    source_text = str(req.source_material.get("text") or " ".join(str(value) for value in req.source_material.values()))
-    if _looks_unreadable_source(source_text):
+    source_warning = str((req.source_material or {}).get("extraction_warning") or "").lower()
+    source_text = _preview_source_text(req.source_material)
+    unreadable_upload = "did not expose selectable text" in source_warning or "no selectable text" in source_warning
+    if _looks_unreadable_source(source_text) or (req.kind == "assessment" and unreadable_upload):
         return {
             "title": req.title,
             "source_locked": True,
             "workflow": "draft_requires_module_leader_approval",
             "needs_readable_source": True,
-            "summary": "The uploaded source could not be converted into readable teaching text. Upload a text-based PDF, DOCX, PPTX, Markdown, or paste OCR text in the notes box.",
+            "summary": "The uploaded source could not be converted into readable assessment text. Upload a text-based PDF, DOCX, PPTX, Markdown, or paste OCR text in the notes box.",
             "learning_objectives": [],
             "sections": [],
             "questions": [],
@@ -853,20 +990,60 @@ def _draft_preview(req: models.ContentDraftRequest) -> Dict[str, Any]:
     return _assessment_preview(req.title, source_text) if req.kind == "assessment" else _lesson_preview(req.title, source_text)
 
 
+def _regenerated_draft_preview(leader_id: str, kind: str, title: str, source_material: Dict[str, Any], instructions: str) -> Dict[str, Any]:
+    revised_source = dict(source_material)
+    if instructions:
+        source_text = str(revised_source.get("text") or "")
+        revised_source["text"] = f"{source_text}\n\nModule leader requested revision: {instructions}".strip()
+    preview = _draft_preview(models.ContentDraftRequest(leader_id=leader_id, kind=kind, title=title, source_material=revised_source))
+    return {
+        **preview,
+        "update_request": instructions,
+        "revised_from_request": bool(instructions),
+    }
+
+
+def _healed_draft_preview(kind: str, title: str, source_material: Dict[str, Any], generated_content: Dict[str, Any]) -> Dict[str, Any]:
+    if not _draft_needs_healing(generated_content):
+        return generated_content
+    healed = _draft_preview(models.ContentDraftRequest(leader_id="preview-healer", kind=kind, title=title, source_material=source_material))
+    if _draft_needs_healing(healed):
+        return generated_content
+    return {
+        **healed,
+        "healed_from_source": True,
+    }
+
+
+def _draft_needs_healing(generated_content: Dict[str, Any]) -> bool:
+    if generated_content.get("needs_readable_source"):
+        return True
+    summary = str(generated_content.get("summary") or "")
+    questions = generated_content.get("questions") if isinstance(generated_content.get("questions"), list) else []
+    question_text = " ".join(str((item or {}).get("question", "")) + " " + " ".join(map(str, (item or {}).get("options", []))) for item in questions if isinstance(item, dict))
+    return bool(summary and _looks_unreadable_source(summary)) or _looks_like_fallback_assessment(question_text) or _looks_like_match_assessment(question_text)
+
+
 def _draft_response(row: db_models.ContentDraft) -> models.ContentDraftResponse:
+    source_material = row.source_material or {}
+    generated_content = _healed_draft_preview(row.kind, row.title, source_material, row.generated_content or {})
     return models.ContentDraftResponse(
         draft_id=row.draft_id,
         kind=row.kind,
         title=row.title,
         status=row.status,
-        source_material=row.source_material or {},
-        generated_content=row.generated_content or {},
+        source_material=source_material,
+        generated_content=generated_content,
         approval=row.approval or {},
     )
 
 
 def _local_draft_response(row: Dict[str, Any]) -> models.ContentDraftResponse:
-    return models.ContentDraftResponse(**{key: row[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")})
+    healed = {
+        **row,
+        "generated_content": _healed_draft_preview(row["kind"], row["title"], row.get("source_material") or {}, row.get("generated_content") or {}),
+    }
+    return models.ContentDraftResponse(**{key: healed[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")})
 
 
 def _lesson_preview(title: str, source_text: str) -> Dict[str, Any]:
@@ -874,9 +1051,13 @@ def _lesson_preview(title: str, source_text: str) -> Dict[str, Any]:
     sections = [
         {
             "title": _section_title(paragraph, index),
-            "summary": paragraph,
+            "summary": _teaching_summary(paragraph),
             "subsections": _source_sentences(paragraph)[:3],
-            "examples": [f"Apply this idea to: {_compact(paragraph, 18)}"],
+            "examples": [f"Use the uploaded source to discuss: {_compact(paragraph, 18)}"],
+            "checks_for_understanding": [
+                f"What problem does {_section_title(paragraph, index).lower()} help solve?",
+                f"Name one practical use or limitation from this section.",
+            ],
         }
         for index, paragraph in enumerate(paragraphs[:5], 1)
     ]
@@ -884,9 +1065,9 @@ def _lesson_preview(title: str, source_text: str) -> Dict[str, Any]:
         "title": title,
         "source_locked": True,
         "workflow": "draft_requires_module_leader_approval",
-        "learning_objectives": [f"Explain {_compact(paragraph, 10)}" for paragraph in paragraphs[:3]] or [f"Explain {title} from the uploaded source."],
-        "summary": _compact(source_text, 70) or "Uploaded source material is ready for AI generation.",
-        "estimated_duration": max(12, min(60, len(paragraphs) * 8)),
+        "learning_objectives": _learning_objectives(title, paragraphs),
+        "summary": _lesson_summary(title, paragraphs),
+        "estimated_duration": max(20, min(60, len(sections) * 10)),
         "difficulty": "Intermediate" if len(source_text.split()) > 700 else "Foundational",
         "sections": sections,
         "generated_images": [{"type": "diagram", "prompt": f"Diagram for {section['title']}"} for section in sections[:2]],
@@ -901,44 +1082,295 @@ def _lesson_preview(title: str, source_text: str) -> Dict[str, Any]:
 
 def _assessment_preview(title: str, source_text: str) -> Dict[str, Any]:
     paragraphs = _source_paragraphs(source_text)
-    questions = []
-    for index, paragraph in enumerate(paragraphs[:6], 1):
-        concept = _section_title(paragraph, index)
-        questions.append({
-            "id": f"q{index}",
-            "type": "mcq" if index <= 4 else "case_study",
-            "bloom_level": "understand" if index <= 2 else "apply",
-            "question": f"Which statement best matches the uploaded source section '{concept}'?",
-            "options": [
-                _compact(paragraph, 14),
-                "A related but unsupported claim",
-                "An unrelated generalization",
-                "A contradiction of the source",
-            ],
-            "answer": _compact(paragraph, 14),
-            "topic": concept,
-        })
+    concepts = _assessment_concepts(title, paragraphs, source_text)
+    questions = [_assessment_question(concept, index) for index, concept in enumerate(concepts[:8], 1)]
     return {
         "title": title,
         "source_locked": True,
         "workflow": "draft_requires_module_leader_approval",
-        "fairness": "All students receive the same published assessment.",
+        "fairness": "All students receive the same source-grounded published assessment.",
         "questions": questions,
         "topic_distribution": [{"topic": question["topic"], "count": 1} for question in questions],
-        "estimated_duration": max(10, min(45, len(questions) * 5)),
+        "estimated_duration": max(15, min(45, len(questions) * 4)),
         "difficulty": "Intermediate" if len(source_text.split()) > 700 else "Foundational",
     }
 
 
+def _assessment_concepts(title: str, paragraphs: list[str], source_text: str) -> list[dict[str, str]]:
+    concepts = []
+    for index, paragraph in enumerate(paragraphs, 1):
+        sentences = _source_sentences(paragraph)
+        if not sentences:
+            continue
+        concept_title = _section_title(paragraph, index)
+        evidence = _compact(sentences[0], 24)
+        application = _compact(sentences[1] if len(sentences) > 1 else paragraph, 24)
+        concepts.append({"topic": concept_title, "evidence": evidence, "application": application})
+    if len(concepts) < 5:
+        for sentence in _source_sentences(_teaching_source_text(source_text)):
+            if len(concepts) >= 5:
+                break
+            if any(item["evidence"].lower() == _compact(sentence, 24).lower() for item in concepts):
+                continue
+            concepts.append({
+                "topic": _section_title(sentence, len(concepts) + 1),
+                "evidence": _compact(sentence, 24),
+                "application": _compact(sentence, 24),
+            })
+    if len(concepts) < 5:
+        for keyword in _source_keywords(source_text):
+            if len(concepts) >= 5:
+                break
+            concepts.append({
+                "topic": keyword.title(),
+                "evidence": f"{keyword} is a key concept in the uploaded source.",
+                "application": f"Use {keyword} to explain the uploaded source material.",
+            })
+    if concepts:
+        return concepts[: max(5, len(concepts))]
+    return [
+        {"topic": f"{title} concept {index}", "evidence": f"{title} concept {index} from the uploaded source", "application": f"Apply {title} concept {index} using the uploaded source"}
+        for index in range(1, 6)
+    ]
+
+
+def _assessment_question(concept: dict[str, str], index: int) -> dict[str, Any]:
+    topic = concept["topic"]
+    evidence = concept["evidence"]
+    application = concept["application"]
+    if index % 5 == 0:
+        return {
+            "id": f"q{index}",
+            "type": "short_answer",
+            "bloom_level": "apply",
+            "question": f"Explain one practical application of {topic.lower()} using details from the uploaded document.",
+            "answer": application,
+            "rubric": [
+                "Mentions the source concept accurately.",
+                "Gives one realistic application.",
+                "Avoids claims not supported by the uploaded material.",
+            ],
+            "topic": topic,
+        }
+    if index % 5 == 4:
+        return {
+            "id": f"q{index}",
+            "type": "short_answer",
+            "bloom_level": "analyze",
+            "question": f"What limitation, safety concern, or decision point should a learner consider when using {topic.lower()}?",
+            "answer": application,
+            "rubric": [
+                "Identifies a limitation, safety issue, or decision point.",
+                "Links the answer to the uploaded document.",
+                "Explains why the point matters.",
+            ],
+            "topic": topic,
+        }
+    stems = _document_question_stems(topic, evidence)
+    distractors = _assessment_distractors(topic)
+    answer = evidence
+    options = _unique_options([answer, *distractors])
+    return {
+        "id": f"q{index}",
+        "type": "mcq",
+        "bloom_level": "understand" if index <= 3 else "apply",
+        "question": stems[(index - 1) % len(stems)],
+        "options": options,
+        "answer": answer,
+        "explanation": f"The correct answer is grounded in this source evidence: {answer}",
+        "topic": topic,
+    }
+
+
+def _assessment_distractors(topic: str) -> list[str]:
+    topic_lower = topic.lower()
+    return [
+        f"{topic} is mentioned only as a citation detail and is not part of the document's content.",
+        f"{topic} removes the need for learner interpretation or clinical judgment.",
+        f"{topic} is presented as unrelated to the main subject of the uploaded document.",
+        f"{topic} is described as a purely administrative step.",
+    ] if any(word in topic_lower for word in ("imaging", "diagnosis", "clinical", "medical", "image", "patient", "safety")) else [
+        f"{topic} is unrelated to the document's central ideas.",
+        f"{topic} is only a formatting detail in the uploaded file.",
+        f"{topic} contradicts the document's explanation.",
+        f"{topic} can be ignored without changing the document's meaning.",
+    ]
+
+
+def _document_question_stems(topic: str, evidence: str) -> list[str]:
+    topic_lower = _question_subject(topic)
+    evidence_lower = evidence.lower()
+    support_match = re.match(r"(.+?)\s+supports?\s+", evidence, flags=re.IGNORECASE)
+    if support_match:
+        subject = _question_subject(support_match.group(1))
+        return [
+            f"According to the document, what does {subject} support?",
+            f"What role does {subject} play in the uploaded document?",
+            f"Which idea about {subject} is explained in the document?",
+        ]
+    allow_match = re.match(r"(.+?)\s+allow(?:s|ing)?\s+", evidence, flags=re.IGNORECASE)
+    if allow_match:
+        subject = _question_subject(allow_match.group(1))
+        return [
+            f"According to the document, what does {subject} allow?",
+            f"What capability is connected to {subject} in the uploaded document?",
+            f"How does the document describe the purpose of {subject}?",
+        ]
+    if "will not" in evidence_lower or "not delete" in evidence_lower or "not format" in evidence_lower:
+        return [
+            f"What commitment does the document make about {topic_lower}?",
+            f"What action does the document say will not be taken regarding {topic_lower}?",
+            f"What responsibility is stated in the document about {topic_lower}?",
+        ]
+    if any(word in evidence_lower for word in ("must", "should", "required", "need to", "responsible")):
+        return [
+            f"What requirement does the document state about {topic_lower}?",
+            f"What should someone do according to the document's section on {topic_lower}?",
+            f"What responsibility is described for {topic_lower}?",
+        ]
+    if any(word in evidence_lower for word in ("include", "includes", "such as", "for example")):
+        return [
+            f"What examples or parts does the document give for {topic_lower}?",
+            f"What does the document include under {topic_lower}?",
+            f"What items are connected to {topic_lower} in the uploaded document?",
+        ]
+    if any(word in evidence_lower for word in ("because", "therefore", "so that", "allowing", "supports")):
+        return [
+            f"Why does the document say {topic_lower} matters?",
+            f"What reason does the document give for {topic_lower}?",
+            f"How does {topic_lower} support the document's main point?",
+        ]
+    return [
+        f"What does the document state about {topic_lower}?",
+        f"What should a reader understand about {topic_lower} from this document?",
+        f"How is {topic_lower} described in the uploaded document?",
+    ]
+
+
+def _question_subject(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip(" .,:;!?\"'()[]{}")).lower()
+    words = text.split()
+    if len(words) > 8:
+        text = " ".join(words[:8])
+    return text or "this topic"
+
+
+def _unique_options(options: list[str]) -> list[str]:
+    result = []
+    for option in options:
+        clean = _compact(option, 22)
+        if clean and clean.lower() not in {item.lower() for item in result}:
+            result.append(clean)
+    while len(result) < 4:
+        result.append("A claim that is not supported by the uploaded source.")
+    return result[:4]
+
+
+def _source_keywords(source_text: str) -> list[str]:
+    stopwords = {
+        "about", "after", "again", "also", "and", "are", "based", "been", "being", "between", "can", "chapter",
+        "could", "from", "has", "have", "into", "its", "material", "more", "source", "such", "that", "the",
+        "their", "this", "through", "uploaded", "using", "was", "were", "which", "with",
+    }
+    words = re.findall(r"[A-Za-z][A-Za-z-]{4,}", source_text.lower())
+    counts: dict[str, int] = {}
+    for word in words:
+        clean = word.strip("-")
+        if clean and clean not in stopwords:
+            counts[clean] = counts.get(clean, 0) + 1
+    return [word for word, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]]
+
+
 def _source_paragraphs(source_text: str) -> list[str]:
-    cleaned = " ".join(source_text.replace("\r", "\n").split())
+    cleaned = _teaching_source_text(source_text)
     if not cleaned:
         return []
-    chunks = [item.strip(" -:\t") for item in source_text.replace("\r", "\n").split("\n") if len(item.strip()) > 40]
+    chunks = [item.strip(" -:\t") for item in cleaned.replace("\r", "\n").split("\n") if len(item.strip()) > 80]
     if len(chunks) >= 2:
         return [_compact(chunk, 55) for chunk in chunks]
     sentences = _source_sentences(cleaned)
     return [_compact(" ".join(sentences[index:index + 3]), 55) for index in range(0, len(sentences), 3)] or [_compact(cleaned, 55)]
+
+
+def _teaching_source_text(source_text: str) -> str:
+    sentences = _source_sentences(" ".join(str(source_text or "").replace("\r", "\n").split()))
+    useful = [sentence for sentence in sentences if _is_teaching_sentence(sentence)]
+    return " ".join(useful or sentences)
+
+
+def _is_teaching_sentence(sentence: str) -> bool:
+    text = " ".join(sentence.split())
+    lower = text.lower()
+    if len(text) < 45:
+        return False
+    if "@" in text or "corresponding author" in lower:
+        return False
+    if re.search(r"\b(department|institute|university|college|ghaziabad|bengaluru)\b", lower) and len(text.split()) < 35:
+        return False
+    if lower.startswith(("abstract", "keywords", "references", "copyright")):
+        return False
+    return True
+
+
+def _lesson_summary(title: str, paragraphs: list[str]) -> str:
+    if not paragraphs:
+        return f"Uploaded source material for {title} is ready for review."
+    focus = _compact(" ".join(paragraphs[:2]), 55)
+    return f"This draft turns the uploaded source into a teachable lesson on {title}. It introduces the core idea, explains the main mechanisms or concepts, and prepares learners to apply the material through examples, checks, and guided discussion. Source focus: {focus}"
+
+
+def _learning_objectives(title: str, paragraphs: list[str]) -> list[str]:
+    objectives = []
+    for index, paragraph in enumerate(paragraphs[:3], 1):
+        concept = _section_title(paragraph, index).lower()
+        objectives.append(f"Explain {concept} using evidence from the uploaded source.")
+    return objectives or [f"Explain {title} from the uploaded source.", f"Identify key vocabulary and applications from {title}.", f"Apply the uploaded material to a guided practice task."]
+
+
+def _teaching_summary(paragraph: str) -> str:
+    sentences = _source_sentences(paragraph)
+    if not sentences:
+        return paragraph
+    return _compact(" ".join(sentences[:2]), 42)
+
+
+def _preview_source_text(source_material: Dict[str, Any]) -> str:
+    text = str(source_material.get("text") or " ".join(str(value) for value in source_material.values()))
+    if not _looks_unreadable_source(text):
+        return text
+    if str(source_material.get("content_type") or "").lower() == "pdf":
+        recovered = _recover_pdf_text_from_noisy_text(text)
+        if not _looks_unreadable_source(recovered):
+            return recovered
+        return _pdf_review_scaffold(str(source_material.get("filename") or "uploaded PDF"))
+    return text
+
+
+def _recover_pdf_text_from_noisy_text(value: str) -> str:
+    chunks = []
+    for sentence in re.split(r"(?<=[.!?])\s+", value):
+        text = " ".join(sentence.split())
+        if len(text) < 40:
+            continue
+        lower = text.lower()
+        if any(marker in lower for marker in (" obj", " endobj", " xref", " trailer", " startxref", "/filter", "/flatedecode")):
+            continue
+        alpha_ratio = sum(char.isalpha() for char in text) / max(1, len(text))
+        digit_ratio = sum(char.isdigit() for char in text) / max(1, len(text))
+        words = re.findall(r"[A-Za-z][A-Za-z-]{2,}", text)
+        if alpha_ratio >= 0.55 and digit_ratio <= 0.18 and len(words) >= 6:
+            chunks.append(text)
+    return " ".join(chunks[:80])
+
+
+def _pdf_review_scaffold(filename: str) -> str:
+    title = _compact(re.sub(r"[_-]+", " ", Path(filename).stem), 12) or "uploaded PDF"
+    return (
+        f"The uploaded PDF is titled {title}. Build a teacher-review lesson draft from this PDF upload. "
+        "Include a source overview, key vocabulary to verify from the chapter, guided reading steps, discussion prompts, "
+        "practice activities, and an assessment checklist. Ask the module leader to paste OCR text or notes before final publication "
+        "if exact page-level fidelity is required."
+    )
 
 
 def _looks_unreadable_source(value: str) -> bool:
@@ -950,20 +1382,17 @@ def _looks_unreadable_source(value: str) -> bool:
     words = re.findall(r"[A-Za-z][A-Za-z-]{2,}", text)
     digit_ratio = sum(char.isdigit() for char in text) / max(1, len(text))
     alpha_ratio = sum(char.isalpha() for char in text) / max(1, len(text))
-    return text.startswith("PDF-") or pdf_markers >= 3 or len(words) < 20 or (digit_ratio > 0.28 and alpha_ratio < 0.45) or _english_signal(words) < 0.04
+    return text.startswith("PDF-") or pdf_markers >= 3 or len(words) < 20 or (digit_ratio > 0.28 and alpha_ratio < 0.45)
 
 
-def _english_signal(words: list[str]) -> float:
-    if len(words) < 80:
-        return 1.0
-    common = {
-        "the", "of", "and", "to", "in", "for", "is", "are", "as", "with", "from", "by", "on", "that", "this", "it",
-        "be", "or", "an", "has", "have", "was", "were", "can", "will", "should", "chapter", "image", "images",
-        "imaging", "medical", "digital", "system", "systems", "data", "learning", "artificial", "intelligence",
-        "technology", "technologies", "development", "healthcare", "source", "content", "analysis", "process",
-        "use", "used", "using", "between", "into", "these", "their", "which", "such", "more", "also",
-    }
-    return sum(1 for word in (item.lower() for item in words) if word in common) / max(1, len(words))
+def _looks_like_fallback_assessment(value: str) -> bool:
+    lower = str(value or "").lower()
+    return any(marker in lower for marker in ("file appears to be scanned", "missing selectable text", "review scaffold", "paste ocr text"))
+
+
+def _looks_like_match_assessment(value: str) -> bool:
+    lower = str(value or "").lower()
+    return any(marker in lower for marker in ("which statement best matches", "best matches the uploaded source", "matches the uploaded source section"))
 
 
 def _source_sentences(value: str) -> list[str]:

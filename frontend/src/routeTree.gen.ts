@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TeacherRouteImport } from './routes/teacher'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as ResultsRouteImport } from './routes/results'
 import { Route as ProgressRouteImport } from './routes/progress'
 import { Route as ProfileSetupRouteImport } from './routes/profile-setup'
 import { Route as PedagogyRouteImport } from './routes/pedagogy'
@@ -22,7 +23,10 @@ import { Route as JoinClassRouteImport } from './routes/join-class'
 import { Route as IntelligenceRouteImport } from './routes/intelligence'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as FeedbackRouteImport } from './routes/feedback'
+import { Route as CreateClassroomRouteImport } from './routes/create-classroom'
+import { Route as ClassInsightsRouteImport } from './routes/class-insights'
 import { Route as AssessmentRouteImport } from './routes/assessment'
+import { Route as AlertsRouteImport } from './routes/alerts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as JoinCodeRouteImport } from './routes/join.$code'
 
@@ -34,6 +38,11 @@ const TeacherRoute = TeacherRouteImport.update({
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResultsRoute = ResultsRouteImport.update({
+  id: '/results',
+  path: '/results',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProgressRoute = ProgressRouteImport.update({
@@ -91,9 +100,24 @@ const FeedbackRoute = FeedbackRouteImport.update({
   path: '/feedback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CreateClassroomRoute = CreateClassroomRouteImport.update({
+  id: '/create-classroom',
+  path: '/create-classroom',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ClassInsightsRoute = ClassInsightsRouteImport.update({
+  id: '/class-insights',
+  path: '/class-insights',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AssessmentRoute = AssessmentRouteImport.update({
   id: '/assessment',
   path: '/assessment',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AlertsRoute = AlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -109,7 +133,10 @@ const JoinCodeRoute = JoinCodeRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/alerts': typeof AlertsRoute
   '/assessment': typeof AssessmentRoute
+  '/class-insights': typeof ClassInsightsRoute
+  '/create-classroom': typeof CreateClassroomRoute
   '/feedback': typeof FeedbackRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/intelligence': typeof IntelligenceRoute
@@ -121,13 +148,17 @@ export interface FileRoutesByFullPath {
   '/pedagogy': typeof PedagogyRoute
   '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
+  '/results': typeof ResultsRoute
   '/signup': typeof SignupRoute
   '/teacher': typeof TeacherRoute
   '/join/$code': typeof JoinCodeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/alerts': typeof AlertsRoute
   '/assessment': typeof AssessmentRoute
+  '/class-insights': typeof ClassInsightsRoute
+  '/create-classroom': typeof CreateClassroomRoute
   '/feedback': typeof FeedbackRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/intelligence': typeof IntelligenceRoute
@@ -139,6 +170,7 @@ export interface FileRoutesByTo {
   '/pedagogy': typeof PedagogyRoute
   '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
+  '/results': typeof ResultsRoute
   '/signup': typeof SignupRoute
   '/teacher': typeof TeacherRoute
   '/join/$code': typeof JoinCodeRoute
@@ -146,7 +178,10 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/alerts': typeof AlertsRoute
   '/assessment': typeof AssessmentRoute
+  '/class-insights': typeof ClassInsightsRoute
+  '/create-classroom': typeof CreateClassroomRoute
   '/feedback': typeof FeedbackRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/intelligence': typeof IntelligenceRoute
@@ -158,6 +193,7 @@ export interface FileRoutesById {
   '/pedagogy': typeof PedagogyRoute
   '/profile-setup': typeof ProfileSetupRoute
   '/progress': typeof ProgressRoute
+  '/results': typeof ResultsRoute
   '/signup': typeof SignupRoute
   '/teacher': typeof TeacherRoute
   '/join/$code': typeof JoinCodeRoute
@@ -166,7 +202,10 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/alerts'
     | '/assessment'
+    | '/class-insights'
+    | '/create-classroom'
     | '/feedback'
     | '/forgot-password'
     | '/intelligence'
@@ -178,13 +217,17 @@ export interface FileRouteTypes {
     | '/pedagogy'
     | '/profile-setup'
     | '/progress'
+    | '/results'
     | '/signup'
     | '/teacher'
     | '/join/$code'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/alerts'
     | '/assessment'
+    | '/class-insights'
+    | '/create-classroom'
     | '/feedback'
     | '/forgot-password'
     | '/intelligence'
@@ -196,13 +239,17 @@ export interface FileRouteTypes {
     | '/pedagogy'
     | '/profile-setup'
     | '/progress'
+    | '/results'
     | '/signup'
     | '/teacher'
     | '/join/$code'
   id:
     | '__root__'
     | '/'
+    | '/alerts'
     | '/assessment'
+    | '/class-insights'
+    | '/create-classroom'
     | '/feedback'
     | '/forgot-password'
     | '/intelligence'
@@ -214,6 +261,7 @@ export interface FileRouteTypes {
     | '/pedagogy'
     | '/profile-setup'
     | '/progress'
+    | '/results'
     | '/signup'
     | '/teacher'
     | '/join/$code'
@@ -221,7 +269,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AlertsRoute: typeof AlertsRoute
   AssessmentRoute: typeof AssessmentRoute
+  ClassInsightsRoute: typeof ClassInsightsRoute
+  CreateClassroomRoute: typeof CreateClassroomRoute
   FeedbackRoute: typeof FeedbackRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   IntelligenceRoute: typeof IntelligenceRoute
@@ -233,6 +284,7 @@ export interface RootRouteChildren {
   PedagogyRoute: typeof PedagogyRoute
   ProfileSetupRoute: typeof ProfileSetupRoute
   ProgressRoute: typeof ProgressRoute
+  ResultsRoute: typeof ResultsRoute
   SignupRoute: typeof SignupRoute
   TeacherRoute: typeof TeacherRoute
   JoinCodeRoute: typeof JoinCodeRoute
@@ -252,6 +304,13 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/results': {
+      id: '/results'
+      path: '/results'
+      fullPath: '/results'
+      preLoaderRoute: typeof ResultsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/progress': {
@@ -331,11 +390,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FeedbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/create-classroom': {
+      id: '/create-classroom'
+      path: '/create-classroom'
+      fullPath: '/create-classroom'
+      preLoaderRoute: typeof CreateClassroomRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/class-insights': {
+      id: '/class-insights'
+      path: '/class-insights'
+      fullPath: '/class-insights'
+      preLoaderRoute: typeof ClassInsightsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/assessment': {
       id: '/assessment'
       path: '/assessment'
       fullPath: '/assessment'
       preLoaderRoute: typeof AssessmentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/alerts': {
+      id: '/alerts'
+      path: '/alerts'
+      fullPath: '/alerts'
+      preLoaderRoute: typeof AlertsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -357,7 +437,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AlertsRoute: AlertsRoute,
   AssessmentRoute: AssessmentRoute,
+  ClassInsightsRoute: ClassInsightsRoute,
+  CreateClassroomRoute: CreateClassroomRoute,
   FeedbackRoute: FeedbackRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   IntelligenceRoute: IntelligenceRoute,
@@ -369,6 +452,7 @@ const rootRouteChildren: RootRouteChildren = {
   PedagogyRoute: PedagogyRoute,
   ProfileSetupRoute: ProfileSetupRoute,
   ProgressRoute: ProgressRoute,
+  ResultsRoute: ResultsRoute,
   SignupRoute: SignupRoute,
   TeacherRoute: TeacherRoute,
   JoinCodeRoute: JoinCodeRoute,

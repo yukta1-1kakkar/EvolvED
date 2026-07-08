@@ -1,4 +1,4 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, Navigate, useRouterState } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import {
   BookOpen,
@@ -10,7 +10,10 @@ import {
   Sparkles,
   Search,
   MessageSquarePlus,
+  BarChart3,
+  School,
   Users,
+  Bell,
   UserRoundPlus,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -28,10 +31,23 @@ const nav = [
   { to: ROUTES.INTELLIGENCE, label: "Intelligence", icon: Brain },
   { to: ROUTES.PEDAGOGY, label: "Pedagogy", icon: Compass },
   { to: ROUTES.FEEDBACK, label: "Feedback", icon: MessageSquarePlus },
-  { to: ROUTES.JOIN_CLASS, label: "Join class", icon: UserRoundPlus },
 ] as const;
 
-const teacherNav = [{ to: ROUTES.TEACHER, label: "Teacher", icon: Users }] as const;
+const teacherNav = [
+  { to: ROUTES.TEACHER, label: "Teacher Dashboard", icon: Users },
+  { to: ROUTES.CREATE_CLASSROOM, label: "Create Classroom", icon: School },
+  { to: ROUTES.CLASS_INSIGHTS, label: "Class Insights", icon: BarChart3 },
+] as const;
+const teacherRoutes = new Set<string>(teacherNav.map((item) => item.to));
+
+const classStudentNav = [
+  { to: ROUTES.LESSON, label: "Lesson", icon: BookOpen },
+  { to: ROUTES.ASSESSMENT, label: "Assessment", icon: Target },
+  { to: ROUTES.RESULTS, label: "Results", icon: BarChart3 },
+  { to: ROUTES.ALERTS, label: "Alerts", icon: Bell },
+  { to: ROUTES.JOIN_CLASS, label: "Join Class", icon: UserRoundPlus },
+] as const;
+const classStudentRoutes = new Set<string>(classStudentNav.map((item) => item.to));
 
 export function AppShell({
   children,
@@ -49,13 +65,25 @@ export function AppShell({
   const [showStatusBrief, setShowStatusBrief] = useState(false);
   const statusLabel = accent ?? "Adapting";
   const statusBrief = statusBriefFor(statusLabel);
-  const visibleNav = currentUser?.role === "module_leader" ? [...teacherNav, ...nav] : nav;
+  const isModuleLeader = currentUser?.role === "module_leader";
+  const isClassStudent = currentUser?.accountType === "class_student";
+  const visibleNav = isModuleLeader ? teacherNav : isClassStudent ? classStudentNav : nav;
+  const homeRoute = isModuleLeader ? ROUTES.TEACHER : isClassStudent ? ROUTES.LESSON : ROUTES.KNOWLEDGE;
+  const homeLabel = isModuleLeader ? "Teacher Dashboard" : isClassStudent ? "Lesson" : "Knowledge";
+
+  if (isModuleLeader && !teacherRoutes.has(path)) {
+    return <Navigate to={ROUTES.TEACHER} replace />;
+  }
+
+  if (isClassStudent && !classStudentRoutes.has(path)) {
+    return <Navigate to={ROUTES.LESSON} replace />;
+  }
 
   return (
     <ProtectedRoute>
       <div className="min-h-dvh flex bg-background text-foreground">
         <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-border/70 px-4 py-5 sticky top-0 h-dvh">
-          <Link to={ROUTES.KNOWLEDGE} className="flex items-center gap-2 px-2 mb-7 group">
+          <Link to={homeRoute} className="flex items-center gap-2 px-2 mb-7 group">
             <EvolvedLogo className="size-8" />
             <div className="font-display text-lg tracking-tight">EvolvED</div>
           </Link>
@@ -116,12 +144,12 @@ export function AppShell({
 
         <div className="flex-1 min-w-0 flex flex-col">
           <header className="sticky top-0 z-30 backdrop-blur bg-background/80 border-b border-border/70 px-6 lg:px-10 h-14 flex items-center gap-4">
-            <Link to={ROUTES.KNOWLEDGE} className="lg:hidden font-display">
+            <Link to={homeRoute} className="lg:hidden font-display">
               EvolvED
             </Link>
             <div className="hidden lg:flex items-center gap-2 text-xs text-muted-foreground">
-              <Link to={ROUTES.KNOWLEDGE} className="hover:text-foreground">
-                Knowledge
+              <Link to={homeRoute} className="hover:text-foreground">
+                {homeLabel}
               </Link>
               <span>/</span>
               <span className="text-foreground">{title}</span>

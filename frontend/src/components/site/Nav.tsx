@@ -6,8 +6,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
 
 export function Nav() {
-  const { isAuthenticated } = useAuth();
-  const appEntry = isAuthenticated ? ROUTES.KNOWLEDGE : ROUTES.LOGIN;
+  const { currentUser, isAuthenticated } = useAuth();
+  const isModuleLeader = currentUser?.role === "module_leader";
+  const appEntry = isAuthenticated ? (isModuleLeader ? ROUTES.TEACHER : ROUTES.KNOWLEDGE) : ROUTES.LOGIN;
   const appSearch = isAuthenticated ? undefined : { redirect: ROUTES.KNOWLEDGE };
 
   return (
@@ -22,23 +23,25 @@ export function Nav() {
           <EvolvedLogo className="size-8 transition-transform group-hover:rotate-3" />
           <span className="font-display text-lg tracking-tight">EvolvED</span>
         </Link>
-        <div className="hidden md:flex items-center gap-7 text-sm text-muted-foreground">
-          <Link to={appEntry} search={appSearch} className="hover:text-foreground transition-colors">
-            Knowledge
-          </Link>
-          <Link to={isAuthenticated ? ROUTES.LESSON : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.LESSON }} className="hover:text-foreground transition-colors">
-            Lesson
-          </Link>
-          <Link to={isAuthenticated ? ROUTES.PROGRESS : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.PROGRESS }} className="hover:text-foreground transition-colors">
-            Progress
-          </Link>
-          <Link to={isAuthenticated ? ROUTES.INTELLIGENCE : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.INTELLIGENCE }} className="hover:text-foreground transition-colors">
-            Intelligence
-          </Link>
-          <Link to={isAuthenticated ? ROUTES.PEDAGOGY : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.PEDAGOGY }} className="hover:text-foreground transition-colors">
-            Pedagogy
-          </Link>
-        </div>
+        {!isModuleLeader && (
+          <div className="hidden md:flex items-center gap-7 text-sm text-muted-foreground">
+            <Link to={appEntry} search={appSearch} className="hover:text-foreground transition-colors">
+              Knowledge
+            </Link>
+            <Link to={isAuthenticated ? ROUTES.LESSON : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.LESSON }} className="hover:text-foreground transition-colors">
+              Lesson
+            </Link>
+            <Link to={isAuthenticated ? ROUTES.PROGRESS : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.PROGRESS }} className="hover:text-foreground transition-colors">
+              Progress
+            </Link>
+            <Link to={isAuthenticated ? ROUTES.INTELLIGENCE : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.INTELLIGENCE }} className="hover:text-foreground transition-colors">
+              Intelligence
+            </Link>
+            <Link to={isAuthenticated ? ROUTES.PEDAGOGY : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.PEDAGOGY }} className="hover:text-foreground transition-colors">
+              Pedagogy
+            </Link>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <Link
             to={ROUTES.LOGIN}
@@ -51,7 +54,7 @@ export function Nav() {
             search={appSearch}
             className="rounded-full bg-foreground text-background text-sm px-4 py-2 hover:opacity-90 transition-opacity"
           >
-            Enter EvolvED
+            {isModuleLeader ? "Teacher Dashboard" : "Enter EvolvED"}
           </Link>
         </div>
       </nav>

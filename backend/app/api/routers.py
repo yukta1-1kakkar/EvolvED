@@ -151,6 +151,14 @@ async def join_class(req: models.JoinClassRequest):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
+@router.get("/student/classroom", response_model=models.StudentClassroomResponse)
+async def student_classroom(learner_id: str):
+    try:
+        return await repository.AsyncRepository().student_classroom(learner_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.get("/teacher/dashboard", response_model=models.TeacherDashboardResponse)
 async def teacher_dashboard(leader_id: str):
     try:
@@ -193,7 +201,7 @@ async def upload_content_draft(
     if not source.get("text") and notes.strip():
         source["text"] = notes.strip()
     if not source.get("text"):
-        raise HTTPException(status_code=422, detail="Upload a supported file or paste source notes.")
+        source.update(_fallback_uploaded_source(title, file.filename if file else title))
     try:
         return await repository.AsyncRepository().create_content_draft(
             models.ContentDraftRequest(
@@ -228,19 +236,45 @@ def _uploaded_source(filename: str, content: bytes) -> dict[str, Any]:
     }
     if suffix not in extractors:
         raise HTTPException(status_code=415, detail="Supported uploads: PDF, PPTX, DOCX, Markdown, and text.")
-    text = _clean_extracted_text(extractors[suffix](content))
+    try:
+        text = _clean_extracted_text(extractors[suffix](content))
+    except Exception as exc:
+        logger.warning("Upload text extraction failed; using review scaffold: filename=%s error=%s: %r", filename, type(exc).__name__, exc)
+        text = ""
+    extraction_warning = ""
     if not _is_readable_source_text(text):
-        detail = (
-            "Could not extract readable text from this PDF. Upload a text-based PDF, DOCX, PPTX, Markdown, or paste OCR text in the notes box."
-            if suffix == ".pdf"
-            else "No readable text could be extracted from the uploaded file."
-        )
-        raise HTTPException(status_code=422, detail=detail)
-    return {
+        if suffix == ".pdf" and _has_pdf_text_layer(text):
+            extraction_warning = "PDF text was extracted with low confidence. Review the draft against the source before publishing."
+        else:
+            text = _fallback_source_text(filename, suffix)
+            extraction_warning = (
+                "This file did not expose selectable text to the server. The draft is a review scaffold from the file name; "
+                "paste OCR text or notes for source-faithful content."
+            )
+    result = {
         "filename": Path(filename).name,
         "content_type": suffix.lstrip("."),
         "text": text[:60000],
         "characters": len(text),
+    }
+    if extraction_warning:
+        result["extraction_warning"] = extraction_warning
+    return result
+
+
+def _fallback_uploaded_source(title: str, filename: str | None = None) -> dict[str, Any]:
+    label = Path(filename or title or "draft source").stem
+    suffix = Path(filename or "").suffix.lower().lstrip(".")
+    text = _fallback_source_text(label, f".{suffix}" if suffix else ".txt")
+    return {
+        "filename": Path(filename).name if filename else "",
+        "content_type": suffix or "text",
+        "text": text,
+        "characters": len(text),
+        "extraction_warning": (
+            "No selectable text reached the server. EvolvED generated a teacher-review scaffold from the draft title or file name; "
+            "paste source text for a source-faithful lesson."
+        ),
     }
 
 
@@ -254,9 +288,21 @@ def _decode_text(content: bytes) -> str:
 
 
 def _extract_docx(content: bytes) -> str:
-    with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        names = [name for name in archive.namelist() if name.startswith("word/") and name.endswith(".xml")]
-        return "\n".join(_xml_text(archive.read(name)) for name in names)
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            names = [
+                name for name in archive.namelist()
+                if name.startswith("word/")
+                and name.endswith(".xml")
+                and not name.startswith(("word/theme/", "word/styles", "word/settings", "word/fontTable", "word/numbering"))
+            ]
+            preferred = [
+                name for name in names
+                if name in {"word/document.xml"} or name.startswith(("word/header", "word/footer", "word/footnotes", "word/endnotes", "word/comments"))
+            ]
+            return "\n".join(_xml_text(archive.read(name)) for name in (preferred or names))
+    except zipfile.BadZipFile:
+        return _decode_text(content)
 
 
 def _extract_pptx(content: bytes) -> str:
@@ -275,12 +321,28 @@ def _xml_text(content: bytes) -> str:
 
 
 def _extract_pdf(content: bytes) -> str:
+    library_text = _extract_pdf_with_library(content)
+    if library_text.strip():
+        return library_text
     chunks: list[str] = []
     for stream in _pdf_streams(content):
         chunks.extend(_pdf_text_chunks(stream.decode("latin-1", errors="ignore")))
     if not chunks:
         chunks.extend(_pdf_text_chunks(content.decode("latin-1", errors="ignore")))
     return " ".join(chunks)
+
+
+def _extract_pdf_with_library(content: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        return "\n".join((page.extract_text() or "").strip() for page in reader.pages)
+    except Exception as exc:
+        logger.warning("PDF library extraction failed; falling back to stream parser: %s: %r", type(exc).__name__, exc)
+        return ""
 
 
 def _pdf_streams(content: bytes) -> list[bytes]:
@@ -375,22 +437,24 @@ def _is_readable_source_text(value: str) -> bool:
         value.startswith("PDF-")
         or pdf_markers >= 3
         or (digit_ratio > 0.28 and alpha_ratio < 0.45)
-        or _english_signal(words) < 0.04
     )
 
 
-def _english_signal(words: list[str]) -> float:
-    if len(words) < 80:
-        return 1.0
-    common = {
-        "the", "of", "and", "to", "in", "for", "is", "are", "as", "with", "from", "by", "on", "that", "this", "it",
-        "be", "or", "an", "has", "have", "was", "were", "can", "will", "should", "chapter", "image", "images",
-        "imaging", "medical", "digital", "system", "systems", "data", "learning", "artificial", "intelligence",
-        "technology", "technologies", "development", "healthcare", "source", "content", "analysis", "process",
-        "use", "used", "using", "between", "into", "these", "their", "which", "such", "more", "also",
-    }
-    hits = sum(1 for word in (item.lower() for item in words) if word in common)
-    return hits / max(1, len(words))
+def _has_pdf_text_layer(value: str) -> bool:
+    words = re.findall(r"[A-Za-z][A-Za-z-]{2,}", value)
+    alpha_ratio = sum(char.isalpha() for char in value) / max(1, len(value))
+    return len(words) >= 12 and alpha_ratio >= 0.35
+
+
+def _fallback_source_text(filename: str, suffix: str) -> str:
+    title = _clean_extracted_text(re.sub(r"[_-]+", " ", Path(filename).stem)) or "uploaded PDF"
+    file_type = suffix.lstrip(".").upper() or "file"
+    return (
+        f"The uploaded {file_type} is titled {title}. The file appears to be scanned, image based, or otherwise missing selectable text, "
+        "so the server could not read the page text directly. Create a cautious lesson draft for teacher review with these parts: "
+        "source overview, key vocabulary to extract from the chapter, guided reading steps, discussion prompts, practice activities, "
+        "and an assessment checklist. The module leader should paste OCR text or teacher notes to make the final lesson fully faithful to the file."
+    )
 
 
 @router.post("/learner-profile", response_model=models.LearnerState)

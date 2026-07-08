@@ -5,6 +5,7 @@ export interface AuthUser {
   fullName: string;
   email: string;
   role: "student" | "module_leader";
+  accountType?: "individual_student" | "class_student";
   age?: number;
   profileComplete?: boolean;
   learningTopic?: string;
@@ -30,6 +31,7 @@ export interface SignupCredentials {
   password: string;
   age?: number;
   role?: "student" | "module_leader";
+  moduleLeaderCode?: string;
 }
 
 interface BackendAuthUser {
@@ -69,6 +71,7 @@ export function persistUser(user: AuthUser, rememberMe = true) {
 }
 
 export interface ProfilePreferences {
+  accountType?: "individual_student" | "class_student";
   educationLevel?: string;
   pacePreference?: string;
   preferredModality?: string;
@@ -106,9 +109,9 @@ export async function mockLogin({ rememberMe, ...credentials }: LoginCredentials
 }
 
 export async function mockSignup(credentials: SignupCredentials): Promise<AuthUser> {
-  const response = await apiRequest<BackendAuthUser, { full_name: string; email: string; password: string; age?: number; role?: string }>("/auth/signup", {
+  const response = await apiRequest<BackendAuthUser, { full_name: string; email: string; password: string; age?: number; role?: string; module_leader_code?: string }>("/auth/signup", {
     method: "POST",
-    body: { full_name: credentials.fullName, email: credentials.email, password: credentials.password, age: credentials.age, role: credentials.role },
+    body: { full_name: credentials.fullName, email: credentials.email, password: credentials.password, age: credentials.age, role: credentials.role, module_leader_code: credentials.moduleLeaderCode },
     timeoutMs: 45000,
   });
   const user = fromBackend(response);
@@ -127,6 +130,7 @@ function fromBackend(user: BackendAuthUser): AuthUser {
     fullName: user.full_name,
     email: user.email,
     role: user.role === "module_leader" ? "module_leader" : "student",
+    accountType: accessibility.class_student ? "class_student" : "individual_student",
     age: user.age ?? undefined,
     profileComplete: user.profile_complete,
     learningTopic: user.learning_topic ?? undefined,
