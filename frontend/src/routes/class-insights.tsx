@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { ArrowDownUp, LineChart, Play, Target, Users } from "lucide-react";
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { ArrowDownUp, LineChart, Play, Search, Target, Users } from "lucide-react";
 import { useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
@@ -27,6 +27,8 @@ function ClassInsightsPage() {
   const navigate = Route.useNavigate();
   const [lessonFilter, setLessonFilter] = useState("all");
   const [assessmentFilter, setAssessmentFilter] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [studentSearch, setStudentSearch] = useState("");
   const dashboard = useQuery({
     queryKey: ["teacher-dashboard", currentUser?.id],
     queryFn: () => getTeacherDashboard(currentUser?.id ?? ""),
@@ -52,6 +54,7 @@ function ClassInsightsPage() {
     .filter((student) => !selectedClassId || (student.class_ids ?? []).includes(selectedClassId))
     .sort((left, right) => right.average_score - left.average_score)
     .map((student, index) => ({ ...student, rank: index + 1 }));
+  const visibleStudents = students.filter((student) => student.name.toLowerCase().includes(studentSearch.toLowerCase()));
   const completed = students.filter((student) => (student.completed_lessons ?? 0) > 0).length;
   const started = students.filter(hasStartedLesson).length;
   const averageProgress = average(students.map((student) => student.progress));
@@ -59,7 +62,7 @@ function ClassInsightsPage() {
   const published = (dashboard.data?.drafts ?? []).filter((draft) => draft.status === "accepted" && (!selectedClassId || draft.class_id === selectedClassId));
   const lessons = published.filter((draft) => draft.kind === "lesson");
   const assessments = published.filter((draft) => draft.kind === "assessment");
-  const lessonRows = students.map((student) => {
+  const lessonRows = visibleStudents.map((student) => {
     const allowed = new Set((lessonFilter === "all" ? lessons : lessons.filter((lesson) => lesson.draft_id === lessonFilter)).map((lesson) => lesson.draft_id));
     const activity = (student.content_activity ?? []).filter((item) => item.kind === "lesson" && allowed.has(item.draft_id));
     const durations = activity.map((item) => item.duration_seconds).filter(isNumber);
@@ -70,7 +73,7 @@ function ClassInsightsPage() {
       duration: durations.length ? average(durations) : null,
     };
   });
-  const assessmentRows = students
+  const assessmentRows = visibleStudents
     .map((student) => {
       const allowed = new Set((assessmentFilter === "all" ? assessments : assessments.filter((assessment) => assessment.draft_id === assessmentFilter)).map((assessment) => assessment.draft_id));
       const activity = (student.content_activity ?? []).filter((item) => item.kind === "assessment" && item.completed && allowed.has(item.draft_id));
@@ -166,9 +169,29 @@ function ClassInsightsPage() {
       </div>
 
       <section className="rounded-2xl border border-border bg-card p-5">
-        <div className="mb-4">
-          <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Learning trends</div>
-          <h2 className="mt-1 font-display text-xl">{selectedClass?.name ?? "Class insights"}</h2>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Learning trends</div>
+            <h2 className="mt-1 font-display text-xl">{selectedClass?.name ?? "Class insights"}</h2>
+          </div>
+          <form
+            className="flex w-full max-w-sm gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setStudentSearch(searchInput.trim());
+            }}
+          >
+            <input
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Search student"
+              aria-label="Search student"
+              className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+            />
+            <button type="submit" className="inline-flex h-10 items-center gap-2 rounded-md bg-foreground px-4 text-sm text-background">
+              <Search className="size-4" /> Search
+            </button>
+          </form>
         </div>
         <div className="overflow-x-auto">
           {lessonFilter && (
@@ -177,7 +200,13 @@ function ClassInsightsPage() {
               <tbody>
                 {lessonRows.map((student) => (
                   <tr key={student.learner_id} className="border-b border-border/60">
-                    <td className="py-3 pr-4 font-medium">{student.name}</td>
+                    <td className="py-3 pr-4 font-medium">
+                      {assessmentFilter === "all" ? (
+                        <Link to="/student/$studentId" params={{ studentId: student.learner_id }} className="text-plum underline-offset-4 hover:underline">
+                          {student.name}
+                        </Link>
+                      ) : student.name}
+                    </td>
                     <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.itemTitle}</td>
                     <td className="py-3 pr-4">{pct(student.completion)}</td>
                     <td className="py-3 pr-4 text-muted-foreground">{formatDuration(student.duration)}</td>
@@ -206,6 +235,11 @@ function ClassInsightsPage() {
         {!dashboard.isLoading && students.length === 0 && (
           <div className="grid min-h-32 place-items-center rounded-xl bg-muted/30 text-sm text-muted-foreground">
             {selectedClass ? "No learners are enrolled in this classroom yet." : "No class insight data is available yet."}
+          </div>
+        )}
+        {!dashboard.isLoading && students.length > 0 && visibleStudents.length === 0 && (
+          <div className="grid min-h-32 place-items-center rounded-xl bg-muted/30 text-sm text-muted-foreground">
+            No student matches “{studentSearch}”.
           </div>
         )}
       </section>

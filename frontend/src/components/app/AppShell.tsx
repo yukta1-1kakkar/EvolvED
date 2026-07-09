@@ -124,7 +124,7 @@ export function AppShell({
     setNotification(null);
   }
 
-  if (isModuleLeader && !teacherRoutes.has(path)) {
+  if (isModuleLeader && !teacherRoutes.has(path) && !path.startsWith("/student/")) {
     return <Navigate to={ROUTES.TEACHER} replace />;
   }
 
