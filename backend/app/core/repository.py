@@ -34,6 +34,7 @@ _LOCAL_COMPLETIONS: list[Dict[str, Any]] = []
 
 class AsyncRepository:
     async def register_learner(self, req: models.SignupRequest) -> models.AuthUser:
+        class_student = str(req.role or "").strip().lower() in {"class_student", "class-student"}
         role = _normalized_role(req.role)
         if role == "module_leader":
             _require_module_leader_signup_code(req.module_leader_code)
@@ -41,15 +42,19 @@ class AsyncRepository:
             raise ValueError("Student accounts require a learner age.")
         age_group = _age_group(req.age) if req.age is not None else None
         try:
-            learner = await asyncio.wait_for(self._register_learner_db(req, role, age_group), timeout=12)
+            learner = await asyncio.wait_for(self._register_learner_db(req, role, age_group, class_student), timeout=12)
         except ValueError:
             raise
         except Exception as exc:
             logger.warning("Database signup unavailable; creating local learner: %s: %r", type(exc).__name__, exc)
             email = req.email.lower()
             if email in _LOCAL_EMAIL_INDEX:
+                existing = _LOCAL_LEARNERS.get(_LOCAL_EMAIL_INDEX[email])
+                if class_student and existing and existing.password_hash and _verify_password(req.password, existing.password_hash) and existing.onboarding_status == "profile_pending":
+                    existing.accessibility = {**(existing.accessibility or {}), "class_student": True}
+                    return _auth_user(existing)
                 raise ValueError("An EvolvED account already exists for this email.")
-            learner = db_models.Learner(learner_id=str(uuid4()), full_name=req.full_name.strip(), email=email, password_hash=_hash_password(req.password), role=role, age=req.age, age_group=age_group, onboarding_status="profile_pending", learner_model=_initial_model())
+            learner = db_models.Learner(learner_id=str(uuid4()), full_name=req.full_name.strip(), email=email, password_hash=_hash_password(req.password), role=role, age=req.age, age_group=age_group, onboarding_status="profile_pending", learner_model=_initial_model(), accessibility={"class_student": True} if class_student else {})
             _LOCAL_LEARNERS[learner.learner_id] = learner
             _LOCAL_EMAIL_INDEX[email] = learner.learner_id
         return _auth_user(learner)
@@ -101,7 +106,7 @@ class AsyncRepository:
             return models.LearnerProfile(learner_id=learner_id)
         return self._profile(learner)
 
-    async def _register_learner_db(self, req: models.SignupRequest, role: str, age_group: str | None) -> db_models.Learner:
+    async def _register_learner_db(self, req: models.SignupRequest, role: str, age_group: str | None, class_student: bool = False) -> db_models.Learner:
         async with AsyncSessionLocal() as session:
             existing = await session.scalar(sa.select(db_models.Learner).where(db_models.Learner.email == req.email.lower()))
             if existing:
@@ -109,6 +114,11 @@ class AsyncRepository:
                     existing.role = "module_leader"
                     existing.age = None
                     existing.age_group = None
+                    await session.commit()
+                    await session.refresh(existing)
+                    return existing
+                if class_student and existing.password_hash and _verify_password(req.password, existing.password_hash) and existing.onboarding_status == "profile_pending":
+                    existing.accessibility = {**(existing.accessibility or {}), "class_student": True}
                     await session.commit()
                     await session.refresh(existing)
                     return existing
@@ -123,6 +133,7 @@ class AsyncRepository:
                 age_group=age_group,
                 onboarding_status="profile_pending",
                 learner_model=_initial_model(),
+                accessibility={"class_student": True} if class_student else {},
             )
             session.add(learner)
             await session.commit()
@@ -1109,9 +1120,9 @@ def _normalized_role(role: str | None) -> str:
     value = str(role or "student").strip().lower()
     if value in {"teacher", "module_leader", "module-leader"}:
         return "module_leader"
-    if value in {"student", "individual", "learner"}:
+    if value in {"student", "individual", "learner", "class_student", "class-student"}:
         return "student"
-    raise ValueError("Role must be student or module_leader.")
+    raise ValueError("Role must be student, class_student, or module_leader.")
 
 
 def _join_code() -> str:

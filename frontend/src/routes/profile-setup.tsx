@@ -24,6 +24,12 @@ const profileSchema = z.object({
 });
 
 type ProfileFormValues = z.infer<typeof profileSchema>;
+const classStudentProfileSchema = z.object({
+  pacePreference: z.string().min(1, "Choose a learning pace."),
+  preferredModality: z.string().min(1, "Choose a learning style."),
+  accessibility: z.boolean(),
+});
+type ClassStudentProfileValues = z.infer<typeof classStudentProfileSchema>;
 
 export const Route = createFileRoute("/profile-setup")({
   head: () => ({
@@ -36,6 +42,103 @@ export const Route = createFileRoute("/profile-setup")({
 });
 
 function ProfileSetupPage() {
+  const { currentUser } = useAuth();
+  return currentUser?.accountType === "class_student" ? <ClassStudentProfileSetupPage /> : <IndividualProfileSetupPage />;
+}
+
+function ClassStudentProfileSetupPage() {
+  const { currentUser, completeProfile, loading } = useAuth();
+  const navigate = useNavigate();
+  const [saving, setSaving] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+    setError,
+  } = useForm<ClassStudentProfileValues>({
+    resolver: zodResolver(classStudentProfileSchema),
+    defaultValues: { accessibility: false },
+  });
+
+  useEffect(() => {
+    if (!loading && !currentUser) void navigate({ to: ROUTES.LOGIN, replace: true });
+  }, [currentUser, loading, navigate]);
+
+  async function onSubmit(values: ClassStudentProfileValues) {
+    if (!currentUser) return;
+    setSaving(true);
+    try {
+      await createLearnerProfile({
+        learner_id: currentUser.id,
+        age_group: getAgeGroup(currentUser.age),
+        pace_preference: values.pacePreference,
+        preferred_modality: [values.preferredModality],
+        accessibility: {
+          class_student: true,
+          additional_support: values.accessibility,
+          dyslexia_support: values.accessibility,
+          chunked_explanations: values.accessibility,
+          readable_spacing: values.accessibility,
+          focus_mode_available: true,
+        },
+      });
+      completeProfile("", "", {
+        accountType: "class_student",
+        pacePreference: values.pacePreference,
+        preferredModality: values.preferredModality,
+        accessibilitySupport: values.accessibility,
+      });
+      await navigate({ to: ROUTES.JOIN_CLASS, replace: true });
+    } catch (error) {
+      setError("root", { message: error instanceof Error ? error.message : "Profile setup failed. Please try again." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <AuthLayout
+      eyebrow="Set up classroom learning"
+      title={`A few learning preferences${currentUser?.fullName ? `, ${currentUser.fullName.split(" ")[0]}` : ""}.`}
+      subtitle="Choose how lessons should be presented, then join your module leader's class."
+    >
+      <form onSubmit={handleSubmit(onSubmit)} className="mt-7 space-y-4" noValidate>
+        <Field label="Preferred pace" htmlFor="pacePreference" error={errors.pacePreference?.message}>
+          <Select id="pacePreference" {...register("pacePreference")}>
+            <option value="">Choose a pace</option>
+            <option value="gentle">Gentle and thorough</option>
+            <option value="balanced">Balanced</option>
+            <option value="fast">Fast and challenging</option>
+          </Select>
+        </Field>
+        <Field label="Preferred learning style" htmlFor="preferredModality" error={errors.preferredModality?.message}>
+          <Select id="preferredModality" {...register("preferredModality")}>
+            <option value="">Choose a style</option>
+            <option value="visual">Visual examples and diagrams</option>
+            <option value="audio">Audio learning</option>
+            <option value="reading">Detailed written explanations</option>
+          </Select>
+        </Field>
+        <label className="flex items-start gap-3 rounded-xl border border-border bg-background/45 p-3 text-sm text-muted-foreground">
+          <input type="checkbox" className="mt-0.5 size-4 accent-plum" {...register("accessibility")} />
+          <span>I would like dyslexia-aware spacing, chunked explanations, focus mode, and clearer step-by-step lessons.</span>
+        </label>
+        {errors.root?.message && (
+          <div className="flex gap-2 rounded-xl border border-destructive/25 bg-destructive/8 px-3 py-2 text-sm text-destructive">
+            <AlertCircle className="mt-0.5 size-4" />
+            <span>{errors.root.message}</span>
+          </div>
+        )}
+        <Button type="submit" className="h-12 w-full rounded-xl" disabled={saving || loading || !currentUser}>
+          {saving ? <Loader2 className="animate-spin" /> : <ArrowRight />}
+          Continue to class code
+        </Button>
+      </form>
+    </AuthLayout>
+  );
+}
+
+function IndividualProfileSetupPage() {
   const { currentUser, completeProfile, loading } = useAuth();
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);

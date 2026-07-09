@@ -45,14 +45,14 @@ const signupSchema = z
         message: "Enter a valid learner age from 8 to 120.",
       });
     }
-    if (values.role !== "class_student" && !values.confirmPassword) {
+    if (!values.confirmPassword) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["confirmPassword"],
         message: "Confirm your password.",
       });
     }
-    if (values.role !== "class_student" && values.password !== values.confirmPassword) {
+    if (values.password !== values.confirmPassword) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["confirmPassword"],
@@ -81,7 +81,6 @@ type ClassStudentPreferences = {
   educationLevel: string;
   pacePreference: string;
   preferredModality: string;
-  learningAvailability: string;
   accessibilitySupport: boolean;
 };
 
@@ -105,7 +104,6 @@ function SignupPage() {
     educationLevel: "",
     pacePreference: "",
     preferredModality: "",
-    learningAvailability: "",
     accessibilitySupport: false,
   });
 
@@ -142,11 +140,11 @@ function SignupPage() {
         email: values.email,
         password: values.password,
         age: values.role !== "module_leader" ? values.age : undefined,
-        role: values.role === "module_leader" ? "module_leader" : "student",
+        role: values.role,
         moduleLeaderCode: values.role === "module_leader" ? values.moduleLeaderCode?.trim() : undefined,
       });
       if (values.role === "class_student") {
-        setClassStudent(user);
+        await navigate({ to: ROUTES.PROFILE_SETUP, replace: true });
         return;
       }
       await navigate({ to: user.role === "module_leader" ? ROUTES.TEACHER : ROUTES.PROFILE_SETUP, replace: true });
@@ -194,24 +192,14 @@ function SignupPage() {
               <option>Professional or independent learner</option>
             </Select>
           </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Preferred pace" htmlFor="classPacePreference">
-              <Select id="classPacePreference" value={classPreferences.pacePreference} onChange={(event) => setClassPreferences((current) => ({ ...current, pacePreference: event.target.value }))}>
-                <option value="">Choose a pace</option>
-                <option value="gentle">Gentle and thorough</option>
-                <option value="balanced">Balanced</option>
-                <option value="fast">Fast and challenging</option>
-              </Select>
-            </Field>
-            <Field label="Learning availability" htmlFor="classLearningAvailability">
-              <Select id="classLearningAvailability" value={classPreferences.learningAvailability} onChange={(event) => setClassPreferences((current) => ({ ...current, learningAvailability: event.target.value }))}>
-                <option value="">Choose your daily time</option>
-                <option value="30_min">30 min/day</option>
-                <option value="60_min">1 hr/day</option>
-                <option value="120_min">2 hr/day</option>
-              </Select>
-            </Field>
-          </div>
+          <Field label="Preferred pace" htmlFor="classPacePreference">
+            <Select id="classPacePreference" value={classPreferences.pacePreference} onChange={(event) => setClassPreferences((current) => ({ ...current, pacePreference: event.target.value }))}>
+              <option value="">Choose a pace</option>
+              <option value="gentle">Gentle and thorough</option>
+              <option value="balanced">Balanced</option>
+              <option value="fast">Fast and challenging</option>
+            </Select>
+          </Field>
           <Field label="Preferred learning style" htmlFor="classPreferredModality">
             <Select id="classPreferredModality" value={classPreferences.preferredModality} onChange={(event) => setClassPreferences((current) => ({ ...current, preferredModality: event.target.value }))}>
               <option value="">Choose a style</option>
@@ -232,7 +220,7 @@ function SignupPage() {
               </div>
             </div>
           )}
-          <Button type="submit" className="h-12 w-full rounded-xl" disabled={!classCode.trim() || !classPreferences.educationLevel || !classPreferences.pacePreference || !classPreferences.preferredModality || !classPreferences.learningAvailability || classJoin.pending}>
+          <Button type="submit" className="h-12 w-full rounded-xl" disabled={!classCode.trim() || !classPreferences.educationLevel || !classPreferences.pacePreference || !classPreferences.preferredModality || classJoin.pending}>
             {classJoin.pending ? <Loader2 className="animate-spin" /> : <UserRoundPlus />}
             Join class and continue
           </Button>
@@ -255,7 +243,7 @@ function SignupPage() {
 
       <form onSubmit={handleSubmit(onSubmit)} className="mt-7 space-y-4" noValidate>
         <input type="hidden" {...register("role")} />
-        <div className="grid gap-2 rounded-2xl border border-border bg-background/45 p-1.5 sm:grid-cols-3">
+        <div className="grid gap-2 rounded-2xl border border-border bg-background/45 p-1.5 sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-border/70">
           <RoleButton
             active={role === "student"}
             icon={GraduationCap}
@@ -275,7 +263,6 @@ function SignupPage() {
             onClick={() => {
               setValue("role", "class_student", { shouldValidate: true });
               setValue("moduleLeaderCode", "", { shouldValidate: true });
-              setValue("confirmPassword", "", { shouldValidate: true });
               setValue("termsAccepted", true, { shouldValidate: true });
             }}
           />
@@ -358,22 +345,22 @@ function SignupPage() {
           <PasswordStrength password={password} strength={strength} />
         </Field>
 
+        <Field
+          label="Confirm password"
+          htmlFor="confirmPassword"
+          error={errors.confirmPassword?.message}
+        >
+          <Input
+            id="confirmPassword"
+            type={showPassword ? "text" : "password"}
+            autoComplete="new-password"
+            className="h-12 rounded-xl bg-background/70 px-4"
+            {...register("confirmPassword")}
+          />
+        </Field>
+
         {role !== "class_student" && (
           <>
-            <Field
-              label="Confirm password"
-              htmlFor="confirmPassword"
-              error={errors.confirmPassword?.message}
-            >
-              <Input
-                id="confirmPassword"
-                type={showPassword ? "text" : "password"}
-                autoComplete="new-password"
-                className="h-12 rounded-xl bg-background/70 px-4"
-                {...register("confirmPassword")}
-              />
-            </Field>
-
             <label className="flex items-start gap-3 rounded-xl border border-border bg-background/45 p-3 text-sm text-muted-foreground">
               <input
                 type="checkbox"
@@ -491,7 +478,6 @@ function useClassJoinMutation(
             readable_spacing: preferences.accessibilitySupport,
             focus_mode_available: true,
           },
-          learning_availability: preferences.learningAvailability,
           learning_project: joinedClass.name,
         });
         completeProfile("", joinedClass.name, {
@@ -499,7 +485,6 @@ function useClassJoinMutation(
           educationLevel: preferences.educationLevel,
           pacePreference: preferences.pacePreference,
           preferredModality: preferences.preferredModality,
-          learningAvailability: preferences.learningAvailability,
           accessibilitySupport: preferences.accessibilitySupport,
         });
         setSuccess(joinedClass.name);

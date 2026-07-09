@@ -30,7 +30,7 @@ export interface SignupCredentials {
   email: string;
   password: string;
   age?: number;
-  role?: "student" | "module_leader";
+  role?: "student" | "class_student" | "module_leader";
   moduleLeaderCode?: string;
 }
 
