@@ -22,6 +22,17 @@ export interface TeacherStudentSummary {
   current_lesson: string;
   average_score: number;
   assessment_scores?: number[];
+  content_activity?: Array<{
+    draft_id: string;
+    class_id: string;
+    kind: "lesson" | "assessment";
+    title: string;
+    completed: boolean;
+    score?: number | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+    duration_seconds?: number | null;
+  }>;
   rank: number;
   accessibility_settings: ApiRecord;
   last_active?: string | null;
@@ -45,6 +56,7 @@ export interface TeacherDashboardResponse {
 
 export interface ContentDraft {
   draft_id: string;
+  class_id?: string | null;
   kind: "lesson" | "assessment";
   title: string;
   status: "draft" | "accepted" | "rejected" | "changes_requested";

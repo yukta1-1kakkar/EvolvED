@@ -502,6 +502,7 @@ class AsyncRepository:
                         draft.generated_content = healed
                 await session.commit()
                 class_summaries = [_class_summary(row, sum(1 for item in enrollments if item.class_id == row.id)) for row in classes]
+                class_id_by_pk = {row.id: row.class_id for row in classes}
         except ValueError:
             raise
         except Exception as exc:
@@ -530,7 +531,12 @@ class AsyncRepository:
             leader_id=leader_id,
             classes=class_summaries,
             students=ranked,
-            drafts=[_draft_response(item) if hasattr(item, "draft_id") else _local_draft_response(item) for item in draft_rows],
+            drafts=[
+                _draft_response(item, class_id_by_pk.get(item.class_id))
+                if hasattr(item, "draft_id")
+                else _local_draft_response(item)
+                for item in draft_rows
+            ],
             totals=totals,
         )
 
@@ -697,6 +703,7 @@ class AsyncRepository:
             _LOCAL_SESSIONS[(req.learner_id, session_id)] = {
                 "lesson": {"topic": draft["title"]},
                 "status": "started",
+                "started_at": datetime.now(timezone.utc),
             }
             return {"started": True}
 
@@ -911,6 +918,29 @@ class AsyncRepository:
         class_ids = [item.class_id for item in enrollments]
         published = (await session.scalars(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.class_id.in_(class_ids), db_models.ContentDraft.status == "accepted"))).all() if class_ids else []
         completions = (await session.scalars(sa.select(db_models.ContentCompletion).where(db_models.ContentCompletion.learner_id == learner.id).order_by(db_models.ContentCompletion.completed_at.desc()))).all()
+        class_rows = {class_pk: await session.get(db_models.ClassGroup, class_pk) for class_pk in class_ids}
+        starts = {row.session_id: row for row in sessions if row.session_id.startswith("published-start:")}
+        completion_by_draft = {item.draft_id: item for item in completions}
+        content_activity = []
+        for draft in published:
+            completion = completion_by_draft.get(draft.id)
+            start = starts.get(f"published-start:{learner.learner_id}:{draft.draft_id}")
+            duration = (
+                max(0.0, (completion.completed_at - start.created_at).total_seconds())
+                if completion and completion.completed_at and start and start.created_at
+                else None
+            )
+            content_activity.append({
+                "draft_id": draft.draft_id,
+                "class_id": class_rows[draft.class_id].class_id if class_rows.get(draft.class_id) else "",
+                "kind": draft.kind,
+                "title": draft.title,
+                "completed": completion is not None,
+                "score": float(completion.score) if completion else None,
+                "started_at": _iso(start.created_at) if start else None,
+                "completed_at": _iso(completion.completed_at) if completion else None,
+                "duration_seconds": duration,
+            })
         scores = [float((row.result or {}).get("score", 0.0)) for row in assessments]
         current_draft = next((item for item in published if completions and item.id == completions[0].draft_id), None)
         current_lesson = current_draft.title if current_draft else _current_lesson_title(sessions)
@@ -925,6 +955,7 @@ class AsyncRepository:
             current_lesson=current_lesson,
             average_score=_average(scores),
             assessment_scores=scores,
+            content_activity=content_activity,
             accessibility_settings=learner.accessibility or {},
             last_active=_iso(last_active),
             status=_student_status(progress, scores),
@@ -949,6 +980,29 @@ class AsyncRepository:
         class_ids = {item["class_id"] for item in _LOCAL_ENROLLMENTS if item["student_id"] == learner_id}
         published = [item for item in _LOCAL_DRAFTS.values() if item.get("class_id") in class_ids and item.get("status") == "accepted"]
         completions = [item for item in _LOCAL_COMPLETIONS if item["learner_id"] == learner_id]
+        completion_by_draft = {item["draft_id"]: item for item in completions}
+        content_activity = []
+        for draft in published:
+            completion = completion_by_draft.get(draft["draft_id"])
+            start = _LOCAL_SESSIONS.get((learner_id, f"published-start:{learner_id}:{draft['draft_id']}"))
+            started_at = (start or {}).get("started_at")
+            completed_at = (completion or {}).get("completed_at")
+            duration = (
+                max(0.0, (completed_at - started_at).total_seconds())
+                if isinstance(completed_at, datetime) and isinstance(started_at, datetime)
+                else None
+            )
+            content_activity.append({
+                "draft_id": draft["draft_id"],
+                "class_id": draft.get("class_id") or "",
+                "kind": draft["kind"],
+                "title": draft["title"],
+                "completed": completion is not None,
+                "score": float(completion["score"]) if completion else None,
+                "started_at": _iso(started_at) if started_at else None,
+                "completed_at": _iso(completed_at) if completed_at else None,
+                "duration_seconds": duration,
+            })
         progress = len(completions) / len(published) if published else _average(scores)
         has_session = any(session_learner_id == learner_id for session_learner_id, _ in _LOCAL_SESSIONS)
         return models.TeacherStudentSummary(
@@ -959,6 +1013,7 @@ class AsyncRepository:
             current_lesson=str((_LOCAL_DRAFTS.get(completions[-1]["draft_id"]) or {}).get("title") or ("Lesson in progress" if has_session else "Not started")) if completions else ("Lesson in progress" if has_session else "Not started"),
             average_score=_average(scores),
             assessment_scores=scores,
+            content_activity=content_activity,
             accessibility_settings=learner.accessibility or {},
             last_active=_iso(datetime.now(timezone.utc)),
             status=_student_status(progress, scores),
@@ -1296,11 +1351,12 @@ def _draft_needs_healing(generated_content: Dict[str, Any]) -> bool:
     return bool(summary and _looks_unreadable_source(summary)) or _looks_like_fallback_assessment(question_text) or _looks_like_match_assessment(question_text)
 
 
-def _draft_response(row: db_models.ContentDraft) -> models.ContentDraftResponse:
+def _draft_response(row: db_models.ContentDraft, class_id: str | None = None) -> models.ContentDraftResponse:
     source_material = row.source_material or {}
     generated_content = _healed_draft_preview(row.kind, row.title, source_material, row.generated_content or {})
     return models.ContentDraftResponse(
         draft_id=row.draft_id,
+        class_id=class_id,
         kind=row.kind,
         title=row.title,
         status=row.status,
@@ -1315,7 +1371,10 @@ def _local_draft_response(row: Dict[str, Any]) -> models.ContentDraftResponse:
         **row,
         "generated_content": _healed_draft_preview(row["kind"], row["title"], row.get("source_material") or {}, row.get("generated_content") or {}),
     }
-    return models.ContentDraftResponse(**{key: healed[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")})
+    return models.ContentDraftResponse(
+        **{key: healed[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")},
+        class_id=healed.get("class_id"),
+    )
 
 
 def _lesson_preview(title: str, source_text: str) -> Dict[str, Any]:

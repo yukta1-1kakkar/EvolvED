@@ -10,7 +10,7 @@ import { VectorArrowDiagram } from "@/components/learning/VectorArrowDiagram";
 import { isVectorVisualText } from "@/components/learning/vectorVisual";
 import { useGenerateQuiz, useSubmitAssessment } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
-import { getStudentClassroom, type StudentClassAlert } from "@/lib/api/classroom";
+import { getStudentClassroom, startPublishedContent, type StudentClassAlert } from "@/lib/api/classroom";
 import { completeActiveRoadmapLesson, prepareNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import type { ApiJson, ApiRecord } from "@/types/api";
 
@@ -180,6 +180,12 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
   const [readerMode, setReaderMode] = useState<ReaderMode>("standard");
   const submit = useSubmitAssessment();
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    void startPublishedContent(learnerId, alert.draft_id).catch((error) => {
+      console.error("Could not record published assessment start", error);
+    });
+  }, [alert.draft_id, learnerId]);
 
   useEffect(() => {
     if (!submit.data) return;

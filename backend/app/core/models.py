@@ -248,6 +248,7 @@ class TeacherStudentSummary(BaseModel):
     current_lesson: str = "Not started"
     average_score: float = 0.0
     assessment_scores: List[float] = Field(default_factory=list)
+    content_activity: List[Dict[str, Any]] = Field(default_factory=list)
     rank: int = 0
     accessibility_settings: Dict[str, Any] = Field(default_factory=dict)
     last_active: Optional[str] = None
@@ -264,6 +265,7 @@ class ContentDraftRequest(BaseModel):
 
 class ContentDraftResponse(BaseModel):
     draft_id: str
+    class_id: Optional[str] = None
     kind: str
     title: str
     status: str

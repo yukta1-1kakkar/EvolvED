@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ArrowDownUp, LineChart, Play, Target, Users } from "lucide-react";
+import { useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +25,8 @@ function ClassInsightsPage() {
   const { currentUser } = useAuth();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const [lessonFilter, setLessonFilter] = useState("all");
+  const [assessmentFilter, setAssessmentFilter] = useState("");
   const dashboard = useQuery({
     queryKey: ["teacher-dashboard", currentUser?.id],
     queryFn: () => getTeacherDashboard(currentUser?.id ?? ""),
@@ -53,6 +56,35 @@ function ClassInsightsPage() {
   const started = students.filter(hasStartedLesson).length;
   const averageProgress = average(students.map((student) => student.progress));
   const averageAssessment = average(students.flatMap((student) => student.assessment_scores ?? []));
+  const published = (dashboard.data?.drafts ?? []).filter((draft) => draft.status === "accepted" && (!selectedClassId || draft.class_id === selectedClassId));
+  const lessons = published.filter((draft) => draft.kind === "lesson");
+  const assessments = published.filter((draft) => draft.kind === "assessment");
+  const lessonRows = students.map((student) => {
+    const allowed = new Set((lessonFilter === "all" ? lessons : lessons.filter((lesson) => lesson.draft_id === lessonFilter)).map((lesson) => lesson.draft_id));
+    const activity = (student.content_activity ?? []).filter((item) => item.kind === "lesson" && allowed.has(item.draft_id));
+    const durations = activity.map((item) => item.duration_seconds).filter(isNumber);
+    return {
+      ...student,
+      itemTitle: lessonFilter === "all" ? "All lessons" : lessons.find((lesson) => lesson.draft_id === lessonFilter)?.title ?? "Lesson",
+      completion: allowed.size ? activity.filter((item) => item.completed).length / allowed.size : 0,
+      duration: durations.length ? average(durations) : null,
+    };
+  });
+  const assessmentRows = students
+    .map((student) => {
+      const allowed = new Set((assessmentFilter === "all" ? assessments : assessments.filter((assessment) => assessment.draft_id === assessmentFilter)).map((assessment) => assessment.draft_id));
+      const activity = (student.content_activity ?? []).filter((item) => item.kind === "assessment" && item.completed && allowed.has(item.draft_id));
+      const scores = activity.map((item) => item.score).filter(isNumber);
+      const durations = activity.map((item) => item.duration_seconds).filter(isNumber);
+      return {
+        ...student,
+        itemTitle: assessmentFilter === "all" ? "All assessments" : assessments.find((assessment) => assessment.draft_id === assessmentFilter)?.title ?? "Assessment",
+        score: scores.length ? average(scores) : null,
+        duration: durations.length ? average(durations) : null,
+      };
+    })
+    .sort((left, right) => (right.score ?? -1) - (left.score ?? -1))
+    .map((student, index) => ({ ...student, rank: student.score === null ? null : index + 1 }));
 
   return (
     <AppShell title="Class insights" subtitle="Class progress, completion, engagement, and assessment performance." accent={dashboard.isFetching ? "Syncing" : "Live"}>
@@ -66,11 +98,13 @@ function ClassInsightsPage() {
         <label className="block text-[10px] uppercase tracking-[0.24em] text-muted-foreground" htmlFor="class-insights-class">
           Classroom
         </label>
-        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="mt-2 grid gap-3 md:grid-cols-3">
           <select
             id="class-insights-class"
             value={selectedClassId}
             onChange={(event) => {
+              setLessonFilter("all");
+              setAssessmentFilter("");
               void navigate({
                 search: { classId: event.target.value },
                 replace: true,
@@ -85,9 +119,35 @@ function ClassInsightsPage() {
               </option>
             ))}
           </select>
-          <div className="text-sm text-muted-foreground">
-            {selectedClass ? `${selectedClass.student_count} enrolled students in ${selectedClass.name}` : `${students.length} students across all classrooms`}
-          </div>
+          <select
+            aria-label="Lesson"
+            value={lessonFilter}
+            onChange={(event) => {
+              setLessonFilter(event.target.value);
+              if (event.target.value) setAssessmentFilter("");
+            }}
+            className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Choose lesson</option>
+            <option value="all">All lessons</option>
+            {lessons.map((lesson) => <option key={lesson.draft_id} value={lesson.draft_id}>{lesson.title}</option>)}
+          </select>
+          <select
+            aria-label="Assessment"
+            value={assessmentFilter}
+            onChange={(event) => {
+              setAssessmentFilter(event.target.value);
+              if (event.target.value) setLessonFilter("");
+            }}
+            className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Choose assessment</option>
+            <option value="all">All assessments</option>
+            {assessments.map((assessment) => <option key={assessment.draft_id} value={assessment.draft_id}>{assessment.title}</option>)}
+          </select>
+        </div>
+        <div className="mt-3 text-sm text-muted-foreground">
+          {selectedClass ? `${selectedClass.student_count} enrolled students in ${selectedClass.name}` : `${students.length} students across all classrooms`}
         </div>
       </div>
 
@@ -111,31 +171,37 @@ function ClassInsightsPage() {
           <h2 className="mt-1 font-display text-xl">{selectedClass?.name ?? "Class insights"}</h2>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="border-b border-border text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              <tr>
-                {["Rank", "Name", "Current lesson", "Average score", "Last active"].map((heading) => (
-                  <th key={heading} className="py-3 pr-4 font-medium">
-                    <span className="inline-flex items-center gap-1">
-                      {heading}
-                      <ArrowDownUp className="size-3" />
-                    </span>
-                  </th>
+          {lessonFilter && (
+            <table className="w-full min-w-[680px] text-left text-sm">
+              <TableHead headings={["Name", "Lesson", "Completion", "Time"]} />
+              <tbody>
+                {lessonRows.map((student) => (
+                  <tr key={student.learner_id} className="border-b border-border/60">
+                    <td className="py-3 pr-4 font-medium">{student.name}</td>
+                    <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.itemTitle}</td>
+                    <td className="py-3 pr-4">{pct(student.completion)}</td>
+                    <td className="py-3 pr-4 text-muted-foreground">{formatDuration(student.duration)}</td>
+                  </tr>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {students.map((student) => (
-                <tr key={student.learner_id} className="border-b border-border/60">
-                  <td className="py-3 pr-4 font-medium">#{student.rank}</td>
-                  <td className="py-3 pr-4 font-medium">{student.name}</td>
-                  <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.current_lesson}</td>
-                  <td className="py-3 pr-4">{pct(student.average_score)}</td>
-                  <td className="py-3 pr-4 text-muted-foreground">{formatDate(student.last_active)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          )}
+          {assessmentFilter && (
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <TableHead headings={["Rank", "Name", "Assessment", "Score", "Time"]} />
+              <tbody>
+                {assessmentRows.map((student) => (
+                  <tr key={student.learner_id} className="border-b border-border/60">
+                    <td className="py-3 pr-4 font-medium">{student.rank === null ? "—" : `#${student.rank}`}</td>
+                    <td className="py-3 pr-4 font-medium">{student.name}</td>
+                    <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.itemTitle}</td>
+                    <td className="py-3 pr-4">{student.score === null ? "—" : pct(student.score)}</td>
+                    <td className="py-3 pr-4 text-muted-foreground">{formatDuration(student.duration)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
         {!dashboard.isLoading && students.length === 0 && (
           <div className="grid min-h-32 place-items-center rounded-xl bg-muted/30 text-sm text-muted-foreground">
@@ -159,6 +225,20 @@ function InsightCard({ icon: Icon, label, value }: { icon: typeof Users; label: 
   );
 }
 
+function TableHead({ headings }: { headings: string[] }) {
+  return (
+    <thead className="border-b border-border text-xs uppercase tracking-[0.16em] text-muted-foreground">
+      <tr>
+        {headings.map((heading) => (
+          <th key={heading} className="py-3 pr-4 font-medium">
+            <span className="inline-flex items-center gap-1">{heading}<ArrowDownUp className="size-3" /></span>
+          </th>
+        ))}
+      </tr>
+    </thead>
+  );
+}
+
 function hasStartedLesson(student: TeacherStudentSummary) {
   return student.progress > 0 || student.current_lesson !== "Not started";
 }
@@ -172,7 +252,12 @@ function average(values: number[]) {
   return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : 0;
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return "Not active yet";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(value));
+function isNumber(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function formatDuration(seconds: number | null) {
+  if (seconds === null) return "—";
+  const minutes = Math.round(seconds / 60);
+  return minutes < 1 ? "<1 min" : `${minutes} min`;
 }
