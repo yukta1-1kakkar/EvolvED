@@ -156,7 +156,7 @@ function PublishedAssessmentPage({ learnerId }: { learnerId: string }) {
     queryKey: ["student-classroom", learnerId],
     queryFn: () => getStudentClassroom(learnerId),
   });
-  const assessments = (classroom.data?.alerts ?? []).filter((item) => item.kind === "assessment");
+  const assessments = (classroom.data?.alerts ?? []).filter((item) => item.kind === "assessment" && !item.completed);
   const selected = assessments.find((item) => item.draft_id === draft) ?? assessments[0];
 
   return (
@@ -165,7 +165,7 @@ function PublishedAssessmentPage({ learnerId }: { learnerId: string }) {
       {classroom.isError && <p className="text-sm text-destructive">{classroom.error.message}</p>}
       {!classroom.isLoading && !selected && (
         <div className="grid min-h-48 place-items-center rounded-2xl border border-border bg-card text-sm text-muted-foreground">
-          Your teacher has not published an assessment yet.
+          No new assessments have been published.
         </div>
       )}
       {selected && <PublishedAssessment alert={selected} assessments={assessments} learnerId={learnerId} />}
@@ -201,6 +201,17 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
     });
   }
 
+  if (submit.data) {
+    return (
+      <div className="grid min-h-72 place-items-center rounded-3xl border border-border bg-card p-8">
+        <div className="flex items-center gap-3 font-display text-2xl">
+          <Check className="size-6 text-emerald-600" />
+          Submitted
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={readerModeClass(readerMode)}>
       <div className="max-w-5xl space-y-4">
@@ -234,22 +245,12 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
             />
           );
         })}
-        {!submit.data && questions.length > 0 && (
+        {questions.length > 0 && (
           <button type="button" onClick={submitQuiz} disabled={questions.some((question, index) => !answerComplete(answers[questionId(question, index)])) || submit.isPending} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
             {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Submit published assessment
           </button>
         )}
         {submit.isError && <p className="text-sm text-destructive">{submit.error.message}</p>}
-        {submit.data && (
-          <AssessmentResultCard
-            score={submit.data.score}
-            feedback={submit.data.detailed_feedback}
-            nextAction={humanizeIdentifier(textValue(submit.data.adaptation.action))}
-            recommendationAction={recommendedActionText(submit.data.detailed_feedback, textValue(submit.data.adaptation.action))}
-            onRecommended={() => setAnswers({})}
-            onNext={() => undefined}
-          />
-        )}
       </div>
     </div>
   );

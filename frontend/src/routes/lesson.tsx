@@ -35,7 +35,7 @@ import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
 import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
-import { completePublishedContent, getStudentClassroom, startPublishedContent, type StudentClassAlert } from "@/lib/api/classroom";
+import { completePublishedContent, getStudentClassroom, startPublishedContent, type StudentClassAlert, type StudentClassroomResponse } from "@/lib/api/classroom";
 import { constraintsFromBrief, makeInitialBrief, prefetchRoadmapLessons, roadmapItemToRecord, type LessonBrief } from "@/lib/lesson-planning";
 import { getActiveRoadmapTopic, getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, peekNextRoadmapLessonContext, setActiveRoadmapLesson, setActiveRoadmapTopic, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import { ROUTES } from "@/lib/routes";
@@ -224,7 +224,7 @@ function PublishedLessonsPage({ learnerId }: { learnerId: string }) {
     queryKey: ["student-classroom", learnerId],
     queryFn: () => getStudentClassroom(learnerId),
   });
-  const lessons = (classroom.data?.alerts ?? []).filter((item) => item.kind === "lesson");
+  const lessons = (classroom.data?.alerts ?? []).filter((item) => item.kind === "lesson" && !item.completed);
   const selected = lessons.find((item) => item.draft_id === draft) ?? lessons[0];
 
   return (
@@ -233,7 +233,7 @@ function PublishedLessonsPage({ learnerId }: { learnerId: string }) {
       {classroom.isError && <ErrorPanel title="Could not load published lessons" message={classroom.error.message} onRetry={() => void classroom.refetch()} />}
       {!classroom.isLoading && !selected && (
         <div className="grid min-h-48 place-items-center rounded-2xl border border-border bg-card text-sm text-muted-foreground">
-          Your teacher has not published a lesson yet.
+          No new lessons have been published.
         </div>
       )}
       {selected && <PublishedLesson alert={selected} lessons={lessons} learnerId={learnerId} />}
@@ -247,21 +247,20 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
   const sections = recordArray(content.sections);
   const objectives = recordsFrom(content.learning_objectives).map(String);
   const flowSteps = recordsFrom(recordArray(content.flowcharts)[0]?.steps).map(String);
-  const tutor = useTutorInteraction();
   const queryClient = useQueryClient();
-  const [question, setQuestion] = useState("");
-  const [tutorOpen, setTutorOpen] = useState(false);
   const [readerMode, setReaderMode] = useState<"standard" | "dyslexia" | "focus">(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
   const [reachedEnd, setReachedEnd] = useState(false);
   const completionMarkerRef = useRef<HTMLDivElement>(null);
   const completion = useMutation({
     mutationFn: () => completePublishedContent(learnerId, alert.draft_id),
     onSuccess: async () => {
+      queryClient.setQueryData<StudentClassroomResponse>(["student-classroom", learnerId], (current) => current ? {
+        ...current,
+        alerts: current.alerts.map((item) => item.draft_id === alert.draft_id ? { ...item, completed: true } : item),
+      } : current);
       await queryClient.invalidateQueries({ queryKey: ["student-classroom", learnerId] });
     },
   });
-  const modality = currentUser?.preferredModality || "mixed";
-  const pace = currentUser?.pacePreference || "balanced";
 
   useEffect(() => {
     setReachedEnd(false);
@@ -277,35 +276,10 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
     return () => observer.disconnect();
   }, [alert.draft_id]);
 
-  function askTutor() {
-    if (!question.trim()) return;
-    tutor.mutate({
-      learner_id: learnerId,
-      session_id: `published:${alert.draft_id}`,
-      question: question.trim(),
-      action: "question",
-    }, { onSuccess: () => setQuestion("") });
-  }
-
-  function readLessonAloud() {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const text = [alert.title, stringValue(content.summary), ...sections.flatMap((section) => [stringValue(section.title), stringValue(section.summary)])].filter(Boolean).join(". ");
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-  }
-
   return (
     <div className={`space-y-5 ${readerModeClass(readerMode)}`}>
       <ReaderControls mode={readerMode} onChange={setReaderMode} />
-      <section className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-muted/20 p-4 text-xs text-muted-foreground">
-        <span className="rounded-full bg-background px-3 py-1.5">Your format: {modality}</span>
-        <span className="rounded-full bg-background px-3 py-1.5">Your pace: {pace}</span>
-        {(modality.toLowerCase().includes("audio") || modality.toLowerCase().includes("auditory")) && (
-          <button type="button" onClick={readLessonAloud} className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-foreground">
-            <Volume2 className="size-3.5" /> Listen to lesson
-          </button>
-        )}
-      </section>
+      <div className="published-reader space-y-5">
       {lessons.length > 1 && (
         <nav className="flex flex-wrap gap-2" aria-label="Published lessons">
           {lessons.map((lesson) => (
@@ -334,50 +308,210 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
       ))}
       {flowSteps.length > 0 && <AgentList icon={GitBranch} title="Lesson flow" empty="" items={flowSteps.map((prompt) => ({ prompt }))} />}
       <div ref={completionMarkerRef} className="rounded-2xl border border-border bg-card p-6">
-        <h3 className="font-display text-xl">{alert.completed ? "Lesson completed" : "Finish this lesson"}</h3>
+        <h3 className="font-display text-xl">Finish this lesson</h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          {alert.completed
-            ? "Your completion and evaluation are available to you and your module leader."
-            : reachedEnd
-              ? "You reached the end of every published section. You can now complete the lesson."
-              : "Read through every published section to unlock completion."}
+          {reachedEnd
+            ? "You reached the end of every published section. You can now complete the lesson."
+            : "Read through every published section to unlock completion."}
         </p>
-        {!alert.completed && (
-          <button type="button" disabled={!reachedEnd || completion.isPending} onClick={() => completion.mutate()} className="mt-4 inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
-            {completion.isPending ? <RefreshCw className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
-            Complete full lesson
-          </button>
-        )}
+        <button type="button" disabled={!reachedEnd || completion.isPending} onClick={() => completion.mutate()} className="mt-4 inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+          {completion.isPending ? <RefreshCw className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+          Complete full lesson
+        </button>
         {completion.isError && <p className="mt-3 text-sm text-destructive">{completion.error.message}</p>}
       </div>
-      <button type="button" onClick={() => setTutorOpen(true)} className="fixed right-0 top-1/2 z-30 inline-flex -translate-y-1/2 items-center gap-2 rounded-l-full bg-foreground px-4 py-3 text-sm text-background shadow-lg">
-        <MessageCircle className="size-4" /> AI tutor
+      </div>
+      <PublishedLessonTutor learnerId={learnerId} draftId={alert.draft_id} />
+    </div>
+  );
+}
+
+function PublishedLessonTutor({ learnerId, draftId }: { learnerId: string; draftId: string }) {
+  const tutor = useTutorInteraction();
+  const [question, setQuestion] = useState("");
+  const [open, setOpen] = useState(false);
+  const [responseMode, setResponseMode] = useState<"text" | "audio">("text");
+  const [audioUrl, setAudioUrl] = useState("");
+  const [audioStatus, setAudioStatus] = useState("");
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordingStatus, setRecordingStatus] = useState("");
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+
+  function askTutor() {
+    if (!question.trim()) return;
+    tutor.mutate({
+      learner_id: learnerId,
+      session_id: `published:${draftId}`,
+      question: question.trim(),
+      action: "question",
+    }, { onSuccess: () => setQuestion("") });
+  }
+
+  function toggleRecording() {
+    if (recording) {
+      recognitionRef.current?.stop();
+      setRecording(false);
+      setRecordingStatus("Recording stopped");
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const SpeechRecognition =
+      (window as unknown as { SpeechRecognition?: BrowserSpeechRecognitionConstructor; webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor }).SpeechRecognition ||
+      (window as unknown as { SpeechRecognition?: BrowserSpeechRecognitionConstructor; webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor }).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setRecordingStatus("Voice input is not supported in this browser");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onstart = () => {
+      setRecording(true);
+      setLiveTranscript("");
+      setRecordingStatus("Listening...");
+    };
+    recognition.onend = () => {
+      setRecording(false);
+      setRecordingStatus("Voice captured");
+    };
+    recognition.onerror = (event) => {
+      setRecording(false);
+      setRecordingStatus(event.error ? `Voice input failed: ${event.error}` : "Voice input failed");
+    };
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let index = 0; index < event.results.length; index += 1) transcript += event.results[index][0].transcript;
+      transcript = transcript.trim();
+      setLiveTranscript(transcript);
+      if (transcript) setQuestion(transcript);
+      setRecordingStatus("Transcribing...");
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch (error) {
+      console.error("Voice question recording failed to start", error);
+      setRecordingStatus("Voice input failed to start");
+    }
+  }
+
+  async function prepareAudio() {
+    const answer = tutor.data?.answer?.trim();
+    if (!answer) return;
+    if (audioUrl) {
+      if (audioRef.current?.paused) void audioRef.current.play();
+      else audioRef.current?.pause();
+      return;
+    }
+    setAudioStatus("Preparing audio...");
+    try {
+      const blob = await synthesizeLessonAudio(answer);
+      if (!blob.size || !["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"].includes(blob.type)) throw new Error("Invalid tutor audio response");
+      const objectUrl = URL.createObjectURL(blob);
+      setAudioUrl(objectUrl);
+      setAudioStatus("Ready");
+      window.setTimeout(() => void audioRef.current?.play(), 0);
+    } catch (error) {
+      console.error("Tutor audio generation failed", error);
+      setAudioStatus("Audio unavailable");
+    }
+  }
+
+  useEffect(() => {
+    setAudioUrl("");
+    setAudioStatus("");
+    setAudioPlaying(false);
+  }, [tutor.data?.answer]);
+
+  useEffect(() => () => {
+    recognitionRef.current?.abort();
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+  }, [audioUrl]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="fixed bottom-4 right-4 z-40 flex cursor-pointer items-center gap-2 rounded-full border border-plum/25 bg-foreground px-4 py-3 text-sm text-background shadow-xl md:bottom-6 md:right-6"
+      >
+        <Sparkles className="size-4" /> AI tutor
       </button>
-      {tutorOpen && (
-        <div className="fixed inset-0 z-50 bg-foreground/25" onClick={() => setTutorOpen(false)}>
-          <aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-card shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-border p-5">
-              <div>
-                <div className="text-xs uppercase tracking-[0.16em] text-plum">Published lesson tutor</div>
-                <h3 className="font-display text-xl">{alert.title}</h3>
-              </div>
-              <button type="button" onClick={() => setTutorOpen(false)} aria-label="Close AI tutor"><X className="size-5" /></button>
-            </div>
+      {open && (
+        <div className="fixed inset-0 z-50">
+          <button type="button" aria-label="Close AI tutor" onClick={() => setOpen(false)} className="absolute inset-0 bg-foreground/25" />
+          <aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-card shadow-2xl">
             <div className="flex-1 overflow-y-auto p-5">
-              <p className="text-sm text-muted-foreground">Ask about this teacher-published lesson. The tutor is restricted to its content.</p>
-              {tutor.data && <div className="mt-4 rounded-2xl bg-muted/35 p-4"><TutorAnswerText answer={tutor.data.answer} /></div>}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                  <Sparkles className="size-3.5 text-plum" /> AI tutor
+                </div>
+                <button type="button" onClick={() => setOpen(false)} className="rounded-full border border-border p-2 text-muted-foreground hover:text-foreground" aria-label="Close AI tutor">
+                  <X className="size-4" />
+                </button>
+              </div>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">Ask about this published lesson. The tutor stays grounded in its content.</p>
+              <div className="mt-4 grid grid-cols-2 rounded-2xl border border-border bg-muted/25 p-1">
+                {(["text", "audio"] as const).map((mode) => (
+                  <button key={mode} type="button" onClick={() => setResponseMode(mode)} className={`rounded-xl px-3 py-2 text-xs font-medium capitalize ${responseMode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
+                    {mode}
+                  </button>
+                ))}
+              </div>
+              {tutor.data && (
+                <div className="mt-4 rounded-2xl bg-muted/35 p-4">
+                  {responseMode === "text" && <TutorAnswerText answer={tutor.data.answer} />}
+                  <div className={`${responseMode === "audio" ? "" : "mt-3"} flex flex-wrap items-center gap-2`}>
+                    <button type="button" onClick={prepareAudio} className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs ${responseMode === "audio" ? "bg-foreground text-background" : "border border-border text-muted-foreground"}`}>
+                      {audioPlaying ? <Pause className="size-3.5" /> : <Volume2 className="size-3.5" />}
+                      {audioPlaying ? "Pause audio" : audioUrl ? "Play audio" : "Play answer"}
+                    </button>
+                    {audioStatus && <span className="text-xs text-muted-foreground">{audioStatus}</span>}
+                    {audioUrl && <audio ref={audioRef} src={audioUrl} className="hidden" onPlay={() => setAudioPlaying(true)} onPause={() => setAudioPlaying(false)} onEnded={() => setAudioPlaying(false)} />}
+                  </div>
+                  {responseMode === "audio" && (
+                    <details className="mt-3 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">Show text version</summary>
+                      <div className="mt-3 rounded-xl bg-background/70 p-3"><TutorAnswerText answer={tutor.data.answer} /></div>
+                    </details>
+                  )}
+                </div>
+              )}
               {tutor.isError && <p className="mt-3 text-sm text-destructive">{tutor.error.message}</p>}
             </div>
-            <form className="flex gap-2 border-t border-border p-5" onSubmit={(event) => { event.preventDefault(); askTutor(); }}>
-              <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask for a hint or simpler explanation" className="min-h-24 flex-1 rounded-2xl border border-input bg-background p-3 text-sm outline-none focus:border-plum" />
-              <button type="submit" disabled={tutor.isPending || !question.trim()} className="self-end rounded-full bg-foreground p-3 text-background disabled:opacity-50">
-                {tutor.isPending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
+            <form className="flex gap-2 border-t border-border bg-card p-5" onSubmit={(event) => { event.preventDefault(); askTutor(); }}>
+              <textarea
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    askTutor();
+                  }
+                }}
+                placeholder="Ask for a hint or a simpler explanation"
+                className="min-h-24 flex-1 rounded-2xl border border-input bg-background p-3 text-sm outline-none focus:border-plum"
+              />
+              <button type="button" onClick={toggleRecording} className={`self-end rounded-full border p-3 ${recording ? "border-plum bg-plum/10 text-plum" : "border-border text-muted-foreground"}`} aria-label={recording ? "Stop recording question" : "Record question"}>
+                {recording ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+              </button>
+              <button type="submit" disabled={tutor.isPending || !question.trim()} className="self-end rounded-full bg-foreground p-3 text-background disabled:opacity-50" aria-label="Send question">
+                <Send className="size-4" />
               </button>
             </form>
+            <div className="px-5 pb-5">
+              {liveTranscript && recording && <p className="text-xs text-muted-foreground">Transcript: {liveTranscript}</p>}
+              {recordingStatus && <p className="mt-2 text-xs text-muted-foreground">{recordingStatus}</p>}
+              {tutor.isPending && <p className="mt-2 text-xs text-muted-foreground">Tutor is responding...</p>}
+            </div>
           </aside>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

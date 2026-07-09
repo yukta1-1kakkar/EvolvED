@@ -76,6 +76,7 @@ export function AppShell({
     queryFn: () => getStudentClassroom(currentUser?.id ?? ""),
     enabled: Boolean(isClassStudent && currentUser?.id),
   });
+  const unfinishedPublishedCount = (classroom.data?.alerts ?? []).filter((item) => !item.completed && (item.kind === "lesson" || item.kind === "assessment")).length;
   const [notification, setNotification] = useState<StudentClassAlert | null>(null);
   const visibleNav = isModuleLeader ? teacherNav : isClassStudent ? classStudentNav : nav;
   const homeRoute = isModuleLeader ? ROUTES.TEACHER : isClassStudent ? ROUTES.ALERTS : ROUTES.KNOWLEDGE;
@@ -170,6 +171,11 @@ export function AppShell({
                   )}
                   <n.icon className="size-4" />
                   <span className="flex-1">{n.label}</span>
+                  {isClassStudent && n.to === ROUTES.ALERTS && unfinishedPublishedCount > 0 && (
+                    <span className="grid min-w-5 place-items-center rounded-full bg-plum px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                      {unfinishedPublishedCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}
@@ -256,10 +262,15 @@ export function AppShell({
               <Link
                 key={n.to}
                 to={n.to}
-                className={`flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-xl text-[10px] ${active ? "text-foreground bg-foreground/5" : "text-muted-foreground"}`}
+                className={`relative flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-xl text-[10px] ${active ? "text-foreground bg-foreground/5" : "text-muted-foreground"}`}
               >
                 <n.icon className="size-4" />
                 <span>{n.label}</span>
+                {isClassStudent && n.to === ROUTES.ALERTS && unfinishedPublishedCount > 0 && (
+                  <span className="absolute right-2 top-1 grid min-w-4 place-items-center rounded-full bg-plum px-1 text-[9px] font-semibold text-white">
+                    {unfinishedPublishedCount}
+                  </span>
+                )}
               </Link>
             );
           })}

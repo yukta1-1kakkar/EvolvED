@@ -18,10 +18,10 @@ function ResultsPage() {
     queryFn: () => getStudentClassroom(currentUser?.id ?? ""),
     enabled: Boolean(currentUser?.id),
   });
-  const results = classroom.data?.results ?? [];
+  const results = (classroom.data?.results ?? []).filter((result) => result.kind === "assessment");
 
   return (
-    <AppShell title="Results" subtitle="Your evaluated published lesson and assessment results." accent={classroom.isFetching ? "Syncing" : "Results"}>
+    <AppShell title="Results" subtitle="Your assessment evaluations." accent={classroom.isFetching ? "Syncing" : "Results"}>
       <section className="rounded-2xl border border-border bg-card p-5">
         <div className="mb-4 flex items-center gap-2">
           <BarChart3 className="size-4 text-plum" />
@@ -49,7 +49,7 @@ function ResultsPage() {
           </div>
         ) : (
           <div className="grid min-h-32 place-items-center rounded-xl bg-muted/30 text-sm text-muted-foreground">
-            No evaluated lesson or assessment results yet.
+            No assessment results yet.
           </div>
         )}
         {classroom.isError && <p className="mt-4 text-sm text-destructive">{classroom.error.message}</p>}
