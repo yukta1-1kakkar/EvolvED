@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ArrowDownUp, LineChart, Play, Search, Target, Users } from "lucide-react";
+import { ArrowDownUp, ExternalLink, LineChart, Play, Search, Target, Users } from "lucide-react";
 import { useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
@@ -222,7 +222,20 @@ function ClassInsightsPage() {
                 {assessmentRows.map((student) => (
                   <tr key={student.learner_id} className="border-b border-border/60">
                     <td className="py-3 pr-4 font-medium">{student.rank === null ? "—" : `#${student.rank}`}</td>
-                    <td className="py-3 pr-4 font-medium">{student.name}</td>
+                    <td className="py-3 pr-4 font-medium">
+                      {assessmentFilter === "all" ? (
+                        <Link
+                          to="/student/$studentId"
+                          params={{ studentId: student.learner_id }}
+                          aria-label={`Open assessment data for ${student.name}`}
+                          title="Open student assessment data"
+                          className="-mx-2 inline-flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-plum transition-colors hover:bg-plum/10 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-plum"
+                        >
+                          <span>{student.name}</span>
+                          <ExternalLink className="size-4" aria-hidden="true" />
+                        </Link>
+                      ) : student.name}
+                    </td>
                     <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.itemTitle}</td>
                     <td className="py-3 pr-4">{student.score === null ? "—" : pct(student.score)}</td>
                     <td className="py-3 pr-4 text-muted-foreground">{formatDuration(student.duration)}</td>
