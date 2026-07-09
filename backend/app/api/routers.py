@@ -159,6 +159,14 @@ async def student_classroom(learner_id: str):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
+@router.post("/student/content/complete", response_model=models.PublishedContentCompletionResponse)
+async def complete_published_content(req: models.PublishedContentCompletionRequest):
+    try:
+        return await repository.AsyncRepository().complete_published_content(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.get("/teacher/dashboard", response_model=models.TeacherDashboardResponse)
 async def teacher_dashboard(leader_id: str):
     try:
@@ -616,6 +624,15 @@ async def submit_assessment(sub: models.AssessmentSubmission):
         evolved = _normalize_generated_value(await langgraph_nodes.evolutionary_agent({"learner_model": state.model_dump(), "assessment": result.model_dump(), "adaptation": decision.adaptations}))
         result.adaptation = decision.adaptations
         await repo.save_assessment_and_evolve(sub, result, decision, evolved)
+        if sub.session_id.startswith("published:"):
+            await repo.complete_published_content(
+                models.PublishedContentCompletionRequest(
+                    learner_id=sub.learner_id,
+                    draft_id=sub.session_id.removeprefix("published:"),
+                ),
+                score=result.score,
+                evaluation=result.detailed_feedback,
+            )
         logger.info("Assessment submit completed: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
         return result
     except Exception as exc:

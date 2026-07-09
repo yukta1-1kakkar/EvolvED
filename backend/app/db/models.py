@@ -97,6 +97,20 @@ class ContentDraft(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class ContentCompletion(Base):
+    __tablename__ = "content_completions"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "draft_id", name="uq_content_completion_learner_draft"),
+    )
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    draft_id = Column(Integer, ForeignKey("content_drafts.id"), nullable=False)
+    kind = Column(String(32), nullable=False)
+    score = Column(Float, nullable=False, default=1.0)
+    evaluation = Column(Text, nullable=False, default="")
+    completed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Session(Base):
     __tablename__ = "sessions"
     id = Column(Integer, primary_key=True, index=True)

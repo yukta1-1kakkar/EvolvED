@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Accessibility, ArrowRight, BookOpen, Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -179,6 +179,12 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
   const [confidence, setConfidence] = useState<Record<string, number>>({});
   const [readerMode, setReaderMode] = useState<ReaderMode>("standard");
   const submit = useSubmitAssessment();
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!submit.data) return;
+    void queryClient.invalidateQueries({ queryKey: ["student-classroom", learnerId] });
+  }, [learnerId, queryClient, submit.data]);
 
   function submitQuiz() {
     submit.mutate({

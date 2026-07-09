@@ -40,7 +40,10 @@ function AlertsPage() {
                   <div className="flex items-start gap-3">
                     <Icon className="mt-1 size-4 text-plum" />
                     <div>
-                      <div className="font-medium">{alert.title}</div>
+                      <div className="flex flex-wrap items-center gap-2 font-medium">
+                        <span>{alert.title}</span>
+                        {alert.completed && <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-emerald-700">Completed</span>}
+                      </div>
                       <p className="mt-1 text-sm text-muted-foreground">{alert.message}</p>
                       <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                         <span>{alert.class_name}</span>

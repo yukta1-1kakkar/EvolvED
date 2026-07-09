@@ -306,6 +306,8 @@ class StudentClassAlert(BaseModel):
     draft_id: str
     message: str
     published_content: Dict[str, Any] = Field(default_factory=dict)
+    completed: bool = False
+    completed_at: Optional[str] = None
     created_at: Optional[str] = None
 
 
@@ -315,6 +317,8 @@ class StudentAssessmentResultSummary(BaseModel):
     title: str
     score: float = 0.0
     feedback: str = ""
+    kind: str = "assessment"
+    draft_id: Optional[str] = None
     created_at: Optional[str] = None
 
 
@@ -323,6 +327,20 @@ class StudentClassroomResponse(BaseModel):
     classes: List[ClassSummary] = Field(default_factory=list)
     alerts: List[StudentClassAlert] = Field(default_factory=list)
     results: List[StudentAssessmentResultSummary] = Field(default_factory=list)
+
+
+class PublishedContentCompletionRequest(BaseModel):
+    learner_id: str
+    draft_id: str
+
+
+class PublishedContentCompletionResponse(BaseModel):
+    draft_id: str
+    kind: str
+    completed: bool
+    score: float
+    evaluation: str
+    completed_at: Optional[str] = None
 
 
 class TutorInteractionRequest(BaseModel):

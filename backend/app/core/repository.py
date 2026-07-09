@@ -29,6 +29,7 @@ _LOCAL_ASSESSMENTS: list[Dict[str, Any]] = []
 _LOCAL_CLASSES: dict[str, Dict[str, Any]] = {}
 _LOCAL_ENROLLMENTS: list[Dict[str, str]] = []
 _LOCAL_DRAFTS: dict[str, Dict[str, Any]] = {}
+_LOCAL_COMPLETIONS: list[Dict[str, Any]] = []
 
 
 class AsyncRepository:
@@ -565,9 +566,16 @@ class AsyncRepository:
                 if class_ids:
                     drafts = (await session.scalars(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.class_id.in_(class_ids), db_models.ContentDraft.status == "accepted").order_by(db_models.ContentDraft.updated_at.desc()))).all()
                 assessments = (await session.scalars(sa.select(db_models.Assessment).where(db_models.Assessment.learner_id == learner.id).order_by(db_models.Assessment.created_at.desc()))).all()
+                completions = (await session.scalars(sa.select(db_models.ContentCompletion).where(db_models.ContentCompletion.learner_id == learner.id).order_by(db_models.ContentCompletion.completed_at.desc()))).all()
+                completion_by_draft = {item.draft_id: item for item in completions}
                 classes = [_class_summary(row, 0) for row in class_rows]
-                alerts = [_student_alert(draft, next((item for item in class_rows if item.id == draft.class_id), None), leaders.get(draft.leader_id)) for draft in drafts]
-                results = [_student_result(row) for row in assessments]
+                alerts = [_student_alert(draft, next((item for item in class_rows if item.id == draft.class_id), None), leaders.get(draft.leader_id), completion_by_draft.get(draft.id)) for draft in drafts]
+                results = [
+                    _completion_result(item, next((draft for draft in drafts if draft.id == item.draft_id), None))
+                    for item in completions
+                    if next((draft for draft in drafts if draft.id == item.draft_id), None)
+                ]
+                results.extend(_student_result(row) for row in assessments if not str(row.session_id or "").startswith("published:"))
         except ValueError:
             raise
         except Exception as exc:
@@ -575,9 +583,83 @@ class AsyncRepository:
             class_ids = [item["class_id"] for item in _LOCAL_ENROLLMENTS if item["student_id"] == learner_id]
             local_classes = [item for item in _LOCAL_CLASSES.values() if item["class_id"] in class_ids]
             classes = [models.ClassSummary(**{**item, "created_at": _iso(item["created_at"]), "student_count": _local_class_count(item["class_id"])}) for item in local_classes]
-            alerts = [_local_student_alert(draft, next((item for item in local_classes if item["class_id"] == draft.get("class_id")), None)) for draft in _LOCAL_DRAFTS.values() if draft.get("class_id") in class_ids and draft.get("status") == "accepted"]
-            results = [_local_student_result(item) for item in _LOCAL_ASSESSMENTS if item.get("learner_id") == learner_id]
+            local_completions = [item for item in _LOCAL_COMPLETIONS if item["learner_id"] == learner_id]
+            alerts = [_local_student_alert(draft, next((item for item in local_classes if item["class_id"] == draft.get("class_id")), None), next((item for item in local_completions if item["draft_id"] == draft.get("draft_id")), None)) for draft in _LOCAL_DRAFTS.values() if draft.get("class_id") in class_ids and draft.get("status") == "accepted"]
+            results = [_local_completion_result(item, _LOCAL_DRAFTS.get(item["draft_id"])) for item in local_completions]
+            results.extend(_local_student_result(item) for item in _LOCAL_ASSESSMENTS if item.get("learner_id") == learner_id and not str(item.get("session_id") or "").startswith("published:"))
+        results.sort(key=lambda item: item.created_at or "", reverse=True)
         return models.StudentClassroomResponse(learner_id=learner_id, classes=classes, alerts=alerts, results=results)
+
+    async def complete_published_content(
+        self,
+        req: models.PublishedContentCompletionRequest,
+        *,
+        score: float = 1.0,
+        evaluation: str = "",
+    ) -> models.PublishedContentCompletionResponse:
+        try:
+            async with AsyncSessionLocal() as session:
+                learner = await self._require_role(session, req.learner_id, "student")
+                draft = await session.scalar(
+                    sa.select(db_models.ContentDraft)
+                    .join(db_models.Enrollment, db_models.Enrollment.class_id == db_models.ContentDraft.class_id)
+                    .where(
+                        db_models.ContentDraft.draft_id == req.draft_id,
+                        db_models.ContentDraft.status == "accepted",
+                        db_models.Enrollment.student_id == learner.id,
+                        db_models.Enrollment.status == "active",
+                    )
+                )
+                if not draft:
+                    raise ValueError("Published content was not found in one of your joined classes.")
+                completion = await session.scalar(
+                    sa.select(db_models.ContentCompletion).where(
+                        db_models.ContentCompletion.learner_id == learner.id,
+                        db_models.ContentCompletion.draft_id == draft.id,
+                    )
+                )
+                if not completion:
+                    completion = db_models.ContentCompletion(
+                        learner_id=learner.id,
+                        draft_id=draft.id,
+                        kind=draft.kind,
+                        score=max(0.0, min(1.0, score)),
+                        evaluation=evaluation or _completion_evaluation(draft.kind, draft.title, score),
+                    )
+                    session.add(completion)
+                elif draft.kind == "assessment":
+                    completion.score = max(0.0, min(1.0, score))
+                    completion.evaluation = evaluation or completion.evaluation
+                await session.commit()
+                await session.refresh(completion)
+                return _completion_response(completion, draft.draft_id)
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Database content completion unavailable; storing locally: %s: %r", type(exc).__name__, exc)
+            class_ids = {item["class_id"] for item in _LOCAL_ENROLLMENTS if item["student_id"] == req.learner_id}
+            draft = _LOCAL_DRAFTS.get(req.draft_id)
+            if not draft or draft.get("class_id") not in class_ids or draft.get("status") != "accepted":
+                raise ValueError("Published content was not found in one of your joined classes.")
+            completion = next((item for item in _LOCAL_COMPLETIONS if item["learner_id"] == req.learner_id and item["draft_id"] == req.draft_id), None)
+            if not completion:
+                completion = {
+                    "learner_id": req.learner_id,
+                    "draft_id": req.draft_id,
+                    "kind": draft["kind"],
+                    "score": max(0.0, min(1.0, score)),
+                    "evaluation": evaluation or _completion_evaluation(draft["kind"], draft["title"], score),
+                    "completed_at": datetime.now(timezone.utc),
+                }
+                _LOCAL_COMPLETIONS.append(completion)
+            return models.PublishedContentCompletionResponse(
+                draft_id=req.draft_id,
+                kind=completion["kind"],
+                completed=True,
+                score=float(completion["score"]),
+                evaluation=completion["evaluation"],
+                completed_at=_iso(completion["completed_at"]),
+            )
 
     async def create_content_draft(self, req: models.ContentDraftRequest) -> models.ContentDraftResponse:
         try:
@@ -775,10 +857,16 @@ class AsyncRepository:
         assessments = (await session.scalars(sa.select(db_models.Assessment).where(db_models.Assessment.learner_id == learner.id).order_by(db_models.Assessment.created_at))).all()
         sessions = (await session.scalars(sa.select(db_models.Session).where(db_models.Session.learner_id == learner.id).order_by(db_models.Session.updated_at.desc()))).all()
         progress_rows = (await session.scalars(sa.select(db_models.CurriculumProgress).where(db_models.CurriculumProgress.learner_id == learner.id))).all()
+        enrollments = (await session.scalars(sa.select(db_models.Enrollment).where(db_models.Enrollment.student_id == learner.id, db_models.Enrollment.status == "active"))).all()
+        class_ids = [item.class_id for item in enrollments]
+        published = (await session.scalars(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.class_id.in_(class_ids), db_models.ContentDraft.status == "accepted"))).all() if class_ids else []
+        completions = (await session.scalars(sa.select(db_models.ContentCompletion).where(db_models.ContentCompletion.learner_id == learner.id).order_by(db_models.ContentCompletion.completed_at.desc()))).all()
         scores = [float((row.result or {}).get("score", 0.0)) for row in assessments]
-        current_lesson = _current_lesson_title(sessions)
-        progress = _average([float(row.mastery_score or 0.0) for row in progress_rows])
-        last_active = max([row.updated_at for row in sessions if row.updated_at] + [learner.updated_at or learner.created_at])
+        current_draft = next((item for item in published if completions and item.id == completions[0].draft_id), None)
+        current_lesson = current_draft.title if current_draft else _current_lesson_title(sessions)
+        adaptive_progress = _average([float(row.mastery_score or 0.0) for row in progress_rows])
+        progress = len({item.draft_id for item in completions}) / len(published) if published else adaptive_progress
+        last_active = max([row.updated_at for row in sessions if row.updated_at] + [row.completed_at for row in completions if row.completed_at] + [learner.updated_at or learner.created_at])
         return models.TeacherStudentSummary(
             learner_id=learner.learner_id,
             name=learner.full_name or "Learner",
@@ -806,15 +894,19 @@ class AsyncRepository:
         learner = self._local_learner(learner_id)
         assessments = [item for item in _LOCAL_ASSESSMENTS if item.get("learner_id") == learner_id]
         scores = [float((item.get("result") or {}).get("score", 0.0)) for item in assessments]
+        class_ids = {item["class_id"] for item in _LOCAL_ENROLLMENTS if item["student_id"] == learner_id}
+        published = [item for item in _LOCAL_DRAFTS.values() if item.get("class_id") in class_ids and item.get("status") == "accepted"]
+        completions = [item for item in _LOCAL_COMPLETIONS if item["learner_id"] == learner_id]
+        progress = len(completions) / len(published) if published else _average(scores)
         return models.TeacherStudentSummary(
             learner_id=learner.learner_id,
             name=learner.full_name or "Learner",
-            progress=_average(scores),
-            current_lesson="Lesson in progress" if _LOCAL_SESSIONS else "Not started",
+            progress=progress,
+            current_lesson=str((_LOCAL_DRAFTS.get(completions[-1]["draft_id"]) or {}).get("title") or ("Lesson in progress" if _LOCAL_SESSIONS else "Not started")) if completions else ("Lesson in progress" if _LOCAL_SESSIONS else "Not started"),
             average_score=_average(scores),
             accessibility_settings=learner.accessibility or {},
             last_active=_iso(datetime.now(timezone.utc)),
-            status=_student_status(_average(scores), scores),
+            status=_student_status(progress, scores),
         )
 
     def _apply_profile(self, learner: db_models.Learner, profile: models.LearnerProfile) -> None:
@@ -934,7 +1026,7 @@ def _class_summary(row: db_models.ClassGroup, student_count: int) -> models.Clas
     )
 
 
-def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGroup | None, leader: db_models.Learner | None) -> models.StudentClassAlert:
+def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGroup | None, leader: db_models.Learner | None, completion: db_models.ContentCompletion | None = None) -> models.StudentClassAlert:
     class_name = class_row.name if class_row else "Class"
     leader_name = leader.full_name if leader and leader.full_name else "Module leader"
     kind = draft.kind or "lesson"
@@ -948,11 +1040,13 @@ def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGrou
         draft_id=draft.draft_id,
         message=f"{leader_name} published a new {kind} in {class_name}: {draft.title}",
         published_content=_student_published_content(kind, draft.generated_content or {}),
+        completed=completion is not None,
+        completed_at=_iso(completion.completed_at) if completion else None,
         created_at=_iso(draft.updated_at or draft.created_at),
     )
 
 
-def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None) -> models.StudentClassAlert:
+def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None, completion: Dict[str, Any] | None = None) -> models.StudentClassAlert:
     class_name = str((class_row or {}).get("name") or "Class")
     kind = str(draft.get("kind") or "lesson")
     title = str(draft.get("title") or "Untitled")
@@ -966,6 +1060,8 @@ def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None
         draft_id=str(draft.get("draft_id") or ""),
         message=f"Module leader published a new {kind} in {class_name}: {title}",
         published_content=_student_published_content(kind, draft.get("generated_content") or {}),
+        completed=completion is not None,
+        completed_at=_iso(completion.get("completed_at")) if completion else None,
         created_at=_iso((draft.get("approval") or {}).get("decided_at")),
     )
 
@@ -978,6 +1074,7 @@ def _student_result(row: db_models.Assessment) -> models.StudentAssessmentResult
         title=str(result.get("title") or result.get("topic") or "Assessment result"),
         score=float(result.get("score") or 0.0),
         feedback=str(result.get("detailed_feedback") or result.get("feedback") or ""),
+        kind="assessment",
         created_at=_iso(row.created_at),
     )
 
@@ -990,8 +1087,52 @@ def _local_student_result(item: Dict[str, Any]) -> models.StudentAssessmentResul
         title=str(result.get("title") or result.get("topic") or "Assessment result"),
         score=float(result.get("score") or 0.0),
         feedback=str(result.get("detailed_feedback") or result.get("feedback") or ""),
+        kind="assessment",
         created_at=_iso(item.get("created_at")),
     )
+
+
+def _completion_response(completion: db_models.ContentCompletion, draft_id: str) -> models.PublishedContentCompletionResponse:
+    return models.PublishedContentCompletionResponse(
+        draft_id=draft_id,
+        kind=completion.kind,
+        completed=True,
+        score=float(completion.score),
+        evaluation=completion.evaluation,
+        completed_at=_iso(completion.completed_at),
+    )
+
+
+def _completion_result(completion: db_models.ContentCompletion, draft: db_models.ContentDraft) -> models.StudentAssessmentResultSummary:
+    return models.StudentAssessmentResultSummary(
+        result_id=f"completion:{completion.id}",
+        session_id=f"published:{draft.draft_id}",
+        title=draft.title,
+        score=float(completion.score),
+        feedback=completion.evaluation,
+        kind=completion.kind,
+        draft_id=draft.draft_id,
+        created_at=_iso(completion.completed_at),
+    )
+
+
+def _local_completion_result(completion: Dict[str, Any], draft: Dict[str, Any] | None) -> models.StudentAssessmentResultSummary:
+    return models.StudentAssessmentResultSummary(
+        result_id=f"completion:{completion['draft_id']}",
+        session_id=f"published:{completion['draft_id']}",
+        title=str((draft or {}).get("title") or "Published content"),
+        score=float(completion["score"]),
+        feedback=str(completion["evaluation"]),
+        kind=str(completion["kind"]),
+        draft_id=str(completion["draft_id"]),
+        created_at=_iso(completion["completed_at"]),
+    )
+
+
+def _completion_evaluation(kind: str, title: str, score: float) -> str:
+    if kind == "assessment":
+        return f"Assessment evaluated automatically for {title}."
+    return f"Completed the full teacher-published lesson {title}. All lesson sections were reached before completion."
 
 
 def _student_published_content(kind: str, content: Dict[str, Any]) -> Dict[str, Any]:

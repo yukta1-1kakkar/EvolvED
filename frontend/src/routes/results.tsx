@@ -21,11 +21,11 @@ function ResultsPage() {
   const results = classroom.data?.results ?? [];
 
   return (
-    <AppShell title="Results" subtitle="Your evaluated class assessment results." accent={classroom.isFetching ? "Syncing" : "Results"}>
+    <AppShell title="Results" subtitle="Your evaluated published lesson and assessment results." accent={classroom.isFetching ? "Syncing" : "Results"}>
       <section className="rounded-2xl border border-border bg-card p-5">
         <div className="mb-4 flex items-center gap-2">
           <BarChart3 className="size-4 text-plum" />
-          <h2 className="font-display text-xl">Assessment results</h2>
+          <h2 className="font-display text-xl">Evaluated results</h2>
         </div>
         {classroom.isLoading ? (
           <div className="space-y-3">{Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-xl" />)}</div>
@@ -38,6 +38,7 @@ function ResultsPage() {
                     <div className="flex items-center gap-2 font-medium">
                       <ClipboardCheck className="size-4 text-plum" />
                       {result.title}
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{result.kind}</span>
                     </div>
                     {result.feedback && <p className="mt-2 text-sm leading-6 text-muted-foreground">{result.feedback}</p>}
                   </div>
@@ -48,7 +49,7 @@ function ResultsPage() {
           </div>
         ) : (
           <div className="grid min-h-32 place-items-center rounded-xl bg-muted/30 text-sm text-muted-foreground">
-            No evaluated assessment results yet.
+            No evaluated lesson or assessment results yet.
           </div>
         )}
         {classroom.isError && <p className="mt-4 text-sm text-destructive">{classroom.error.message}</p>}

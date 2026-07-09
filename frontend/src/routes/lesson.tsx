@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   BookMarked,
@@ -35,7 +35,7 @@ import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
 import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
-import { getStudentClassroom, type StudentClassAlert } from "@/lib/api/classroom";
+import { completePublishedContent, getStudentClassroom, type StudentClassAlert } from "@/lib/api/classroom";
 import { constraintsFromBrief, makeInitialBrief, prefetchRoadmapLessons, roadmapItemToRecord, type LessonBrief } from "@/lib/lesson-planning";
 import { getActiveRoadmapTopic, getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, peekNextRoadmapLessonContext, setActiveRoadmapLesson, setActiveRoadmapTopic, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import { ROUTES } from "@/lib/routes";
@@ -248,11 +248,31 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
   const objectives = arrayValue(content.learning_objectives).map(String);
   const flowSteps = arrayValue(recordValue(arrayValue(content.flowcharts)[0]).steps).map(String);
   const tutor = useTutorInteraction();
+  const queryClient = useQueryClient();
   const [question, setQuestion] = useState("");
   const [tutorOpen, setTutorOpen] = useState(false);
   const [readerMode, setReaderMode] = useState<"standard" | "dyslexia" | "focus">(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
+  const [reachedEnd, setReachedEnd] = useState(false);
+  const completionMarkerRef = useRef<HTMLDivElement>(null);
+  const completion = useMutation({
+    mutationFn: () => completePublishedContent(learnerId, alert.draft_id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["student-classroom", learnerId] });
+    },
+  });
   const modality = currentUser?.preferredModality || "mixed";
   const pace = currentUser?.pacePreference || "balanced";
+
+  useEffect(() => {
+    setReachedEnd(false);
+    const marker = completionMarkerRef.current;
+    if (!marker) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) setReachedEnd(true);
+    }, { threshold: 0.8 });
+    observer.observe(marker);
+    return () => observer.disconnect();
+  }, [alert.draft_id]);
 
   function askTutor() {
     if (!question.trim()) return;
@@ -310,6 +330,23 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
         </article>
       ))}
       {flowSteps.length > 0 && <AgentList icon={GitBranch} title="Lesson flow" empty="" items={flowSteps.map((prompt) => ({ prompt }))} />}
+      <div ref={completionMarkerRef} className="rounded-2xl border border-border bg-card p-6">
+        <h3 className="font-display text-xl">{alert.completed ? "Lesson completed" : "Finish this lesson"}</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {alert.completed
+            ? "Your completion and evaluation are available to you and your module leader."
+            : reachedEnd
+              ? "You reached the end of every published section. You can now complete the lesson."
+              : "Read through every published section to unlock completion."}
+        </p>
+        {!alert.completed && (
+          <button type="button" disabled={!reachedEnd || completion.isPending} onClick={() => completion.mutate()} className="mt-4 inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+            {completion.isPending ? <RefreshCw className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+            Complete full lesson
+          </button>
+        )}
+        {completion.isError && <p className="mt-3 text-sm text-destructive">{completion.error.message}</p>}
+      </div>
       <button type="button" onClick={() => setTutorOpen(true)} className="fixed right-0 top-1/2 z-30 inline-flex -translate-y-1/2 items-center gap-2 rounded-l-full bg-foreground px-4 py-3 text-sm text-background shadow-lg">
         <MessageCircle className="size-4" /> AI tutor
       </button>

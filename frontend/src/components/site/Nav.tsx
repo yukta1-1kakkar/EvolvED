@@ -8,7 +8,8 @@ import { ROUTES } from "@/lib/routes";
 export function Nav() {
   const { currentUser, isAuthenticated } = useAuth();
   const isModuleLeader = currentUser?.role === "module_leader";
-  const appEntry = isAuthenticated ? (isModuleLeader ? ROUTES.TEACHER : ROUTES.KNOWLEDGE) : ROUTES.LOGIN;
+  const isClassStudent = currentUser?.accountType === "class_student";
+  const appEntry = isAuthenticated ? (isModuleLeader ? ROUTES.TEACHER : isClassStudent ? ROUTES.ALERTS : ROUTES.KNOWLEDGE) : ROUTES.LOGIN;
   const appSearch = isAuthenticated ? undefined : { redirect: ROUTES.KNOWLEDGE };
 
   return (
@@ -23,25 +24,6 @@ export function Nav() {
           <EvolvedLogo className="size-8 transition-transform group-hover:rotate-3" />
           <span className="font-display text-lg tracking-tight">EvolvED</span>
         </Link>
-        {!isModuleLeader && (
-          <div className="hidden md:flex items-center gap-7 text-sm text-muted-foreground">
-            <Link to={appEntry} search={appSearch} className="hover:text-foreground transition-colors">
-              Knowledge
-            </Link>
-            <Link to={isAuthenticated ? ROUTES.LESSON : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.LESSON }} className="hover:text-foreground transition-colors">
-              Lesson
-            </Link>
-            <Link to={isAuthenticated ? ROUTES.PROGRESS : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.PROGRESS }} className="hover:text-foreground transition-colors">
-              Progress
-            </Link>
-            <Link to={isAuthenticated ? ROUTES.INTELLIGENCE : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.INTELLIGENCE }} className="hover:text-foreground transition-colors">
-              Intelligence
-            </Link>
-            <Link to={isAuthenticated ? ROUTES.PEDAGOGY : ROUTES.LOGIN} search={isAuthenticated ? undefined : { redirect: ROUTES.PEDAGOGY }} className="hover:text-foreground transition-colors">
-              Pedagogy
-            </Link>
-          </div>
-        )}
         <div className="flex items-center gap-2">
           <Link
             to={ROUTES.LOGIN}

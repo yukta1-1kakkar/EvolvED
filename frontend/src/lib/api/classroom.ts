@@ -61,6 +61,8 @@ export interface StudentClassAlert {
   draft_id: string;
   message: string;
   published_content: ApiRecord;
+  completed: boolean;
+  completed_at?: string | null;
   created_at?: string | null;
 }
 
@@ -70,7 +72,18 @@ export interface StudentAssessmentResultSummary {
   title: string;
   score: number;
   feedback: string;
+  kind: "lesson" | "assessment";
+  draft_id?: string | null;
   created_at?: string | null;
+}
+
+export interface PublishedContentCompletion {
+  draft_id: string;
+  kind: "lesson" | "assessment";
+  completed: boolean;
+  score: number;
+  evaluation: string;
+  completed_at?: string | null;
 }
 
 export interface StudentClassroomResponse {
@@ -83,6 +96,13 @@ export interface StudentClassroomResponse {
 export function getStudentClassroom(learnerId: string) {
   return apiRequest<StudentClassroomResponse>("/student/classroom", {
     query: { learner_id: learnerId },
+  });
+}
+
+export function completePublishedContent(learnerId: string, draftId: string) {
+  return apiRequest<PublishedContentCompletion, { learner_id: string; draft_id: string }>("/student/content/complete", {
+    method: "POST",
+    body: { learner_id: learnerId, draft_id: draftId },
   });
 }
 
