@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   BookMarked,
@@ -35,6 +35,7 @@ import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
 import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
+import { getStudentClassroom, type StudentClassAlert } from "@/lib/api/classroom";
 import { constraintsFromBrief, makeInitialBrief, prefetchRoadmapLessons, roadmapItemToRecord, type LessonBrief } from "@/lib/lesson-planning";
 import { getActiveRoadmapTopic, getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, peekNextRoadmapLessonContext, setActiveRoadmapLesson, setActiveRoadmapTopic, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import { ROUTES } from "@/lib/routes";
@@ -43,6 +44,7 @@ import type { ApiJson, ApiRecord, LessonBlueprint, LessonRoadmapItem } from "@/t
 export const Route = createFileRoute("/lesson")({
   validateSearch: (search): LessonSearch => ({
     topic: typeof search.topic === "string" ? search.topic : undefined,
+    draft: typeof search.draft === "string" ? search.draft : undefined,
   }),
   head: () => ({
     meta: [
@@ -62,6 +64,7 @@ export const LESSON_ROADMAP_TOPIC_STORAGE_KEY = "evolved.pendingRoadmapTopic";
 
 type LessonSearch = {
   topic?: string;
+  draft?: string;
 };
 
 export type LessonLaunchContext = {
@@ -87,6 +90,14 @@ type BrowserSpeechRecognition = {
 type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 
 function LessonPage() {
+  const { currentUser } = useAuth();
+  if (currentUser?.accountType === "class_student") {
+    return <PublishedLessonsPage learnerId={currentUser.id} />;
+  }
+  return <AdaptiveLessonPage />;
+}
+
+function AdaptiveLessonPage() {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -204,6 +215,129 @@ function LessonPage() {
       )}
 
     </AppShell>
+  );
+}
+
+function PublishedLessonsPage({ learnerId }: { learnerId: string }) {
+  const { draft } = Route.useSearch();
+  const classroom = useQuery({
+    queryKey: ["student-classroom", learnerId],
+    queryFn: () => getStudentClassroom(learnerId),
+  });
+  const lessons = (classroom.data?.alerts ?? []).filter((item) => item.kind === "lesson");
+  const selected = lessons.find((item) => item.draft_id === draft) ?? lessons[0];
+
+  return (
+    <AppShell title="Published lessons" subtitle="Only lessons accepted and published by your teacher appear here." accent={classroom.isFetching ? "Syncing" : "Teacher approved"}>
+      {classroom.isLoading && <RoadmapSkeleton />}
+      {classroom.isError && <ErrorPanel title="Could not load published lessons" message={classroom.error.message} onRetry={() => void classroom.refetch()} />}
+      {!classroom.isLoading && !selected && (
+        <div className="grid min-h-48 place-items-center rounded-2xl border border-border bg-card text-sm text-muted-foreground">
+          Your teacher has not published a lesson yet.
+        </div>
+      )}
+      {selected && <PublishedLesson alert={selected} lessons={lessons} learnerId={learnerId} />}
+    </AppShell>
+  );
+}
+
+function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAlert; lessons: StudentClassAlert[]; learnerId: string }) {
+  const { currentUser } = useAuth();
+  const content = alert.published_content;
+  const sections = arrayValue(content.sections).map(recordValue);
+  const objectives = arrayValue(content.learning_objectives).map(String);
+  const flowSteps = arrayValue(recordValue(arrayValue(content.flowcharts)[0]).steps).map(String);
+  const tutor = useTutorInteraction();
+  const [question, setQuestion] = useState("");
+  const [tutorOpen, setTutorOpen] = useState(false);
+  const [readerMode, setReaderMode] = useState<"standard" | "dyslexia" | "focus">(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
+  const modality = currentUser?.preferredModality || "mixed";
+  const pace = currentUser?.pacePreference || "balanced";
+
+  function askTutor() {
+    if (!question.trim()) return;
+    tutor.mutate({
+      learner_id: learnerId,
+      session_id: `published:${alert.draft_id}`,
+      question: question.trim(),
+      action: "question",
+    }, { onSuccess: () => setQuestion("") });
+  }
+
+  function readLessonAloud() {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const text = [alert.title, textValue(content.summary), ...sections.flatMap((section) => [textValue(section.title), textValue(section.summary)])].filter(Boolean).join(". ");
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  }
+
+  return (
+    <div className={`space-y-5 ${readerModeClass(readerMode)}`}>
+      <ReaderControls mode={readerMode} onChange={setReaderMode} />
+      <section className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-muted/20 p-4 text-xs text-muted-foreground">
+        <span className="rounded-full bg-background px-3 py-1.5">Your format: {modality}</span>
+        <span className="rounded-full bg-background px-3 py-1.5">Your pace: {pace}</span>
+        {(modality.toLowerCase().includes("audio") || modality.toLowerCase().includes("auditory")) && (
+          <button type="button" onClick={readLessonAloud} className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-foreground">
+            <Volume2 className="size-3.5" /> Listen to lesson
+          </button>
+        )}
+      </section>
+      {lessons.length > 1 && (
+        <nav className="flex flex-wrap gap-2" aria-label="Published lessons">
+          {lessons.map((lesson) => (
+            <Link key={lesson.draft_id} to="/lesson" search={{ draft: lesson.draft_id }} className={`rounded-full border px-4 py-2 text-sm ${lesson.draft_id === alert.draft_id ? "border-plum bg-plum/10 text-plum" : "border-border"}`}>
+              {lesson.title}
+            </Link>
+          ))}
+        </nav>
+      )}
+      <article className="rounded-2xl border border-border bg-card p-6">
+        <div className="text-xs uppercase tracking-[0.16em] text-plum">{alert.class_name} · Published by {alert.leader_name}</div>
+        <h2 className="mt-2 font-display text-3xl">{alert.title}</h2>
+        <p className="mt-3 text-base leading-7 text-muted-foreground">{textValue(content.summary)}</p>
+      </article>
+      {objectives.length > 0 && <AgentList icon={Target} title="Learning objectives" empty="" items={objectives.map((prompt) => ({ prompt }))} />}
+      {sections.map((section, index) => (
+        <article key={index} className="rounded-2xl border border-border bg-card p-6">
+          <h3 className="font-display text-2xl">{textValue(section.title) || `Section ${index + 1}`}</h3>
+          <p className="mt-3 text-base leading-8 text-muted-foreground">{textValue(section.summary)}</p>
+          {arrayValue(section.subsections).length > 0 && (
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted-foreground">
+              {arrayValue(section.subsections).map((item, itemIndex) => <li key={itemIndex}>{String(item)}</li>)}
+            </ul>
+          )}
+        </article>
+      ))}
+      {flowSteps.length > 0 && <AgentList icon={GitBranch} title="Lesson flow" empty="" items={flowSteps.map((prompt) => ({ prompt }))} />}
+      <button type="button" onClick={() => setTutorOpen(true)} className="fixed right-0 top-1/2 z-30 inline-flex -translate-y-1/2 items-center gap-2 rounded-l-full bg-foreground px-4 py-3 text-sm text-background shadow-lg">
+        <MessageCircle className="size-4" /> AI tutor
+      </button>
+      {tutorOpen && (
+        <div className="fixed inset-0 z-50 bg-foreground/25" onClick={() => setTutorOpen(false)}>
+          <aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-card shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border p-5">
+              <div>
+                <div className="text-xs uppercase tracking-[0.16em] text-plum">Published lesson tutor</div>
+                <h3 className="font-display text-xl">{alert.title}</h3>
+              </div>
+              <button type="button" onClick={() => setTutorOpen(false)} aria-label="Close AI tutor"><X className="size-5" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              <p className="text-sm text-muted-foreground">Ask about this teacher-published lesson. The tutor is restricted to its content.</p>
+              {tutor.data && <div className="mt-4 rounded-2xl bg-muted/35 p-4"><TutorAnswerText answer={tutor.data.answer} /></div>}
+              {tutor.isError && <p className="mt-3 text-sm text-destructive">{tutor.error.message}</p>}
+            </div>
+            <form className="flex gap-2 border-t border-border p-5" onSubmit={(event) => { event.preventDefault(); askTutor(); }}>
+              <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask for a hint or simpler explanation" className="min-h-24 flex-1 rounded-2xl border border-input bg-background p-3 text-sm outline-none focus:border-plum" />
+              <button type="submit" disabled={tutor.isPending || !question.trim()} className="self-end rounded-full bg-foreground p-3 text-background disabled:opacity-50">
+                {tutor.isPending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
+              </button>
+            </form>
+          </aside>
+        </div>
+      )}
+    </div>
   );
 }
 

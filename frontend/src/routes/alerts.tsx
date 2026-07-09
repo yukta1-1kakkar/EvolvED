@@ -36,13 +36,16 @@ function AlertsPage() {
               const to = alert.kind === "assessment" ? ROUTES.ASSESSMENT : ROUTES.LESSON;
               const Icon = alert.kind === "assessment" ? ClipboardCheck : BookOpen;
               return (
-                <Link key={alert.alert_id} to={to} search={alert.kind === "lesson" ? { topic: alert.title } : undefined} className="block rounded-xl border border-border bg-background/70 p-4 transition-colors hover:border-plum/40 hover:bg-muted/30">
+                <Link key={alert.alert_id} to={to} search={{ draft: alert.draft_id }} className="block rounded-xl border border-border bg-background/70 p-4 transition-colors hover:border-plum/40 hover:bg-muted/30">
                   <div className="flex items-start gap-3">
                     <Icon className="mt-1 size-4 text-plum" />
                     <div>
                       <div className="font-medium">{alert.title}</div>
                       <p className="mt-1 text-sm text-muted-foreground">{alert.message}</p>
-                      <div className="mt-2 text-xs text-muted-foreground">{alert.class_name}</div>
+                      <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                        <span>{alert.class_name}</span>
+                        <time dateTime={alert.created_at ?? undefined}>{relativePublishTime(alert.created_at)}</time>
+                      </div>
                     </div>
                   </div>
                 </Link>
@@ -58,4 +61,19 @@ function AlertsPage() {
       </section>
     </AppShell>
   );
+}
+
+function relativePublishTime(value?: string | null) {
+  if (!value) return "Published recently";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "Published recently";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "Just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(timestamp));
 }

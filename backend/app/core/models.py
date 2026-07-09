@@ -305,6 +305,7 @@ class StudentClassAlert(BaseModel):
     title: str
     draft_id: str
     message: str
+    published_content: Dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[str] = None
 
 

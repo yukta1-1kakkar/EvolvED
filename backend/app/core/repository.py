@@ -186,6 +186,68 @@ class AsyncRepository:
             return {"session_id": roadmap_id, "updated_at": _iso(datetime.now(timezone.utc))}
 
     async def get_session_state(self, learner_id: str, session_id: str) -> Dict[str, Any]:
+        if session_id.startswith("published:"):
+            draft_id = session_id.removeprefix("published:")
+            try:
+                async with AsyncSessionLocal() as session:
+                    learner = await self._learner(session, learner_id)
+                    if learner:
+                        draft = await session.scalar(
+                            sa.select(db_models.ContentDraft)
+                            .join(db_models.Enrollment, db_models.Enrollment.class_id == db_models.ContentDraft.class_id)
+                            .where(
+                                db_models.ContentDraft.draft_id == draft_id,
+                                db_models.ContentDraft.status == "accepted",
+                                db_models.Enrollment.student_id == learner.id,
+                                db_models.Enrollment.status == "active",
+                            )
+                        )
+                        if draft:
+                            content = draft.generated_content or {}
+                            state = {
+                                "lesson": {
+                                    "topic": draft.title,
+                                    "selected_lesson": {
+                                        "id": draft.draft_id,
+                                        "title": draft.title,
+                                        "description": content.get("summary") or content.get("fairness", ""),
+                                        "objectives": content.get("learning_objectives", []),
+                                    },
+                                    "learning_objective": " ".join(content.get("learning_objectives", [])[:3]),
+                                    "lesson_summary": content.get("summary") or content.get("fairness", ""),
+                                    "lesson_structure": content.get("sections", []),
+                                    "assessment_points": content.get("questions", []),
+                                },
+                            }
+                            state[f"published_{draft.kind}"] = content
+                            return state
+            except Exception as exc:
+                logger.warning("Database published assessment load unavailable; using local data: %s: %r", type(exc).__name__, exc)
+            class_ids = {
+                item["class_id"] for item in _LOCAL_ENROLLMENTS
+                if item["student_id"] == learner_id
+            }
+            draft = _LOCAL_DRAFTS.get(draft_id)
+            if draft and draft.get("class_id") in class_ids and draft.get("kind") in {"lesson", "assessment"} and draft.get("status") == "accepted":
+                content = draft.get("generated_content") or {}
+                state = {
+                    "lesson": {
+                        "topic": draft.get("title", "Published content"),
+                        "selected_lesson": {
+                            "id": draft_id,
+                            "title": draft.get("title", "Published content"),
+                            "description": content.get("summary") or content.get("fairness", ""),
+                            "objectives": content.get("learning_objectives", []),
+                        },
+                        "learning_objective": " ".join(content.get("learning_objectives", [])[:3]),
+                        "lesson_summary": content.get("summary") or content.get("fairness", ""),
+                        "lesson_structure": content.get("sections", []),
+                        "assessment_points": content.get("questions", []),
+                    },
+                }
+                state[f"published_{draft.get('kind')}"] = content
+                return state
+            return {}
         try:
             async with AsyncSessionLocal() as session:
                 learner = await self._learner(session, learner_id)
@@ -885,6 +947,7 @@ def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGrou
         title=draft.title,
         draft_id=draft.draft_id,
         message=f"{leader_name} published a new {kind} in {class_name}: {draft.title}",
+        published_content=_student_published_content(kind, draft.generated_content or {}),
         created_at=_iso(draft.updated_at or draft.created_at),
     )
 
@@ -902,6 +965,7 @@ def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None
         title=title,
         draft_id=str(draft.get("draft_id") or ""),
         message=f"Module leader published a new {kind} in {class_name}: {title}",
+        published_content=_student_published_content(kind, draft.get("generated_content") or {}),
         created_at=_iso((draft.get("approval") or {}).get("decided_at")),
     )
 
@@ -928,6 +992,18 @@ def _local_student_result(item: Dict[str, Any]) -> models.StudentAssessmentResul
         feedback=str(result.get("detailed_feedback") or result.get("feedback") or ""),
         created_at=_iso(item.get("created_at")),
     )
+
+
+def _student_published_content(kind: str, content: Dict[str, Any]) -> Dict[str, Any]:
+    if kind != "assessment":
+        return content
+    safe_content = dict(content)
+    safe_content["questions"] = [
+        {key: value for key, value in question.items() if key not in {"answer", "correct_answer", "explanation", "rubric"}}
+        if isinstance(question, dict) else question
+        for question in content.get("questions", [])
+    ]
+    return safe_content
 
 
 def _local_class_count(class_id: str) -> int:

@@ -1,4 +1,5 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { Accessibility, ArrowRight, BookOpen, Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -9,10 +10,14 @@ import { VectorArrowDiagram } from "@/components/learning/VectorArrowDiagram";
 import { isVectorVisualText } from "@/components/learning/vectorVisual";
 import { useGenerateQuiz, useSubmitAssessment } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
+import { getStudentClassroom, type StudentClassAlert } from "@/lib/api/classroom";
 import { completeActiveRoadmapLesson, prepareNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import type { ApiJson, ApiRecord } from "@/types/api";
 
 export const Route = createFileRoute("/assessment")({
+  validateSearch: (search) => ({
+    draft: typeof search.draft === "string" ? search.draft : undefined,
+  }),
   component: () => (
     <ProtectedRoute>
       <AssessmentPage />
@@ -26,6 +31,14 @@ type AssessmentAnswer = ApiRecord & {
 };
 
 function AssessmentPage() {
+  const { currentUser } = useAuth();
+  if (currentUser?.accountType === "class_student") {
+    return <PublishedAssessmentPage learnerId={currentUser.id} />;
+  }
+  return <AdaptiveAssessmentPage />;
+}
+
+function AdaptiveAssessmentPage() {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   const [sessionId, setSessionId] = useState("");
@@ -134,6 +147,99 @@ function AssessmentPage() {
         </article>
       </div>
     </AppShell>
+  );
+}
+
+function PublishedAssessmentPage({ learnerId }: { learnerId: string }) {
+  const { draft } = Route.useSearch();
+  const classroom = useQuery({
+    queryKey: ["student-classroom", learnerId],
+    queryFn: () => getStudentClassroom(learnerId),
+  });
+  const assessments = (classroom.data?.alerts ?? []).filter((item) => item.kind === "assessment");
+  const selected = assessments.find((item) => item.draft_id === draft) ?? assessments[0];
+
+  return (
+    <AppShell title="Published assessments" subtitle="Only assessments accepted and published by your teacher appear here." accent={classroom.isFetching ? "Syncing" : "Teacher approved"}>
+      {classroom.isLoading && <p className="text-sm text-muted-foreground">Loading published assessments...</p>}
+      {classroom.isError && <p className="text-sm text-destructive">{classroom.error.message}</p>}
+      {!classroom.isLoading && !selected && (
+        <div className="grid min-h-48 place-items-center rounded-2xl border border-border bg-card text-sm text-muted-foreground">
+          Your teacher has not published an assessment yet.
+        </div>
+      )}
+      {selected && <PublishedAssessment alert={selected} assessments={assessments} learnerId={learnerId} />}
+    </AppShell>
+  );
+}
+
+function PublishedAssessment({ alert, assessments, learnerId }: { alert: StudentClassAlert; assessments: StudentClassAlert[]; learnerId: string }) {
+  const questions = arrayValue(alert.published_content.questions).filter((item): item is ApiRecord => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+  const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
+  const [confidence, setConfidence] = useState<Record<string, number>>({});
+  const [readerMode, setReaderMode] = useState<ReaderMode>("standard");
+  const submit = useSubmitAssessment();
+
+  function submitQuiz() {
+    submit.mutate({
+      learner_id: learnerId,
+      session_id: `published:${alert.draft_id}`,
+      answers,
+      confidence,
+    });
+  }
+
+  return (
+    <div className={readerModeClass(readerMode)}>
+      <div className="max-w-5xl space-y-4">
+        <ReaderControls mode={readerMode} onChange={setReaderMode} />
+        {assessments.length > 1 && (
+          <nav className="flex flex-wrap gap-2" aria-label="Published assessments">
+            {assessments.map((assessment) => (
+              <Link key={assessment.draft_id} to="/assessment" search={{ draft: assessment.draft_id }} className={`rounded-full border px-4 py-2 text-sm ${assessment.draft_id === alert.draft_id ? "border-plum bg-plum/10 text-plum" : "border-border"}`}>
+                {assessment.title}
+              </Link>
+            ))}
+          </nav>
+        )}
+        <section className="rounded-3xl border border-border bg-card p-6">
+          <div className="text-xs uppercase tracking-[0.16em] text-plum">{alert.class_name} · Published by {alert.leader_name}</div>
+          <h2 className="mt-2 font-display text-3xl">{alert.title}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">{textValue(alert.published_content.fairness)}</p>
+        </section>
+        {questions.map((question, index) => {
+          const normalized = { ...question, prompt: question.prompt ?? question.question };
+          const id = questionId(normalized, index);
+          return (
+            <QuestionCard
+              key={id}
+              question={normalized}
+              index={index}
+              answer={answers[id] ?? emptyAnswer()}
+              confidence={confidence[id] ?? 70}
+              onAnswer={(value) => setAnswers((current) => ({ ...current, [id]: value }))}
+              onConfidence={(value) => setConfidence((current) => ({ ...current, [id]: value }))}
+            />
+          );
+        })}
+        {!submit.data && questions.length > 0 && (
+          <button type="button" onClick={submitQuiz} disabled={questions.some((question, index) => !answerComplete(answers[questionId(question, index)])) || submit.isPending} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+            {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Submit published assessment
+          </button>
+        )}
+        {submit.isError && <p className="text-sm text-destructive">{submit.error.message}</p>}
+        {submit.data && (
+          <AssessmentResultCard
+            score={submit.data.score}
+            feedback={submit.data.detailed_feedback}
+            nextAction={humanizeIdentifier(textValue(submit.data.adaptation.action))}
+            recommendationAction={recommendedActionText(submit.data.detailed_feedback, textValue(submit.data.adaptation.action))}
+            onRecommended={() => setAnswers({})}
+            onNext={() => undefined}
+          />
+        )}
+      </div>
+    </div>
   );
 }
 

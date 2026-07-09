@@ -60,6 +60,7 @@ export interface StudentClassAlert {
   title: string;
   draft_id: string;
   message: string;
+  published_content: ApiRecord;
   created_at?: string | null;
 }
 

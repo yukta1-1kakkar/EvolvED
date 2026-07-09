@@ -605,6 +605,8 @@ async def submit_assessment(sub: models.AssessmentSubmission):
     try:
         logger.info("Assessment submit started: learner_id=%s session_id=%s answers=%s", sub.learner_id, sub.session_id, len(sub.answers))
         session_state = await repo.get_session_state(sub.learner_id, sub.session_id)
+        if sub.session_id.startswith("published:") and not session_state.get("published_assessment"):
+            raise ValueError("This published assessment is unavailable or you are not enrolled in its class.")
         logger.info("Assessment submit session loaded: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
         result = _normalize_generated_model(await langgraph_nodes.assessment_agent(sub, session_state))
         logger.info("Assessment submit graded: session_id=%s score=%.3f elapsed=%.2fs", sub.session_id, result.score, perf_counter() - started)
