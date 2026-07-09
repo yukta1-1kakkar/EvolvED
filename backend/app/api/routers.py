@@ -203,6 +203,14 @@ async def start_published_content(req: models.PublishedContentCompletionRequest)
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
+@router.post("/student/content/page-timing")
+async def record_published_content_page_timing(req: models.PublishedContentPageTimingRequest):
+    try:
+        return await repository.AsyncRepository().record_published_content_page_timing(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.get("/teacher/dashboard", response_model=models.TeacherDashboardResponse)
 async def teacher_dashboard(leader_id: str):
     try:

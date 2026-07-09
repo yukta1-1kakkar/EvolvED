@@ -111,6 +111,23 @@ class ContentCompletion(Base):
     completed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class ContentPageTiming(Base):
+    __tablename__ = "content_page_timings"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "draft_id", "page_key", name="uq_content_page_timing_learner_draft_page"),
+    )
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    draft_id = Column(Integer, ForeignKey("content_drafts.id"), nullable=False)
+    kind = Column(String(32), nullable=False)
+    page_key = Column(String(128), nullable=False)
+    page_title = Column(String(256), nullable=True)
+    seconds_spent = Column(Float, nullable=False, default=0.0)
+    visit_count = Column(Integer, nullable=False, default=0)
+    first_seen_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Session(Base):
     __tablename__ = "sessions"
     id = Column(Integer, primary_key=True, index=True)

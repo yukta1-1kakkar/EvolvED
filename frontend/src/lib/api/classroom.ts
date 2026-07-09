@@ -32,6 +32,13 @@ export interface TeacherStudentSummary {
     started_at?: string | null;
     completed_at?: string | null;
     duration_seconds?: number | null;
+    page_timings?: Array<{
+      page_key: string;
+      page_title: string;
+      seconds_spent: number;
+      visit_count: number;
+      last_seen_at?: string | null;
+    }>;
   }>;
   rank: number;
   accessibility_settings: ApiRecord;
@@ -124,6 +131,31 @@ export function startPublishedContent(learnerId: string, draftId: string) {
   return apiRequest<{ started: boolean }, { learner_id: string; draft_id: string }>("/student/content/start", {
     method: "POST",
     body: { learner_id: learnerId, draft_id: draftId },
+  });
+}
+
+export function recordPublishedContentPageTiming(input: {
+  learnerId: string;
+  draftId: string;
+  pageKey: string;
+  pageTitle: string;
+  secondsSpent: number;
+}) {
+  return apiRequest<{ recorded: boolean; seconds_spent: number; total_seconds?: number }, {
+    learner_id: string;
+    draft_id: string;
+    page_key: string;
+    page_title: string;
+    seconds_spent: number;
+  }>("/student/content/page-timing", {
+    method: "POST",
+    body: {
+      learner_id: input.learnerId,
+      draft_id: input.draftId,
+      page_key: input.pageKey,
+      page_title: input.pageTitle,
+      seconds_spent: input.secondsSpent,
+    },
   });
 }
 

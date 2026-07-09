@@ -22,7 +22,7 @@ import {
   X,
   Accessibility,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ElementType, type FormEvent, type SelectHTMLAttributes } from "react";
+import { useEffect, useMemo, useRef, useState, type ElementType, type FormEvent, type ReactNode, type SelectHTMLAttributes } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
@@ -35,7 +35,7 @@ import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
 import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
-import { completePublishedContent, getStudentClassroom, startPublishedContent, type StudentClassAlert, type StudentClassroomResponse } from "@/lib/api/classroom";
+import { completePublishedContent, getStudentClassroom, recordPublishedContentPageTiming, startPublishedContent, type StudentClassAlert, type StudentClassroomResponse } from "@/lib/api/classroom";
 import { constraintsFromBrief, makeInitialBrief, prefetchRoadmapLessons, roadmapItemToRecord, type LessonBrief } from "@/lib/lesson-planning";
 import { getActiveRoadmapTopic, getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, peekNextRoadmapLessonContext, setActiveRoadmapLesson, setActiveRoadmapTopic, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import { ROUTES } from "@/lib/routes";
@@ -249,7 +249,11 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
   const flowSteps = recordsFrom(recordArray(content.flowcharts)[0]?.steps).map(String);
   const queryClient = useQueryClient();
   const [readerMode, setReaderMode] = useState<"standard" | "dyslexia" | "focus">(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
-  const [reachedEnd, setReachedEnd] = useState(false);
+  const pages = useMemo(() => lessonPages(alert, sections, objectives, flowSteps), [alert, flowSteps, objectives, sections]);
+  const [pageIndex, setPageIndex] = useState(0);
+  const currentPage = pages[Math.min(pageIndex, pages.length - 1)];
+  const isLastPage = pageIndex >= pages.length - 1;
+  const reachedEnd = isLastPage;
   const completionMarkerRef = useRef<HTMLDivElement>(null);
   const completion = useMutation({
     mutationFn: () => completePublishedContent(learnerId, alert.draft_id),
@@ -263,18 +267,69 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
   });
 
   useEffect(() => {
-    setReachedEnd(false);
+    setPageIndex(0);
     void startPublishedContent(learnerId, alert.draft_id).catch((error) => {
       console.error("Could not record published lesson start", error);
     });
-    const marker = completionMarkerRef.current;
-    if (!marker) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) setReachedEnd(true);
-    }, { threshold: 0.8 });
-    observer.observe(marker);
-    return () => observer.disconnect();
-  }, [alert.draft_id]);
+  }, [alert.draft_id, learnerId]);
+
+  usePublishedPageTimer({
+    learnerId,
+    draftId: alert.draft_id,
+    pageKey: currentPage?.key ?? "lesson-page",
+    pageTitle: currentPage?.title ?? alert.title,
+  });
+
+  return (
+    <div className={`space-y-5 ${readerModeClass(readerMode)}`}>
+      <ReaderControls mode={readerMode} onChange={setReaderMode} />
+      <div className="published-reader space-y-5">
+        {lessons.length > 1 && (
+          <nav className="flex flex-wrap gap-2" aria-label="Published lessons">
+            {lessons.map((lesson) => (
+              <Link key={lesson.draft_id} to="/lesson" search={{ draft: lesson.draft_id }} className={`rounded-full border px-4 py-2 text-sm ${lesson.draft_id === alert.draft_id ? "border-plum bg-plum/10 text-plum" : "border-border"}`}>
+                {lesson.title}
+              </Link>
+            ))}
+          </nav>
+        )}
+        <div className="rounded-2xl border border-border bg-card p-6">
+          <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.16em] text-plum">{alert.class_name} · Published by {alert.leader_name}</div>
+              <h2 className="mt-2 font-display text-3xl">{currentPage?.title ?? alert.title}</h2>
+            </div>
+            <div className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+              Page {pageIndex + 1} of {pages.length}
+            </div>
+          </div>
+          <div className="mt-6 min-h-[300px]">{currentPage?.render()}</div>
+          <div className="mt-8 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <button type="button" disabled={pageIndex === 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))} className="rounded-full border border-border px-5 py-2.5 text-sm disabled:opacity-50">
+              Previous
+            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {pages.map((page, index) => (
+                <button key={page.key} type="button" onClick={() => setPageIndex(index)} className={`size-2.5 rounded-full ${index === pageIndex ? "bg-plum" : "bg-border"}`} aria-label={`Open ${page.title}`} />
+              ))}
+            </div>
+            {isLastPage ? (
+              <button type="button" disabled={completion.isPending} onClick={() => completion.mutate()} className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+                {completion.isPending ? <RefreshCw className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+                Complete full lesson
+              </button>
+            ) : (
+              <button type="button" onClick={() => setPageIndex((value) => Math.min(pages.length - 1, value + 1))} className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background">
+                Next page <ArrowRight className="size-4" />
+              </button>
+            )}
+          </div>
+          {completion.isError && <p className="mt-3 text-sm text-destructive">{completion.error.message}</p>}
+        </div>
+      </div>
+      <PublishedLessonTutor learnerId={learnerId} draftId={alert.draft_id} />
+    </div>
+  );
 
   return (
     <div className={`space-y-5 ${readerModeClass(readerMode)}`}>
@@ -324,6 +379,105 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
       <PublishedLessonTutor learnerId={learnerId} draftId={alert.draft_id} />
     </div>
   );
+}
+
+type PublishedLessonPageItem = {
+  key: string;
+  title: string;
+  render: () => ReactNode;
+};
+
+function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives: string[], flowSteps: string[]): PublishedLessonPageItem[] {
+  const pages: PublishedLessonPageItem[] = [
+    {
+      key: "lesson-overview",
+      title: alert.title,
+      render: () => (
+        <article>
+          <p className="text-base leading-7 text-muted-foreground">{stringValue(alert.published_content.summary)}</p>
+        </article>
+      ),
+    },
+  ];
+  if (objectives.length > 0) {
+    pages.push({
+      key: "lesson-objectives",
+      title: "Learning objectives",
+      render: () => <AgentList icon={Target} title="Learning objectives" empty="" items={objectives.map((prompt) => ({ prompt }))} />,
+    });
+  }
+  sections.forEach((section, index) => {
+    const title = stringValue(section.title) || `Section ${index + 1}`;
+    pages.push({
+      key: `lesson-section-${index + 1}`,
+      title,
+      render: () => (
+        <article>
+          <h3 className="font-display text-2xl">{title}</h3>
+          <p className="mt-3 text-base leading-8 text-muted-foreground">{stringValue(section.summary)}</p>
+          {recordsFrom(section.subsections).length > 0 && (
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted-foreground">
+              {recordsFrom(section.subsections).map((item, itemIndex) => <li key={itemIndex}>{String(item)}</li>)}
+            </ul>
+          )}
+        </article>
+      ),
+    });
+  });
+  if (flowSteps.length > 0) {
+    pages.push({
+      key: "lesson-flow",
+      title: "Lesson flow",
+      render: () => <AgentList icon={GitBranch} title="Lesson flow" empty="" items={flowSteps.map((prompt) => ({ prompt }))} />,
+    });
+  }
+  pages.push({
+    key: "lesson-finish",
+    title: "Finish this lesson",
+    render: () => (
+      <article>
+        <h3 className="font-display text-xl">Finish this lesson</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          You reached the end of the teacher-published lesson. Complete it when you are ready.
+        </p>
+      </article>
+    ),
+  });
+  return pages;
+}
+
+function usePublishedPageTimer({ learnerId, draftId, pageKey, pageTitle }: { learnerId: string; draftId: string; pageKey: string; pageTitle: string }) {
+  const startedAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    startedAtRef.current = Date.now();
+    function flush() {
+      const now = Date.now();
+      const secondsSpent = (now - startedAtRef.current) / 1000;
+      startedAtRef.current = now;
+      if (secondsSpent < 1) return;
+      void recordPublishedContentPageTiming({
+        learnerId,
+        draftId,
+        pageKey,
+        pageTitle,
+        secondsSpent,
+      }).catch((error) => {
+        console.error("Could not record published content page timing", error);
+      });
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") flush();
+      else startedAtRef.current = Date.now();
+    }
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      flush();
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [draftId, learnerId, pageKey, pageTitle]);
 }
 
 function PublishedLessonTutor({ learnerId, draftId }: { learnerId: string; draftId: string }) {

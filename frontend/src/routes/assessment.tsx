@@ -1,7 +1,7 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Accessibility, ArrowRight, BookOpen, Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
@@ -10,7 +10,7 @@ import { VectorArrowDiagram } from "@/components/learning/VectorArrowDiagram";
 import { isVectorVisualText } from "@/components/learning/vectorVisual";
 import { useGenerateQuiz, useSubmitAssessment } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
-import { getStudentClassroom, startPublishedContent, type StudentClassAlert } from "@/lib/api/classroom";
+import { getStudentClassroom, recordPublishedContentPageTiming, startPublishedContent, type StudentClassAlert } from "@/lib/api/classroom";
 import { completeActiveRoadmapLesson, prepareNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import type { ApiJson, ApiRecord } from "@/types/api";
 
@@ -178,6 +178,11 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [confidence, setConfidence] = useState<Record<string, number>>({});
   const [readerMode, setReaderMode] = useState<ReaderMode>("standard");
+  const [pageIndex, setPageIndex] = useState(0);
+  const normalizedQuestions = questions.map((question) => ({ ...question, prompt: question.prompt ?? question.question }));
+  const currentQuestion = normalizedQuestions[pageIndex];
+  const currentQuestionId = currentQuestion ? questionId(currentQuestion, pageIndex) : "";
+  const isLastQuestion = normalizedQuestions.length > 0 && pageIndex >= normalizedQuestions.length - 1;
   const submit = useSubmitAssessment();
   const queryClient = useQueryClient();
 
@@ -185,7 +190,15 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
     void startPublishedContent(learnerId, alert.draft_id).catch((error) => {
       console.error("Could not record published assessment start", error);
     });
+    setPageIndex(0);
   }, [alert.draft_id, learnerId]);
+
+  usePublishedAssessmentPageTimer({
+    learnerId,
+    draftId: alert.draft_id,
+    pageKey: currentQuestion ? `assessment-question-${pageIndex + 1}` : "assessment-intro",
+    pageTitle: currentQuestion ? `Question ${pageIndex + 1}` : alert.title,
+  });
 
   useEffect(() => {
     if (!submit.data) return;
@@ -211,6 +224,63 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
       </div>
     );
   }
+
+  return (
+    <div className={readerModeClass(readerMode)}>
+      <div className="max-w-5xl space-y-4">
+        <ReaderControls mode={readerMode} onChange={setReaderMode} />
+        {assessments.length > 1 && (
+          <nav className="flex flex-wrap gap-2" aria-label="Published assessments">
+            {assessments.map((assessment) => (
+              <Link key={assessment.draft_id} to="/assessment" search={{ draft: assessment.draft_id }} className={`rounded-full border px-4 py-2 text-sm ${assessment.draft_id === alert.draft_id ? "border-plum bg-plum/10 text-plum" : "border-border"}`}>
+                {assessment.title}
+              </Link>
+            ))}
+          </nav>
+        )}
+        <section className="rounded-3xl border border-border bg-card p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.16em] text-plum">{alert.class_name} · Published by {alert.leader_name}</div>
+              <h2 className="mt-2 font-display text-3xl">{alert.title}</h2>
+              <p className="mt-2 text-sm text-muted-foreground">{textValue(alert.published_content.fairness)}</p>
+            </div>
+            <div className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+              Question {Math.min(pageIndex + 1, Math.max(1, normalizedQuestions.length))} of {normalizedQuestions.length}
+            </div>
+          </div>
+        </section>
+        {currentQuestion && (
+          <>
+            <QuestionCard
+              key={currentQuestionId}
+              question={currentQuestion}
+              index={pageIndex}
+              answer={answers[currentQuestionId] ?? emptyAnswer()}
+              confidence={confidence[currentQuestionId] ?? 70}
+              onAnswer={(value) => setAnswers((current) => ({ ...current, [currentQuestionId]: value }))}
+              onConfidence={(value) => setConfidence((current) => ({ ...current, [currentQuestionId]: value }))}
+            />
+            <div className="flex flex-col gap-3 rounded-3xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+              <button type="button" disabled={pageIndex === 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))} className="rounded-full border border-border px-5 py-2.5 text-sm disabled:opacity-50">
+                Previous
+              </button>
+              <div className="text-sm text-muted-foreground">Answer this question to continue.</div>
+              <button type="button" disabled={!answerComplete(answers[currentQuestionId]) || isLastQuestion} onClick={() => setPageIndex((value) => Math.min(normalizedQuestions.length - 1, value + 1))} className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+                Next question <ArrowRight className="size-4" />
+              </button>
+            </div>
+          </>
+        )}
+        {normalizedQuestions.length > 0 && (
+          <button type="button" onClick={submitQuiz} disabled={!isLastQuestion || normalizedQuestions.some((question, index) => !answerComplete(answers[questionId(question, index)])) || submit.isPending} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+            {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Submit published assessment
+          </button>
+        )}
+        {submit.isError && <p className="text-sm text-destructive">{submit.error.message}</p>}
+      </div>
+    </div>
+  );
 
   return (
     <div className={readerModeClass(readerMode)}>
@@ -257,6 +327,40 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
 }
 
 type ReaderMode = "standard" | "dyslexia" | "focus";
+
+function usePublishedAssessmentPageTimer({ learnerId, draftId, pageKey, pageTitle }: { learnerId: string; draftId: string; pageKey: string; pageTitle: string }) {
+  const startedAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    startedAtRef.current = Date.now();
+    function flush() {
+      const now = Date.now();
+      const secondsSpent = (now - startedAtRef.current) / 1000;
+      startedAtRef.current = now;
+      if (secondsSpent < 1) return;
+      void recordPublishedContentPageTiming({
+        learnerId,
+        draftId,
+        pageKey,
+        pageTitle,
+        secondsSpent,
+      }).catch((error) => {
+        console.error("Could not record published assessment page timing", error);
+      });
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") flush();
+      else startedAtRef.current = Date.now();
+    }
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      flush();
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [draftId, learnerId, pageKey, pageTitle]);
+}
 
 function ReaderControls({ mode, onChange }: { mode: ReaderMode; onChange: (mode: ReaderMode) => void }) {
   return (

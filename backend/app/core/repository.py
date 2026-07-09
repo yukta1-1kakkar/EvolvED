@@ -30,6 +30,7 @@ _LOCAL_CLASSES: dict[str, Dict[str, Any]] = {}
 _LOCAL_ENROLLMENTS: list[Dict[str, str]] = []
 _LOCAL_DRAFTS: dict[str, Dict[str, Any]] = {}
 _LOCAL_COMPLETIONS: list[Dict[str, Any]] = []
+_LOCAL_PAGE_TIMINGS: list[Dict[str, Any]] = []
 
 
 class AsyncRepository:
@@ -718,6 +719,93 @@ class AsyncRepository:
             }
             return {"started": True}
 
+    async def record_published_content_page_timing(self, req: models.PublishedContentPageTimingRequest) -> Dict[str, Any]:
+        seconds = max(0.0, min(float(req.seconds_spent or 0.0), 60 * 60))
+        if seconds <= 0:
+            return {"recorded": False, "seconds_spent": 0.0}
+        page_key = str(req.page_key or "").strip()[:128]
+        if not page_key:
+            raise ValueError("Page key is required.")
+        try:
+            async with AsyncSessionLocal() as session:
+                learner = await self._require_role(session, req.learner_id, "student")
+                draft = await session.scalar(
+                    sa.select(db_models.ContentDraft)
+                    .join(db_models.Enrollment, db_models.Enrollment.class_id == db_models.ContentDraft.class_id)
+                    .where(
+                        db_models.ContentDraft.draft_id == req.draft_id,
+                        db_models.ContentDraft.status == "accepted",
+                        db_models.Enrollment.student_id == learner.id,
+                        db_models.Enrollment.status == "active",
+                    )
+                )
+                if not draft:
+                    raise ValueError("Published content was not found in one of your joined classes.")
+                timing = await session.scalar(
+                    sa.select(db_models.ContentPageTiming).where(
+                        db_models.ContentPageTiming.learner_id == learner.id,
+                        db_models.ContentPageTiming.draft_id == draft.id,
+                        db_models.ContentPageTiming.page_key == page_key,
+                    )
+                )
+                now = datetime.now(timezone.utc)
+                if not timing:
+                    timing = db_models.ContentPageTiming(
+                        learner_id=learner.id,
+                        draft_id=draft.id,
+                        kind=draft.kind,
+                        page_key=page_key,
+                        page_title=str(req.page_title or "")[:256],
+                        seconds_spent=seconds,
+                        visit_count=1,
+                        first_seen_at=now,
+                        last_seen_at=now,
+                    )
+                    session.add(timing)
+                else:
+                    timing.page_title = str(req.page_title or timing.page_title or "")[:256]
+                    timing.seconds_spent = float(timing.seconds_spent or 0.0) + seconds
+                    timing.visit_count = int(timing.visit_count or 0) + 1
+                    timing.last_seen_at = now
+                await session.commit()
+                total = await session.scalar(
+                    sa.select(sa.func.coalesce(sa.func.sum(db_models.ContentPageTiming.seconds_spent), 0.0)).where(
+                        db_models.ContentPageTiming.learner_id == learner.id,
+                        db_models.ContentPageTiming.draft_id == draft.id,
+                    )
+                )
+                return {"recorded": True, "seconds_spent": seconds, "total_seconds": float(total or 0.0)}
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Database page timing unavailable; storing locally: %s: %r", type(exc).__name__, exc)
+            class_ids = {item["class_id"] for item in _LOCAL_ENROLLMENTS if item["student_id"] == req.learner_id}
+            draft = _LOCAL_DRAFTS.get(req.draft_id)
+            if not draft or draft.get("class_id") not in class_ids or draft.get("status") != "accepted":
+                raise ValueError("Published content was not found in one of your joined classes.")
+            timing = next((item for item in _LOCAL_PAGE_TIMINGS if item["learner_id"] == req.learner_id and item["draft_id"] == req.draft_id and item["page_key"] == page_key), None)
+            now = datetime.now(timezone.utc)
+            if not timing:
+                timing = {
+                    "learner_id": req.learner_id,
+                    "draft_id": req.draft_id,
+                    "kind": draft["kind"],
+                    "page_key": page_key,
+                    "page_title": str(req.page_title or "")[:256],
+                    "seconds_spent": seconds,
+                    "visit_count": 1,
+                    "first_seen_at": now,
+                    "last_seen_at": now,
+                }
+                _LOCAL_PAGE_TIMINGS.append(timing)
+            else:
+                timing["page_title"] = str(req.page_title or timing.get("page_title") or "")[:256]
+                timing["seconds_spent"] = float(timing.get("seconds_spent") or 0.0) + seconds
+                timing["visit_count"] = int(timing.get("visit_count") or 0) + 1
+                timing["last_seen_at"] = now
+            total = sum(float(item.get("seconds_spent") or 0.0) for item in _LOCAL_PAGE_TIMINGS if item["learner_id"] == req.learner_id and item["draft_id"] == req.draft_id)
+            return {"recorded": True, "seconds_spent": seconds, "total_seconds": total}
+
     async def create_content_draft(self, req: models.ContentDraftRequest) -> models.ContentDraftResponse:
         try:
             async with AsyncSessionLocal() as session:
@@ -929,6 +1017,7 @@ class AsyncRepository:
         class_ids = [item.class_id for item in enrollments]
         published = (await session.scalars(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.class_id.in_(class_ids), db_models.ContentDraft.status == "accepted"))).all() if class_ids else []
         completions = (await session.scalars(sa.select(db_models.ContentCompletion).where(db_models.ContentCompletion.learner_id == learner.id).order_by(db_models.ContentCompletion.completed_at.desc()))).all()
+        page_timings = (await session.scalars(sa.select(db_models.ContentPageTiming).where(db_models.ContentPageTiming.learner_id == learner.id))).all()
         class_rows = {class_pk: await session.get(db_models.ClassGroup, class_pk) for class_pk in class_ids}
         starts = {row.session_id: row for row in sessions if row.session_id.startswith("published-start:")}
         completion_by_draft = {item.draft_id: item for item in completions}
@@ -936,11 +1025,8 @@ class AsyncRepository:
         for draft in published:
             completion = completion_by_draft.get(draft.id)
             start = starts.get(f"published-start:{learner.learner_id}:{draft.draft_id}")
-            duration = (
-                max(0.0, (completion.completed_at - start.created_at).total_seconds())
-                if completion and completion.completed_at and start and start.created_at
-                else None
-            )
+            draft_timings = [item for item in page_timings if item.draft_id == draft.id]
+            duration = sum(float(item.seconds_spent or 0.0) for item in draft_timings) if draft_timings else None
             content_activity.append({
                 "draft_id": draft.draft_id,
                 "class_id": class_rows[draft.class_id].class_id if class_rows.get(draft.class_id) else "",
@@ -951,6 +1037,16 @@ class AsyncRepository:
                 "started_at": _iso(start.created_at) if start else None,
                 "completed_at": _iso(completion.completed_at) if completion else None,
                 "duration_seconds": duration,
+                "page_timings": [
+                    {
+                        "page_key": item.page_key,
+                        "page_title": item.page_title or item.page_key,
+                        "seconds_spent": float(item.seconds_spent or 0.0),
+                        "visit_count": int(item.visit_count or 0),
+                        "last_seen_at": _iso(item.last_seen_at),
+                    }
+                    for item in sorted(draft_timings, key=lambda row: row.page_key)
+                ],
             })
         scores = [float((row.result or {}).get("score", 0.0)) for row in assessments]
         current_draft = next((item for item in published if completions and item.id == completions[0].draft_id), None)
@@ -991,6 +1087,7 @@ class AsyncRepository:
         class_ids = {item["class_id"] for item in _LOCAL_ENROLLMENTS if item["student_id"] == learner_id}
         published = [item for item in _LOCAL_DRAFTS.values() if item.get("class_id") in class_ids and item.get("status") == "accepted"]
         completions = [item for item in _LOCAL_COMPLETIONS if item["learner_id"] == learner_id]
+        page_timings = [item for item in _LOCAL_PAGE_TIMINGS if item["learner_id"] == learner_id]
         completion_by_draft = {item["draft_id"]: item for item in completions}
         content_activity = []
         for draft in published:
@@ -998,11 +1095,8 @@ class AsyncRepository:
             start = _LOCAL_SESSIONS.get((learner_id, f"published-start:{learner_id}:{draft['draft_id']}"))
             started_at = (start or {}).get("started_at")
             completed_at = (completion or {}).get("completed_at")
-            duration = (
-                max(0.0, (completed_at - started_at).total_seconds())
-                if isinstance(completed_at, datetime) and isinstance(started_at, datetime)
-                else None
-            )
+            draft_timings = [item for item in page_timings if item["draft_id"] == draft["draft_id"]]
+            duration = sum(float(item.get("seconds_spent") or 0.0) for item in draft_timings) if draft_timings else None
             content_activity.append({
                 "draft_id": draft["draft_id"],
                 "class_id": draft.get("class_id") or "",
@@ -1013,6 +1107,16 @@ class AsyncRepository:
                 "started_at": _iso(started_at) if started_at else None,
                 "completed_at": _iso(completed_at) if completed_at else None,
                 "duration_seconds": duration,
+                "page_timings": [
+                    {
+                        "page_key": item["page_key"],
+                        "page_title": item.get("page_title") or item["page_key"],
+                        "seconds_spent": float(item.get("seconds_spent") or 0.0),
+                        "visit_count": int(item.get("visit_count") or 0),
+                        "last_seen_at": _iso(item.get("last_seen_at")),
+                    }
+                    for item in sorted(draft_timings, key=lambda row: row["page_key"])
+                ],
             })
         progress = len(completions) / len(published) if published else _average(scores)
         has_session = any(session_learner_id == learner_id for session_learner_id, _ in _LOCAL_SESSIONS)

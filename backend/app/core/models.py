@@ -338,6 +338,14 @@ class PublishedContentCompletionRequest(BaseModel):
     draft_id: str
 
 
+class PublishedContentPageTimingRequest(BaseModel):
+    learner_id: str
+    draft_id: str
+    page_key: str
+    page_title: str = ""
+    seconds_spent: float = 0.0
+
+
 class PublishedContentCompletionResponse(BaseModel):
     draft_id: str
     kind: str
