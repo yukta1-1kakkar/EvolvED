@@ -244,8 +244,10 @@ class TeacherStudentSummary(BaseModel):
     name: str
     class_ids: List[str] = Field(default_factory=list)
     progress: float = 0.0
+    completed_lessons: int = 0
     current_lesson: str = "Not started"
     average_score: float = 0.0
+    assessment_scores: List[float] = Field(default_factory=list)
     rank: int = 0
     accessibility_settings: Dict[str, Any] = Field(default_factory=dict)
     last_active: Optional[str] = None

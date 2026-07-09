@@ -18,8 +18,10 @@ export interface TeacherStudentSummary {
   name: string;
   class_ids?: string[];
   progress: number;
+  completed_lessons?: number;
   current_lesson: string;
   average_score: number;
+  assessment_scores?: number[];
   rank: number;
   accessibility_settings: ApiRecord;
   last_active?: string | null;

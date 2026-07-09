@@ -49,10 +49,10 @@ function ClassInsightsPage() {
     .filter((student) => !selectedClassId || (student.class_ids ?? []).includes(selectedClassId))
     .sort((left, right) => right.average_score - left.average_score)
     .map((student, index) => ({ ...student, rank: index + 1 }));
-  const completed = students.filter((student) => student.status === "completed").length;
+  const completed = students.filter((student) => (student.completed_lessons ?? 0) > 0).length;
   const started = students.filter(hasStartedLesson).length;
   const averageProgress = average(students.map((student) => student.progress));
-  const averageAssessment = average(students.map((student) => student.average_score));
+  const averageAssessment = average(students.flatMap((student) => student.assessment_scores ?? []));
 
   return (
     <AppShell title="Class insights" subtitle="Class progress, completion, engagement, and assessment performance." accent={dashboard.isFetching ? "Syncing" : "Live"}>
@@ -98,8 +98,8 @@ function ClassInsightsPage() {
           <>
             <InsightCard icon={Users} label="Learners" value={students.length} />
             <InsightCard icon={LineChart} label="Overall progress" value={pct(averageProgress)} />
-            <InsightCard icon={Target} label="Lesson completion" value={pct(students.length ? completed / students.length : 0)} />
             <InsightCard icon={Play} label="Learner engagement" value={started} />
+            <InsightCard icon={Target} label="Lesson completion" value={pct(students.length ? completed / students.length : 0)} />
             <InsightCard icon={Target} label="Assessment performance" value={pct(averageAssessment)} />
           </>
         )}
