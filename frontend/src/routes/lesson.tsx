@@ -35,7 +35,7 @@ import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
 import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
-import { completePublishedContent, getStudentClassroom, type StudentClassAlert } from "@/lib/api/classroom";
+import { completePublishedContent, getStudentClassroom, startPublishedContent, type StudentClassAlert } from "@/lib/api/classroom";
 import { constraintsFromBrief, makeInitialBrief, prefetchRoadmapLessons, roadmapItemToRecord, type LessonBrief } from "@/lib/lesson-planning";
 import { getActiveRoadmapTopic, getCompletedRoadmapLessonCount, getCompletedRoadmapLessonItems, getCompletedRoadmapLessons, peekNextRoadmapLessonContext, setActiveRoadmapLesson, setActiveRoadmapTopic, setNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import { ROUTES } from "@/lib/routes";
@@ -244,9 +244,9 @@ function PublishedLessonsPage({ learnerId }: { learnerId: string }) {
 function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAlert; lessons: StudentClassAlert[]; learnerId: string }) {
   const { currentUser } = useAuth();
   const content = alert.published_content;
-  const sections = arrayValue(content.sections).map(recordValue);
-  const objectives = arrayValue(content.learning_objectives).map(String);
-  const flowSteps = arrayValue(recordValue(arrayValue(content.flowcharts)[0]).steps).map(String);
+  const sections = recordArray(content.sections);
+  const objectives = recordsFrom(content.learning_objectives).map(String);
+  const flowSteps = recordsFrom(recordArray(content.flowcharts)[0]?.steps).map(String);
   const tutor = useTutorInteraction();
   const queryClient = useQueryClient();
   const [question, setQuestion] = useState("");
@@ -265,6 +265,9 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
 
   useEffect(() => {
     setReachedEnd(false);
+    void startPublishedContent(learnerId, alert.draft_id).catch((error) => {
+      console.error("Could not record published lesson start", error);
+    });
     const marker = completionMarkerRef.current;
     if (!marker) return;
     const observer = new IntersectionObserver(([entry]) => {
@@ -287,7 +290,7 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
   function readLessonAloud() {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
-    const text = [alert.title, textValue(content.summary), ...sections.flatMap((section) => [textValue(section.title), textValue(section.summary)])].filter(Boolean).join(". ");
+    const text = [alert.title, stringValue(content.summary), ...sections.flatMap((section) => [stringValue(section.title), stringValue(section.summary)])].filter(Boolean).join(". ");
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
   }
 
@@ -315,16 +318,16 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
       <article className="rounded-2xl border border-border bg-card p-6">
         <div className="text-xs uppercase tracking-[0.16em] text-plum">{alert.class_name} · Published by {alert.leader_name}</div>
         <h2 className="mt-2 font-display text-3xl">{alert.title}</h2>
-        <p className="mt-3 text-base leading-7 text-muted-foreground">{textValue(content.summary)}</p>
+        <p className="mt-3 text-base leading-7 text-muted-foreground">{stringValue(content.summary)}</p>
       </article>
       {objectives.length > 0 && <AgentList icon={Target} title="Learning objectives" empty="" items={objectives.map((prompt) => ({ prompt }))} />}
       {sections.map((section, index) => (
         <article key={index} className="rounded-2xl border border-border bg-card p-6">
-          <h3 className="font-display text-2xl">{textValue(section.title) || `Section ${index + 1}`}</h3>
-          <p className="mt-3 text-base leading-8 text-muted-foreground">{textValue(section.summary)}</p>
-          {arrayValue(section.subsections).length > 0 && (
+          <h3 className="font-display text-2xl">{stringValue(section.title) || `Section ${index + 1}`}</h3>
+          <p className="mt-3 text-base leading-8 text-muted-foreground">{stringValue(section.summary)}</p>
+          {recordsFrom(section.subsections).length > 0 && (
             <ul className="mt-4 list-disc space-y-2 pl-6 text-muted-foreground">
-              {arrayValue(section.subsections).map((item, itemIndex) => <li key={itemIndex}>{String(item)}</li>)}
+              {recordsFrom(section.subsections).map((item, itemIndex) => <li key={itemIndex}>{String(item)}</li>)}
             </ul>
           )}
         </article>

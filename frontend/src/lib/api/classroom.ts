@@ -106,6 +106,13 @@ export function completePublishedContent(learnerId: string, draftId: string) {
   });
 }
 
+export function startPublishedContent(learnerId: string, draftId: string) {
+  return apiRequest<{ started: boolean }, { learner_id: string; draft_id: string }>("/student/content/start", {
+    method: "POST",
+    body: { learner_id: learnerId, draft_id: draftId },
+  });
+}
+
 export function getTeacherDashboard(leaderId: string) {
   return apiRequest<TeacherDashboardResponse>("/teacher/dashboard", {
     query: { leader_id: leaderId },

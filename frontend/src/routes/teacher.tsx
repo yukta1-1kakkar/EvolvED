@@ -33,6 +33,7 @@ function TeacherDashboard() {
     queryKey: ["teacher-dashboard", currentUser?.id],
     queryFn: () => getTeacherDashboard(currentUser?.id ?? ""),
     enabled: Boolean(currentUser?.id && currentUser.role === "module_leader"),
+    refetchInterval: 3000,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });

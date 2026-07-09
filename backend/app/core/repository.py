@@ -661,6 +661,45 @@ class AsyncRepository:
                 completed_at=_iso(completion["completed_at"]),
             )
 
+    async def start_published_content(self, req: models.PublishedContentCompletionRequest) -> Dict[str, bool]:
+        session_id = f"published-start:{req.learner_id}:{req.draft_id}"
+        try:
+            async with AsyncSessionLocal() as session:
+                learner = await self._require_role(session, req.learner_id, "student")
+                draft = await session.scalar(
+                    sa.select(db_models.ContentDraft)
+                    .join(db_models.Enrollment, db_models.Enrollment.class_id == db_models.ContentDraft.class_id)
+                    .where(
+                        db_models.ContentDraft.draft_id == req.draft_id,
+                        db_models.ContentDraft.status == "accepted",
+                        db_models.Enrollment.student_id == learner.id,
+                        db_models.Enrollment.status == "active",
+                    )
+                )
+                if not draft:
+                    raise ValueError("Published content was not found in one of your joined classes.")
+                if not await session.scalar(sa.select(db_models.Session).where(db_models.Session.session_id == session_id)):
+                    session.add(db_models.Session(
+                        session_id=session_id,
+                        learner_id=learner.id,
+                        state={"lesson": {"topic": draft.title}, "status": "started"},
+                    ))
+                    await session.commit()
+                return {"started": True}
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Database published content start unavailable; storing local session: %s: %r", type(exc).__name__, exc)
+            class_ids = {item["class_id"] for item in _LOCAL_ENROLLMENTS if item["student_id"] == req.learner_id}
+            draft = _LOCAL_DRAFTS.get(req.draft_id)
+            if not draft or draft.get("class_id") not in class_ids or draft.get("status") != "accepted":
+                raise ValueError("Published content was not found in one of your joined classes.")
+            _LOCAL_SESSIONS[(req.learner_id, session_id)] = {
+                "lesson": {"topic": draft["title"]},
+                "status": "started",
+            }
+            return {"started": True}
+
     async def create_content_draft(self, req: models.ContentDraftRequest) -> models.ContentDraftResponse:
         try:
             async with AsyncSessionLocal() as session:
@@ -909,11 +948,12 @@ class AsyncRepository:
         published = [item for item in _LOCAL_DRAFTS.values() if item.get("class_id") in class_ids and item.get("status") == "accepted"]
         completions = [item for item in _LOCAL_COMPLETIONS if item["learner_id"] == learner_id]
         progress = len(completions) / len(published) if published else _average(scores)
+        has_session = any(session_learner_id == learner_id for session_learner_id, _ in _LOCAL_SESSIONS)
         return models.TeacherStudentSummary(
             learner_id=learner.learner_id,
             name=learner.full_name or "Learner",
             progress=progress,
-            current_lesson=str((_LOCAL_DRAFTS.get(completions[-1]["draft_id"]) or {}).get("title") or ("Lesson in progress" if _LOCAL_SESSIONS else "Not started")) if completions else ("Lesson in progress" if _LOCAL_SESSIONS else "Not started"),
+            current_lesson=str((_LOCAL_DRAFTS.get(completions[-1]["draft_id"]) or {}).get("title") or ("Lesson in progress" if has_session else "Not started")) if completions else ("Lesson in progress" if has_session else "Not started"),
             average_score=_average(scores),
             accessibility_settings=learner.accessibility or {},
             last_active=_iso(datetime.now(timezone.utc)),
@@ -1163,7 +1203,7 @@ def _local_class_count(class_id: str) -> int:
 
 
 def _rank_students(students: list[models.TeacherStudentSummary]) -> list[models.TeacherStudentSummary]:
-    ranked = sorted(students, key=lambda item: (item.average_score, item.progress), reverse=True)
+    ranked = sorted(students, key=lambda item: item.average_score, reverse=True)
     for index, item in enumerate(ranked, 1):
         item.rank = index
     return ranked

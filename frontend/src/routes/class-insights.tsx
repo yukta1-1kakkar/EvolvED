@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowDownUp, BarChart3, LineChart, Loader2, Target, Users } from "lucide-react";
+import { ArrowDownUp, LineChart, Play, Target, Users } from "lucide-react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,6 +28,8 @@ function ClassInsightsPage() {
     queryKey: ["teacher-dashboard", currentUser?.id],
     queryFn: () => getTeacherDashboard(currentUser?.id ?? ""),
     enabled: Boolean(currentUser?.id && currentUser.role === "module_leader"),
+    refetchInterval: 3000,
+    refetchOnWindowFocus: true,
   });
 
   if (currentUser?.role !== "module_leader") {
@@ -43,14 +45,17 @@ function ClassInsightsPage() {
   const classes = dashboard.data?.classes ?? [];
   const selectedClass = classes.find((item) => item.class_id === search.classId);
   const selectedClassId = selectedClass?.class_id ?? "";
-  const students = (dashboard.data?.students ?? []).filter((student) => !selectedClassId || (student.class_ids ?? []).includes(selectedClassId));
+  const students = (dashboard.data?.students ?? [])
+    .filter((student) => !selectedClassId || (student.class_ids ?? []).includes(selectedClassId))
+    .sort((left, right) => right.average_score - left.average_score)
+    .map((student, index) => ({ ...student, rank: index + 1 }));
   const completed = students.filter((student) => student.status === "completed").length;
-  const active = students.filter((student) => Boolean(student.last_active)).length;
+  const started = students.filter(hasStartedLesson).length;
   const averageProgress = average(students.map((student) => student.progress));
   const averageAssessment = average(students.map((student) => student.average_score));
 
   return (
-    <AppShell title="Class insights" subtitle="Class progress, completion, mastery, engagement, and assessment performance." accent={dashboard.isFetching ? "Syncing" : "Live"}>
+    <AppShell title="Class insights" subtitle="Class progress, completion, engagement, and assessment performance." accent={dashboard.isFetching ? "Syncing" : "Live"}>
       {dashboard.isError && (
         <div className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           {dashboard.error.message}
@@ -86,16 +91,15 @@ function ClassInsightsPage() {
         </div>
       </div>
 
-      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {dashboard.isLoading ? (
-          Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-2xl" />)
+          Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-2xl" />)
         ) : (
           <>
             <InsightCard icon={Users} label="Learners" value={students.length} />
             <InsightCard icon={LineChart} label="Overall progress" value={pct(averageProgress)} />
             <InsightCard icon={Target} label="Lesson completion" value={pct(students.length ? completed / students.length : 0)} />
-            <InsightCard icon={BarChart3} label="Average mastery" value={pct(averageProgress)} />
-            <InsightCard icon={Loader2} label="Learner engagement" value={pct(students.length ? active / students.length : 0)} />
+            <InsightCard icon={Play} label="Learner engagement" value={started} />
             <InsightCard icon={Target} label="Assessment performance" value={pct(averageAssessment)} />
           </>
         )}
@@ -110,7 +114,7 @@ function ClassInsightsPage() {
           <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="border-b border-border text-xs uppercase tracking-[0.16em] text-muted-foreground">
               <tr>
-                {["Name", "Progress", "Current lesson", "Average score", "Engagement", "Last active"].map((heading) => (
+                {["Rank", "Name", "Current lesson", "Average score", "Last active"].map((heading) => (
                   <th key={heading} className="py-3 pr-4 font-medium">
                     <span className="inline-flex items-center gap-1">
                       {heading}
@@ -123,11 +127,10 @@ function ClassInsightsPage() {
             <tbody>
               {students.map((student) => (
                 <tr key={student.learner_id} className="border-b border-border/60">
+                  <td className="py-3 pr-4 font-medium">#{student.rank}</td>
                   <td className="py-3 pr-4 font-medium">{student.name}</td>
-                  <td className="py-3 pr-4">{pct(student.progress)}</td>
                   <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.current_lesson}</td>
                   <td className="py-3 pr-4">{pct(student.average_score)}</td>
-                  <td className="py-3 pr-4 text-muted-foreground">{engagementLabel(student)}</td>
                   <td className="py-3 pr-4 text-muted-foreground">{formatDate(student.last_active)}</td>
                 </tr>
               ))}
@@ -156,10 +159,8 @@ function InsightCard({ icon: Icon, label, value }: { icon: typeof Users; label: 
   );
 }
 
-function engagementLabel(student: TeacherStudentSummary) {
-  if (student.status === "completed") return "Completed";
-  if (student.status === "needs_help") return "Needs support";
-  return "In progress";
+function hasStartedLesson(student: TeacherStudentSummary) {
+  return student.progress > 0 || student.current_lesson !== "Not started";
 }
 
 function pct(value: number | null | undefined) {
