@@ -11,7 +11,7 @@ import json
 import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from app.core import models, repository, langgraph_nodes
 from app.core.audio_generator import generate_lesson_audio, synthesize_lesson_speech
 from app.core.media import MEDIA_ROOT
@@ -157,6 +157,34 @@ async def student_classroom(learner_id: str):
         return await repository.AsyncRepository().student_classroom(learner_id)
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/student/notifications/stream")
+async def student_notification_stream(learner_id: str):
+    async def events():
+        repo = repository.AsyncRepository()
+        initial = await repo.student_classroom(learner_id)
+        known = {item.alert_id for item in initial.alerts}
+        yield ": connected\n\n"
+        while True:
+            await asyncio.sleep(1)
+            classroom = await repo.student_classroom(learner_id)
+            fresh = [item for item in reversed(classroom.alerts) if item.alert_id not in known]
+            for alert in fresh:
+                known.add(alert.alert_id)
+                yield f"event: notification\ndata: {alert.model_dump_json()}\n\n"
+            if not fresh:
+                yield ": heartbeat\n\n"
+
+    try:
+        await repository.AsyncRepository().student_classroom(learner_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/student/content/complete", response_model=models.PublishedContentCompletionResponse)

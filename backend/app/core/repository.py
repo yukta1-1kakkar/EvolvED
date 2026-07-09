@@ -665,7 +665,11 @@ class AsyncRepository:
         try:
             async with AsyncSessionLocal() as session:
                 leader = await self._require_role(session, req.leader_id, "module_leader")
-                class_row = await self._owned_class(session, leader.id, req.class_id) if req.class_id else None
+                class_row = await self._owned_class(session, leader.id, req.class_id) if req.class_id else await session.scalar(
+                    sa.select(db_models.ClassGroup).where(db_models.ClassGroup.leader_id == leader.id, db_models.ClassGroup.active == True).order_by(db_models.ClassGroup.created_at)
+                )
+                if not class_row:
+                    raise ValueError("Create a classroom before generating content for class students.")
                 draft = db_models.ContentDraft(
                     draft_id=str(uuid4()),
                     leader_id=leader.id,
@@ -699,6 +703,13 @@ class AsyncRepository:
                 draft = await session.scalar(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.draft_id == draft_id, db_models.ContentDraft.leader_id == leader.id))
                 if not draft:
                     raise ValueError("Draft was not found for this module leader.")
+                if req.decision == "accept" and draft.class_id is None:
+                    class_row = await session.scalar(
+                        sa.select(db_models.ClassGroup).where(db_models.ClassGroup.leader_id == leader.id, db_models.ClassGroup.active == True).order_by(db_models.ClassGroup.created_at)
+                    )
+                    if not class_row:
+                        raise ValueError("Select or create a classroom before publishing this content.")
+                    draft.class_id = class_row.id
                 draft.status = status
                 draft.approval = approval
                 if req.decision == "request_changes":

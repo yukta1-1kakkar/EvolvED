@@ -116,7 +116,7 @@ function TeacherDashboard() {
             </div>
             <Input value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} placeholder="Draft title" className="h-10" />
             <select value={draftClassId} onChange={(event) => setDraftClassId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
-              <option value="">No class selected</option>
+              <option value="">Select a classroom</option>
               {(dashboard.data?.classes ?? []).map((item) => <option key={item.class_id} value={item.class_id}>{item.name}</option>)}
             </select>
             <label className="block rounded-xl border border-dashed border-border bg-background/60 p-4 text-sm">
@@ -146,7 +146,7 @@ function TeacherDashboard() {
               placeholder="Optional pasted source text or teacher notes"
               className="min-h-28 w-full rounded-xl border border-input bg-background/70 px-3 py-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
-            <Button type="submit" className="w-full" disabled={uploadDraft.isPending || !draftTitle.trim() || (!draftFile && !draftNotes.trim())}>
+            <Button type="submit" className="w-full" disabled={uploadDraft.isPending || !draftClassId || !draftTitle.trim() || (!draftFile && !draftNotes.trim())}>
               {uploadDraft.isPending ? <Loader2 className="animate-spin" /> : <Upload />}
               Generate draft preview
             </Button>

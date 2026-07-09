@@ -1,6 +1,6 @@
 import { Link, Navigate, useRouterState } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
   Network,
@@ -24,6 +24,7 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
 import { getStudentClassroom, type StudentClassAlert } from "@/lib/api/classroom";
+import { apiUrl } from "@/lib/api/client";
 
 const nav = [
   { to: ROUTES.KNOWLEDGE, label: "Knowledge", icon: Network },
@@ -64,6 +65,7 @@ export function AppShell({
 }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const { currentUser, logout } = useAuth();
+  const queryClient = useQueryClient();
   const [showStatusBrief, setShowStatusBrief] = useState(false);
   const statusLabel = accent ?? "Adapting";
   const statusBrief = statusBriefFor(statusLabel);
@@ -73,7 +75,6 @@ export function AppShell({
     queryKey: ["student-classroom", currentUser?.id],
     queryFn: () => getStudentClassroom(currentUser?.id ?? ""),
     enabled: Boolean(isClassStudent && currentUser?.id),
-    refetchInterval: 30_000,
   });
   const [notification, setNotification] = useState<StudentClassAlert | null>(null);
   const visibleNav = isModuleLeader ? teacherNav : isClassStudent ? classStudentNav : nav;
@@ -83,18 +84,43 @@ export function AppShell({
   useEffect(() => {
     if (!isClassStudent || !currentUser?.id || !classroom.data?.alerts.length) return;
     const seenKey = `evolved.seenClassAlerts.${currentUser.id}`;
-    const seen = new Set<string>(JSON.parse(window.localStorage.getItem(seenKey) || "[]"));
+    const seen = readSeenAlerts(seenKey);
     const newest = classroom.data.alerts.find((item) => !seen.has(item.alert_id));
-    if (newest) setNotification(newest);
+    if (newest) {
+      seen.add(newest.alert_id);
+      window.localStorage.setItem(seenKey, JSON.stringify([...seen]));
+      setNotification(newest);
+    }
   }, [classroom.data?.alerts, currentUser?.id, isClassStudent]);
 
-  function dismissNotification(alert: StudentClassAlert) {
-    if (currentUser?.id) {
-      const seenKey = `evolved.seenClassAlerts.${currentUser.id}`;
-      const seen = new Set<string>(JSON.parse(window.localStorage.getItem(seenKey) || "[]"));
-      seen.add(alert.alert_id);
-      window.localStorage.setItem(seenKey, JSON.stringify([...seen]));
-    }
+  useEffect(() => {
+    if (!isClassStudent || !currentUser?.id) return;
+    const stream = new EventSource(apiUrl("/student/notifications/stream", { learner_id: currentUser.id }));
+    stream.addEventListener("notification", (event) => {
+      try {
+        const alert = JSON.parse((event as MessageEvent<string>).data) as StudentClassAlert;
+        const seenKey = `evolved.seenClassAlerts.${currentUser.id}`;
+        const seen = readSeenAlerts(seenKey);
+        if (!seen.has(alert.alert_id)) {
+          seen.add(alert.alert_id);
+          window.localStorage.setItem(seenKey, JSON.stringify([...seen]));
+          setNotification(alert);
+        }
+        void queryClient.invalidateQueries({ queryKey: ["student-classroom", currentUser.id] });
+      } catch {
+        // Ignore malformed stream events and keep the live connection open.
+      }
+    });
+    return () => stream.close();
+  }, [currentUser?.id, isClassStudent, queryClient]);
+
+  useEffect(() => {
+    if (!notification) return;
+    const timeout = window.setTimeout(() => setNotification(null), 5_000);
+    return () => window.clearTimeout(timeout);
+  }, [notification]);
+
+  function dismissNotification() {
     setNotification(null);
   }
 
@@ -248,12 +274,12 @@ export function AppShell({
             <Link
               to={notification.kind === "assessment" ? ROUTES.ASSESSMENT : ROUTES.LESSON}
               search={{ draft: notification.draft_id }}
-              onClick={() => dismissNotification(notification)}
+              onClick={dismissNotification}
               className="rounded-full bg-foreground px-4 py-2 text-sm text-background"
             >
               Open {notification.kind}
             </Link>
-            <button type="button" onClick={() => dismissNotification(notification)} className="rounded-full border border-border px-4 py-2 text-sm">
+            <button type="button" onClick={dismissNotification} className="rounded-full border border-border px-4 py-2 text-sm">
               Later
             </button>
           </div>
@@ -261,6 +287,15 @@ export function AppShell({
       )}
     </ProtectedRoute>
   );
+}
+
+function readSeenAlerts(key: string) {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) || "[]");
+    return new Set<string>(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+  } catch {
+    return new Set<string>();
+  }
 }
 
 function statusBriefFor(label: string) {

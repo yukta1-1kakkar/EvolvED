@@ -77,6 +77,13 @@ const signupSchema = z
 ;
 
 type SignupFormValues = z.infer<typeof signupSchema>;
+type ClassStudentPreferences = {
+  educationLevel: string;
+  pacePreference: string;
+  preferredModality: string;
+  learningAvailability: string;
+  accessibilitySupport: boolean;
+};
 
 export const Route = createFileRoute("/signup")({
   head: () => ({
@@ -94,6 +101,13 @@ function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [classCode, setClassCode] = useState("");
   const [classStudent, setClassStudent] = useState<AuthUser | null>(null);
+  const [classPreferences, setClassPreferences] = useState<ClassStudentPreferences>({
+    educationLevel: "",
+    pacePreference: "",
+    preferredModality: "",
+    learningAvailability: "",
+    accessibilitySupport: false,
+  });
 
   const {
     register,
@@ -119,7 +133,7 @@ function SignupPage() {
   const password = watch("password");
   const role = watch("role");
   const strength = useMemo(() => getPasswordStrength(password), [password]);
-  const classJoin = useClassJoinMutation(classStudent, classCode, completeProfile, navigate);
+  const classJoin = useClassJoinMutation(classStudent, classCode, classPreferences, completeProfile, navigate);
 
   async function onSubmit(values: SignupFormValues) {
     try {
@@ -171,6 +185,45 @@ function SignupPage() {
               className="h-12 rounded-xl bg-background/70 px-4 text-lg tracking-[0.2em]"
             />
           </Field>
+          <Field label="Education level" htmlFor="classEducationLevel">
+            <Select id="classEducationLevel" value={classPreferences.educationLevel} onChange={(event) => setClassPreferences((current) => ({ ...current, educationLevel: event.target.value }))}>
+              <option value="">Choose a level</option>
+              <option>School</option>
+              <option>Undergraduate</option>
+              <option>Postgraduate</option>
+              <option>Professional or independent learner</option>
+            </Select>
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Preferred pace" htmlFor="classPacePreference">
+              <Select id="classPacePreference" value={classPreferences.pacePreference} onChange={(event) => setClassPreferences((current) => ({ ...current, pacePreference: event.target.value }))}>
+                <option value="">Choose a pace</option>
+                <option value="gentle">Gentle and thorough</option>
+                <option value="balanced">Balanced</option>
+                <option value="fast">Fast and challenging</option>
+              </Select>
+            </Field>
+            <Field label="Learning availability" htmlFor="classLearningAvailability">
+              <Select id="classLearningAvailability" value={classPreferences.learningAvailability} onChange={(event) => setClassPreferences((current) => ({ ...current, learningAvailability: event.target.value }))}>
+                <option value="">Choose your daily time</option>
+                <option value="30_min">30 min/day</option>
+                <option value="60_min">1 hr/day</option>
+                <option value="120_min">2 hr/day</option>
+              </Select>
+            </Field>
+          </div>
+          <Field label="Preferred learning style" htmlFor="classPreferredModality">
+            <Select id="classPreferredModality" value={classPreferences.preferredModality} onChange={(event) => setClassPreferences((current) => ({ ...current, preferredModality: event.target.value }))}>
+              <option value="">Choose a style</option>
+              <option value="visual">Visual examples and diagrams</option>
+              <option value="audio">Audio learning</option>
+              <option value="reading">Detailed written explanations</option>
+            </Select>
+          </Field>
+          <label className="flex items-start gap-3 rounded-xl border border-border bg-background/45 p-3 text-sm text-muted-foreground">
+            <input type="checkbox" checked={classPreferences.accessibilitySupport} onChange={(event) => setClassPreferences((current) => ({ ...current, accessibilitySupport: event.target.checked }))} className="mt-0.5 size-4 accent-plum" />
+            <span>I would like dyslexia-aware spacing, chunked explanations, focus mode, and clearer step-by-step lessons.</span>
+          </label>
           {classJoin.success && (
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700">
               <div className="flex items-center gap-2 font-medium">
@@ -179,7 +232,7 @@ function SignupPage() {
               </div>
             </div>
           )}
-          <Button type="submit" className="h-12 w-full rounded-xl" disabled={!classCode.trim() || classJoin.pending}>
+          <Button type="submit" className="h-12 w-full rounded-xl" disabled={!classCode.trim() || !classPreferences.educationLevel || !classPreferences.pacePreference || !classPreferences.preferredModality || !classPreferences.learningAvailability || classJoin.pending}>
             {classJoin.pending ? <Loader2 className="animate-spin" /> : <UserRoundPlus />}
             Join class and continue
           </Button>
@@ -402,6 +455,7 @@ function RoleButton({
 function useClassJoinMutation(
   classStudent: AuthUser | null,
   classCode: string,
+  preferences: ClassStudentPreferences,
   completeProfile: (learningTopic: string, learningProject?: string, preferences?: { accountType?: "individual_student" | "class_student"; educationLevel?: string; pacePreference?: string; preferredModality?: string; topicFamiliarity?: string; learningAvailability?: string; accessibilitySupport?: boolean }) => void,
   navigate: ReturnType<typeof useNavigate>,
 ) {
@@ -423,34 +477,33 @@ function useClassJoinMutation(
         await createLearnerProfile({
           learner_id: classStudent.id,
           age_group: getAgeGroup(classStudent.age),
-          education_level: "Classroom learner",
+          education_level: preferences.educationLevel,
           learning_goal: `Learn with ${joinedClass.name}.`,
-          pace_preference: "balanced",
-          preferred_modality: ["reading"],
-          topic: "Classroom learning",
-          topic_familiarity: "beginner",
+          pace_preference: preferences.pacePreference,
+          preferred_modality: [preferences.preferredModality],
+          topic: null,
+          topic_familiarity: null,
           accessibility: {
             class_student: true,
-            additional_support: false,
-            dyslexia_support: false,
-            chunked_explanations: false,
-            readable_spacing: false,
+            additional_support: preferences.accessibilitySupport,
+            dyslexia_support: preferences.accessibilitySupport,
+            chunked_explanations: preferences.accessibilitySupport,
+            readable_spacing: preferences.accessibilitySupport,
             focus_mode_available: true,
           },
-          learning_availability: "30_min",
+          learning_availability: preferences.learningAvailability,
           learning_project: joinedClass.name,
         });
-        completeProfile("Classroom learning", joinedClass.name, {
+        completeProfile("", joinedClass.name, {
           accountType: "class_student",
-          educationLevel: "Classroom learner",
-          pacePreference: "balanced",
-          preferredModality: "reading",
-          topicFamiliarity: "beginner",
-          learningAvailability: "30_min",
-          accessibilitySupport: false,
+          educationLevel: preferences.educationLevel,
+          pacePreference: preferences.pacePreference,
+          preferredModality: preferences.preferredModality,
+          learningAvailability: preferences.learningAvailability,
+          accessibilitySupport: preferences.accessibilitySupport,
         });
         setSuccess(joinedClass.name);
-        await navigate({ to: ROUTES.KNOWLEDGE, replace: true });
+        await navigate({ to: ROUTES.ALERTS, replace: true });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not join this class. Check the code and try again.");
       } finally {

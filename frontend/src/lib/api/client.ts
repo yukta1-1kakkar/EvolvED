@@ -44,6 +44,10 @@ function buildUrl(path: string, query?: Record<string, ApiPrimitive | undefined>
   return url;
 }
 
+export function apiUrl(path: string, query?: Record<string, ApiPrimitive | undefined>) {
+  return buildUrl(path, query).toString();
+}
+
 async function parseResponse(response: Response): Promise<ApiJson | undefined> {
   if (response.status === 204) {
     return undefined;
