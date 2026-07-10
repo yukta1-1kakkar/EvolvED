@@ -30,6 +30,40 @@ _LOCAL_CLASSES: dict[str, Dict[str, Any]] = {}
 _LOCAL_ENROLLMENTS: list[Dict[str, str]] = []
 _LOCAL_DRAFTS: dict[str, Dict[str, Any]] = {}
 _LOCAL_COMPLETIONS: list[Dict[str, Any]] = []
+_LOCAL_CLASSROOM_STORE = Path(__file__).resolve().parents[2] / "data" / "local_classroom_store.json"
+
+
+def _load_local_classroom_store() -> None:
+    if not _LOCAL_CLASSROOM_STORE.exists():
+        return
+    try:
+        data = json.loads(_LOCAL_CLASSROOM_STORE.read_text(encoding="utf-8"))
+        for item in data.get("classes", []):
+            if isinstance(item, dict) and item.get("class_id"):
+                created_at = item.get("created_at")
+                if isinstance(created_at, str):
+                    item["created_at"] = datetime.fromisoformat(created_at)
+                _LOCAL_CLASSES[str(item["class_id"])] = item
+        _LOCAL_ENROLLMENTS.extend(item for item in data.get("enrollments", []) if isinstance(item, dict) and item.get("class_id") and item.get("student_id"))
+    except Exception as exc:
+        logger.warning("Local classroom store could not be loaded; continuing empty: %s: %r", type(exc).__name__, exc)
+
+
+def _save_local_classroom_store() -> None:
+    try:
+        _LOCAL_CLASSROOM_STORE.parent.mkdir(parents=True, exist_ok=True)
+        classes = []
+        for item in _LOCAL_CLASSES.values():
+            row = dict(item)
+            if isinstance(row.get("created_at"), datetime):
+                row["created_at"] = row["created_at"].isoformat()
+            classes.append(row)
+        _LOCAL_CLASSROOM_STORE.write_text(json.dumps({"classes": classes, "enrollments": _LOCAL_ENROLLMENTS}, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Local classroom store could not be saved: %s: %r", type(exc).__name__, exc)
+
+
+_load_local_classroom_store()
 _LOCAL_PAGE_TIMINGS: list[Dict[str, Any]] = []
 
 
@@ -461,10 +495,17 @@ class AsyncRepository:
             }
             record["invite_link"] = _invite_link(record["join_code"])
             _LOCAL_CLASSES[class_id] = record
+            _save_local_classroom_store()
             return models.ClassSummary(**{**record, "created_at": _iso(record["created_at"]), "student_count": 0})
 
     async def join_class(self, req: models.JoinClassRequest) -> models.ClassSummary:
         code = req.join_code.strip().upper()
+        local_class = next((item for item in _LOCAL_CLASSES.values() if item["join_code"] == code and item["active"]), None)
+        if local_class:
+            if not any(item["class_id"] == local_class["class_id"] and item["student_id"] == req.learner_id for item in _LOCAL_ENROLLMENTS):
+                _LOCAL_ENROLLMENTS.append({"class_id": local_class["class_id"], "student_id": req.learner_id})
+                _save_local_classroom_store()
+            return models.ClassSummary(**{**local_class, "created_at": _iso(local_class["created_at"]), "student_count": _local_class_count(local_class["class_id"])})
         try:
             async with AsyncSessionLocal() as session:
                 student = await self._require_role(session, req.learner_id, "student")
@@ -486,6 +527,7 @@ class AsyncRepository:
                 raise ValueError("Class join code was not found.")
             if not any(item["class_id"] == class_group["class_id"] and item["student_id"] == req.learner_id for item in _LOCAL_ENROLLMENTS):
                 _LOCAL_ENROLLMENTS.append({"class_id": class_group["class_id"], "student_id": req.learner_id})
+                _save_local_classroom_store()
             return models.ClassSummary(**{**class_group, "created_at": _iso(class_group["created_at"]), "student_count": _local_class_count(class_group["class_id"])})
 
     async def teacher_dashboard(self, leader_id: str) -> models.TeacherDashboardResponse:

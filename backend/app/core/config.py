@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_session_token: str | None = None
+    database_use_local_sqlite: bool = False
     database_url: str | None = None
     database_pool_size: int = 2
     database_max_overflow: int = 2
