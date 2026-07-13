@@ -1,3 +1,5 @@
+import asyncio
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -6,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.routers import _uploaded_source
 from app.core import models
-from app.core.repository import _draft_preview, _healed_draft_preview
+from app.core.repository import _draft_preview, _generate_draft_preview, _healed_draft_preview
 
 
 def test_pdf_upload_uses_pdf_library_text(monkeypatch):
@@ -279,10 +281,63 @@ def test_old_match_assessment_heals_from_source():
     assert "best matches" not in question_text.lower()
 
 
+def test_module_leader_generation_runs_both_agents(monkeypatch):
+    calls = []
+
+    async def analyze(title, kind, source_material):
+        calls.append("source")
+        return {
+            "readable": True,
+            "source_summary": "Vectors have magnitude and direction.",
+            "concepts": [{"name": "Vectors", "evidence": "magnitude and direction", "importance": "core"}] * 3,
+            "learning_objectives": ["Explain vectors.", "Apply vector addition."],
+            "difficulty": "Foundational",
+            "warnings": [],
+        }
+
+    async def review(title, kind, analysis, draft):
+        calls.append("quality")
+        return {
+            **draft,
+            "agent_workflow": ["Source Analysis Agent", "Quality Review Agent"],
+            "quality_review": {"status": "passed"},
+        }
+
+    monkeypatch.setattr("app.core.repository.langgraph_nodes.source_analysis_agent", analyze)
+    monkeypatch.setattr("app.core.repository.langgraph_nodes.quality_review_agent", review)
+    result = asyncio.run(
+        _generate_draft_preview(
+            models.ContentDraftRequest(
+                leader_id="teacher",
+                kind="lesson",
+                title="vectors",
+                source_material={"text": "Vectors have magnitude and direction. Vector addition combines components. Learners resolve vectors along coordinate axes and use them to model force, displacement, motion, and data relationships in practical situations."},
+            )
+        )
+    )
+
+    assert calls == ["source", "quality"]
+    assert result["quality_review"]["status"] == "passed"
+    assert result["source_analysis"]["learning_objectives"]
+
+
 if __name__ == "__main__":
     class MonkeyPatch:
         def setitem(self, mapping, key, value):
             mapping[key] = value
+
+        def setattr(self, target, value):
+            parts = target.split(".")
+            for index in range(len(parts) - 1, 0, -1):
+                try:
+                    owner = importlib.import_module(".".join(parts[:index]))
+                    for part in parts[index:-1]:
+                        owner = getattr(owner, part)
+                    setattr(owner, parts[-1], value)
+                    return
+                except ModuleNotFoundError:
+                    continue
+            raise ImportError(target)
 
     test_pdf_upload_uses_pdf_library_text(MonkeyPatch())
     test_pdf_upload_keeps_domain_text_with_few_common_words(MonkeyPatch())
@@ -297,3 +352,4 @@ if __name__ == "__main__":
     test_assessment_blocks_unreadable_scaffold_instead_of_fake_questions()
     test_assessment_asks_direct_questions_for_policy_document()
     test_old_match_assessment_heals_from_source()
+    test_module_leader_generation_runs_both_agents(MonkeyPatch())

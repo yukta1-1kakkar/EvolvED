@@ -178,6 +178,8 @@ class ProgressResponse(BaseModel):
     history: List[Dict[str, Any]] = Field(default_factory=list)
     completed_lessons: int = 0
     learning_streak: int = 0
+    average_page_seconds: float = 0.0
+    page_timings: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class AnalyticsResponse(BaseModel):
@@ -343,6 +345,15 @@ class PublishedContentPageTimingRequest(BaseModel):
     draft_id: str
     page_key: str
     page_title: str = ""
+    seconds_spent: float = 0.0
+
+
+class AdaptivePageTimingRequest(BaseModel):
+    learner_id: str
+    session_id: str
+    page_key: str
+    page_title: str = ""
+    page_kind: str = Field(pattern="^(lesson|assessment)$")
     seconds_spent: float = 0.0
 
 

@@ -10,6 +10,7 @@ import { VectorArrowDiagram } from "@/components/learning/VectorArrowDiagram";
 import { isVectorVisualText } from "@/components/learning/vectorVisual";
 import { useGenerateQuiz, useSubmitAssessment } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
+import { useAdaptivePageTimer } from "@/hooks/useAdaptivePageTimer";
 import { getStudentClassroom, recordPublishedContentPageTiming, startPublishedContent, type StudentClassAlert } from "@/lib/api/classroom";
 import { completeActiveRoadmapLesson, prepareNextRoadmapLessonContext } from "@/lib/lesson-progress";
 import type { ApiJson, ApiRecord } from "@/types/api";
@@ -45,6 +46,7 @@ function AdaptiveAssessmentPage() {
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [confidence, setConfidence] = useState<Record<string, number>>({});
   const [readerMode, setReaderMode] = useState<ReaderMode>(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
+  const [pageIndex, setPageIndex] = useState(0);
   const quiz = useGenerateQuiz({ learner_id: currentUser?.id ?? "", session_id: sessionId });
   const submit = useSubmitAssessment();
 
@@ -58,6 +60,10 @@ function AdaptiveAssessmentPage() {
       completeActiveRoadmapLesson(currentUser.id);
     }
   }, [currentUser?.id, submit.data]);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [quiz.data?.quiz_id]);
 
   function submitQuiz() {
     if (!currentUser || !quiz.data) return;
@@ -73,6 +79,7 @@ function AdaptiveAssessmentPage() {
     setAnswers({});
     setConfidence({});
     submit.reset();
+    setPageIndex(0);
     void quiz.refetch();
   }
 
@@ -85,6 +92,17 @@ function AdaptiveAssessmentPage() {
   }
 
   const questions = quiz.data?.questions ?? [];
+  const currentQuestion = questions[pageIndex];
+  const currentQuestionId = currentQuestion ? questionId(currentQuestion, pageIndex) : "";
+  const isLastQuestion = questions.length > 0 && pageIndex === questions.length - 1;
+  useAdaptivePageTimer({
+    learnerId: currentUser?.id ?? "",
+    sessionId,
+    pageKey: currentQuestion ? `assessment-question-${pageIndex + 1}` : "",
+    pageTitle: currentQuestion ? `Question ${pageIndex + 1}` : "",
+    pageKind: "assessment",
+    enabled: Boolean(currentQuestion && !submit.data),
+  });
   const incompleteQuestions = questions
     .map((question, index) => ({ id: questionId(question, index), number: index + 1 }))
     .filter((question) => !answerComplete(answers[question.id]));
@@ -102,33 +120,33 @@ function AdaptiveAssessmentPage() {
           {quiz.isError && <p className="text-sm text-destructive">{quiz.error.message}</p>}
           {questions.length > 0 && (
             <>
-              {questions.map((question, index) => {
-                const id = questionId(question, index);
-                return (
-                  <QuestionCard
-                    key={id}
-                    question={question}
-                    index={index}
-                    answer={answers[id] ?? emptyAnswer()}
-                    confidence={confidence[id] ?? 70}
-                    onAnswer={(value) => setAnswers((current) => ({ ...current, [id]: value }))}
-                    onConfidence={(value) => setConfidence((current) => ({ ...current, [id]: value }))}
-                  />
-                );
-              })}
-              {!submit.data && (
+              {!submit.data && currentQuestion && (
                 <>
-                  <button
-                    type="button"
-                    onClick={submitQuiz}
-                    disabled={!canSubmit}
-                    title={submitHint}
-                    className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50"
-                  >
-                    {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                    Submit and evaluate
-                  </button>
-                  {!canSubmit && !submit.isPending && <p className="text-xs text-muted-foreground">{submitHint}</p>}
+                  <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-5 py-3 text-sm">
+                    <span className="text-muted-foreground">Question {pageIndex + 1} of {questions.length}</span>
+                  </div>
+                  <QuestionCard
+                    key={currentQuestionId}
+                    question={currentQuestion}
+                    index={pageIndex}
+                    answer={answers[currentQuestionId] ?? emptyAnswer()}
+                    confidence={confidence[currentQuestionId] ?? 70}
+                    onAnswer={(value) => setAnswers((current) => ({ ...current, [currentQuestionId]: value }))}
+                    onConfidence={(value) => setConfidence((current) => ({ ...current, [currentQuestionId]: value }))}
+                  />
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4">
+                    <button type="button" disabled={pageIndex === 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))} className="rounded-full border border-border px-5 py-2.5 text-sm disabled:opacity-50">Previous</button>
+                    {isLastQuestion ? (
+                      <button type="button" onClick={submitQuiz} disabled={!canSubmit} title={submitHint} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+                        {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Submit and evaluate
+                      </button>
+                    ) : (
+                      <button type="button" disabled={!answerComplete(answers[currentQuestionId])} onClick={() => setPageIndex((value) => Math.min(questions.length - 1, value + 1))} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+                        Next question <ArrowRight className="size-4" />
+                      </button>
+                    )}
+                  </div>
+                  {isLastQuestion && !canSubmit && !submit.isPending && <p className="text-xs text-muted-foreground">{submitHint}</p>}
                 </>
               )}
               {submit.isError && <p className="text-sm text-destructive">{submit.error.message}</p>}
@@ -175,6 +193,7 @@ function PublishedAssessmentPage({ learnerId }: { learnerId: string }) {
 
 function PublishedAssessment({ alert, assessments, learnerId }: { alert: StudentClassAlert; assessments: StudentClassAlert[]; learnerId: string }) {
   const questions = arrayValue(alert.published_content.questions).filter((item): item is ApiRecord => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+  const navigate = useNavigate();
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [confidence, setConfidence] = useState<Record<string, number>>({});
   const [readerMode, setReaderMode] = useState<ReaderMode>("standard");
@@ -203,7 +222,8 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
   useEffect(() => {
     if (!submit.data) return;
     void queryClient.invalidateQueries({ queryKey: ["student-classroom", learnerId] });
-  }, [learnerId, queryClient, submit.data]);
+    void navigate({ to: "/results" });
+  }, [learnerId, navigate, queryClient, submit.data]);
 
   function submitQuiz() {
     submit.mutate({

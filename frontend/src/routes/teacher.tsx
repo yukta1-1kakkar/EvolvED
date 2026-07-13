@@ -25,6 +25,7 @@ function TeacherDashboard() {
   const [draftKind, setDraftKind] = useState<"lesson" | "assessment">("lesson");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftClassId, setDraftClassId] = useState("");
+  const [minimumPassPercent, setMinimumPassPercent] = useState(50);
   const [draftNotes, setDraftNotes] = useState("");
   const [draftFile, setDraftFile] = useState<File | null>(null);
   const [selectedDraftId, setSelectedDraftId] = useState("");
@@ -43,11 +44,13 @@ function TeacherDashboard() {
       kind: draftKind,
       title: draftTitle.trim(),
       classId: draftClassId || undefined,
+      minimumPassPercent,
       notes: draftNotes,
       file: draftFile,
     }),
     onSuccess: async (draft) => {
       setDraftTitle("");
+      setMinimumPassPercent(50);
       setDraftNotes("");
       setDraftFile(null);
       setSelectedDraftId(draft.draft_id);
@@ -120,6 +123,22 @@ function TeacherDashboard() {
               <option value="">Select a classroom</option>
               {(dashboard.data?.classes ?? []).map((item) => <option key={item.class_id} value={item.class_id}>{item.name}</option>)}
             </select>
+            {draftKind === "assessment" && (
+              <label className="block rounded-xl border border-border bg-background/60 p-3 text-sm">
+                <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Minimum marks to pass</span>
+                <div className="mt-2 flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={minimumPassPercent}
+                    onChange={(event) => setMinimumPassPercent(Math.max(0, Math.min(100, Number(event.target.value) || 0)))}
+                    className="h-10 max-w-32"
+                  />
+                  <span className="text-sm text-muted-foreground">% required to pass this assessment</span>
+                </div>
+              </label>
+            )}
             <label className="block rounded-xl border border-dashed border-border bg-background/60 p-4 text-sm">
               <span className="flex items-center gap-2 text-muted-foreground"><FileText className="size-4" /> PDF, PPTX, DOCX, Markdown, or text</span>
               <span className="mt-3 flex flex-wrap items-center gap-3">
@@ -221,6 +240,7 @@ function DraftPreview({
         )}
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           <Mini label="Duration" value={`${numberValue(content.estimated_duration)} min`} />
+          {draft.kind === "assessment" && <Mini label="Pass mark" value={`${Math.round(numberValue(content.minimum_pass_percent) || numberValue(draft.source_material.minimum_pass_percent) || 50)}%`} />}
         </div>
       </div>
 

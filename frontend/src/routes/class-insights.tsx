@@ -79,10 +79,15 @@ function ClassInsightsPage() {
       const activity = (student.content_activity ?? []).filter((item) => item.kind === "assessment" && item.completed && allowed.has(item.draft_id));
       const scores = activity.map((item) => item.score).filter(isNumber);
       const durations = activity.map((item) => item.duration_seconds).filter(isNumber);
+      const passingScores = activity.map((item) => item.passing_score).filter(isNumber);
+      const score = scores.length ? average(scores) : null;
+      const passingScore = passingScores.length ? average(passingScores) : 0.5;
       return {
         ...student,
         itemTitle: assessmentFilter === "all" ? "All assessments" : assessments.find((assessment) => assessment.draft_id === assessmentFilter)?.title ?? "Assessment",
-        score: scores.length ? average(scores) : null,
+        score,
+        passingScore,
+        passed: score === null ? null : score >= passingScore,
         duration: durations.length ? average(durations) : null,
       };
     })
@@ -209,6 +214,13 @@ function ClassInsightsPage() {
                     </td>
                     <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.itemTitle}</td>
                     <td className="py-3 pr-4">{pct(student.completion)}</td>
+                    <td className="hidden">
+                      {"passed" in student && student.passed !== null ? (
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${student.passed ? "bg-emerald-500/10 text-emerald-700" : "bg-destructive/10 text-destructive"}`}>
+                          {student.passed ? "Pass" : "Fail"} · pass {pct(student.passingScore)}
+                        </span>
+                      ) : "â€”"}
+                    </td>
                     <td className="py-3 pr-4 text-muted-foreground">{formatDuration(student.duration)}</td>
                   </tr>
                 ))}
@@ -217,7 +229,7 @@ function ClassInsightsPage() {
           )}
           {assessmentFilter && (
             <table className="w-full min-w-[760px] text-left text-sm">
-              <TableHead headings={["Rank", "Name", "Assessment", "Score", "Time"]} />
+              <TableHead headings={["Rank", "Name", "Assessment", "Pass / Fail", "Score", "Time"]} />
               <tbody>
                 {assessmentRows.map((student) => (
                   <tr key={student.learner_id} className="border-b border-border/60">
@@ -237,6 +249,13 @@ function ClassInsightsPage() {
                       ) : student.name}
                     </td>
                     <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.itemTitle}</td>
+                    <td className="py-3 pr-4">
+                      {student.passed === null ? "â€”" : (
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${student.passed ? "bg-emerald-500/10 text-emerald-700" : "bg-destructive/10 text-destructive"}`}>
+                          {student.passed ? "Pass" : "Fail"} · pass {pct(student.passingScore)}
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 pr-4">{student.score === null ? "—" : pct(student.score)}</td>
                     <td className="py-3 pr-4 text-muted-foreground">{formatDuration(student.duration)}</td>
                   </tr>
@@ -305,6 +324,8 @@ function isNumber(value: number | null | undefined): value is number {
 
 function formatDuration(seconds: number | null) {
   if (seconds === null) return "—";
-  const minutes = Math.round(seconds / 60);
-  return minutes < 1 ? "<1 min" : `${minutes} min`;
+  const totalSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return `${minutes} min ${remainingSeconds} sec`;
 }

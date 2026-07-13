@@ -1713,6 +1713,120 @@ async def content_generation_agent(blueprint: models.LessonBlueprint) -> models.
     return models.GeneratedContent(lesson_assets=assets)
 
 
+async def source_analysis_agent(
+    title: str,
+    kind: str,
+    source_material: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Extract a source-grounded teaching brief for Module Leader generation."""
+    source_text = str(source_material.get("text") or "").strip()
+    warning = str(source_material.get("extraction_warning") or "").strip()
+    if not source_text or warning and any(marker in warning.lower() for marker in ("no selectable text", "did not expose selectable text")):
+        return {
+            "readable": False,
+            "source_text": source_text,
+            "concepts": [],
+            "learning_objectives": [],
+            "warnings": [warning or "The upload contains no readable teaching text."],
+        }
+
+    prompt = (
+        "You are the Source Analysis Agent for a module leader. Analyze only the supplied source. "
+        "Do not add facts that are absent from it. Return JSON only with readable (boolean), "
+        "source_summary (string), concepts (5 to 12 objects with name, evidence, and importance), "
+        "learning_objectives (3 to 6 measurable strings), difficulty (Foundational, Intermediate, or Advanced), "
+        "and warnings (list of strings). Evidence must be a short paraphrase or excerpt traceable to the source. "
+        f"Draft kind: {kind}. Draft title: {title}. Filename: {source_material.get('filename', '')}. "
+        f"Source text:\n{source_text[:30000]}"
+    )
+    resp = await _call_layer("content", [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000)
+    payload = _json_from_model_text(resp["choices"][0]["message"]["content"])
+    concepts = payload.get("concepts")
+    objectives = payload.get("learning_objectives")
+    if payload.get("readable") is False or not isinstance(concepts, list) or len(concepts) < 3:
+        raise ValueError("Source Analysis Agent did not return enough source-grounded concepts")
+    if not isinstance(objectives, list) or len(objectives) < 2:
+        raise ValueError("Source Analysis Agent did not return enough learning objectives")
+    return {
+        **payload,
+        "readable": True,
+        "source_text": source_text,
+        "concepts": concepts[:12],
+        "learning_objectives": objectives[:6],
+        "warnings": payload.get("warnings") if isinstance(payload.get("warnings"), list) else [],
+    }
+
+
+async def quality_review_agent(
+    title: str,
+    kind: str,
+    source_analysis: Dict[str, Any],
+    draft: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Generate and review a publishable Module Leader lesson or assessment."""
+    if not source_analysis.get("readable"):
+        return draft
+    if kind == "assessment":
+        contract = (
+            "Return 6 to 10 varied questions. Each question needs id, type, bloom_level, question, topic, and answer. "
+            "MCQs also need exactly 4 plausible options containing the exact answer and an explanation. "
+            "Short-answer questions need a 3-item rubric. Cover multiple source concepts and never ask vague questions "
+            "about an 'uploaded document'. Include title, source_locked=true, workflow, fairness, questions, "
+            "topic_distribution, estimated_duration, and difficulty."
+        )
+    else:
+        contract = (
+            "Return a complete teachable lesson with title, source_locked=true, workflow, learning_objectives, summary, "
+            "estimated_duration, difficulty, and 3 to 7 sections. Every section needs title, summary, subsections, "
+            "examples, and checks_for_understanding. Include generated_images, flowcharts, and accessibility_version. "
+            "Use concrete explanations and examples grounded in the supplied source, with a logical teaching sequence."
+        )
+    prompt = (
+        "You are the Quality Review Agent for a module leader. Rewrite and quality-check the candidate content for "
+        "accuracy, completeness, appropriate difficulty, accessibility, clarity, answer correctness, and source fidelity. "
+        "Remove unsupported claims. Return JSON only, containing the corrected final content rather than a review report. "
+        f"Required contract: {contract} Title: {title}. Kind: {kind}. "
+        f"Source analysis: {json.dumps(source_analysis, ensure_ascii=False)}. "
+        f"Candidate draft: {json.dumps(draft, ensure_ascii=False)}"
+    )
+    resp = await _call_layer(
+        "content" if kind == "lesson" else "assessment",
+        [{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=6000,
+    )
+    reviewed = _json_from_model_text(resp["choices"][0]["message"]["content"])
+    if kind == "lesson":
+        if not isinstance(reviewed.get("sections"), list) or len(reviewed["sections"]) < 3:
+            raise ValueError("Quality Review Agent returned an incomplete lesson")
+        if not isinstance(reviewed.get("learning_objectives"), list) or len(reviewed["learning_objectives"]) < 2:
+            raise ValueError("Quality Review Agent returned a lesson without sufficient objectives")
+    else:
+        questions = reviewed.get("questions")
+        if not isinstance(questions, list) or len(questions) < 5:
+            raise ValueError("Quality Review Agent returned an incomplete assessment")
+        for question in questions:
+            if not isinstance(question, dict) or not question.get("question") or not question.get("answer") or not question.get("topic"):
+                raise ValueError("Quality Review Agent returned an invalid assessment question")
+            if question.get("type") == "mcq" and (
+                not isinstance(question.get("options"), list)
+                or len(question["options"]) != 4
+                or question["answer"] not in question["options"]
+            ):
+                raise ValueError("Quality Review Agent returned an invalid MCQ")
+    return {
+        **reviewed,
+        "title": title,
+        "source_locked": True,
+        "workflow": "source_analysis_then_quality_review_requires_module_leader_approval",
+        "agent_workflow": ["Source Analysis Agent", "Quality Review Agent"],
+        "quality_review": {
+            "status": "passed",
+            "checks": ["accuracy", "completeness", "difficulty", "accessibility", "source_fidelity"],
+        },
+    }
+
+
 async def interactive_agent(req: models.TutorInteractionRequest, session_state: Dict[str, Any]) -> models.TutorInteractionResponse:
     lesson = session_state.get("lesson", {})
     selected_lesson = lesson.get("selected_lesson") or {}

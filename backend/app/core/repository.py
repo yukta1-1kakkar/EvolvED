@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 
-from app.core import models
+from app.core import langgraph_nodes, models
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.db import models as db_models
@@ -396,15 +396,25 @@ class AsyncRepository:
                 rows = (await session.scalars(sa.select(db_models.CurriculumProgress).where(db_models.CurriculumProgress.learner_id == learner.id))).all()
                 adaptations = (await session.scalars(sa.select(db_models.Adaptation).where(db_models.Adaptation.learner_id == learner.id).order_by(db_models.Adaptation.created_at.desc()))).all()
                 assessments = (await session.scalars(sa.select(db_models.Assessment).where(db_models.Assessment.learner_id == learner.id).order_by(db_models.Assessment.created_at))).all()
-                assessed_sessions = (await session.scalars(sa.select(db_models.Session).where(db_models.Session.learner_id == learner.id, db_models.Session.state["status"].as_string() == "assessed"))).all()
+                learner_sessions = (await session.scalars(sa.select(db_models.Session).where(db_models.Session.learner_id == learner.id))).all()
+                assessed_sessions = [item for item in learner_sessions if (item.state or {}).get("status") == "assessed"]
         except Exception as exc:
             logger.warning("Database progress unavailable; using local progress: %s: %r", type(exc).__name__, exc)
             rows = []
             adaptations = []
             assessments = [_LocalAssessment(item["submission"], item["result"], item.get("created_at")) for item in _LOCAL_ASSESSMENTS if item.get("learner_id") == learner_id]
             assessed_sessions = []
+            learner_sessions = [
+                {**value, "_session_id": stored_session_id}
+                for (stored_learner_id, stored_session_id), value in _LOCAL_SESSIONS.items()
+                if stored_learner_id == learner_id
+            ]
         completed = _completed_lesson_count(assessments)
-        tracked_rows = [row for row in rows if float(row.mastery_score or 0.0) > 0 or row.status != "not_started"]
+        tracked_rows = [
+            row
+            for row in rows
+            if float(row.mastery_score or 0.0) > 0 or row.status in {"in_progress", "mastered", "completed"}
+        ]
         mastery: dict[str, float] = {}
         for row in tracked_rows:
             concept = _progress_display_concept(row)
@@ -418,14 +428,71 @@ class AsyncRepository:
             if topic and isinstance(score, (int, float)):
                 concept = str((_curriculum_item_for_concept(topic) or {}).get("concept") or topic)
                 mastery[concept] = max(mastery.get(concept, 0.0), float(score))
+        session_by_id = {
+            str(item.session_id): item
+            for item in learner_sessions
+            if hasattr(item, "session_id")
+        }
         history = [
-            {"type": "mastery", "concept": row.concept, "status": row.status, "mastery_score": row.mastery_score, "timestamp": _iso(row.updated_at)}
-            for row in rows
+            {
+                "type": "assessment",
+                "concept": _assessment_history_title(item, session_by_id.get(str(item.session_id))),
+                "score": float((item.result or {}).get("score", 0.0)),
+                "timestamp": _iso(item.created_at),
+            }
+            for item in assessments
         ] + [
             {"type": "adaptation", "action": (row.decision or {}).get("adaptations", {}).get("action", "Teaching strategy updated"), "detail": row.decision, "timestamp": _iso(row.created_at)}
             for row in adaptations
         ]
-        return models.ProgressResponse(learner_id=learner_id, mastery=mastery, history=history, completed_lessons=completed, learning_streak=_learning_streak_days(assessments))
+        page_timings = _adaptive_page_timing_summary(learner_sessions)
+        average_page_seconds = _average([float(item["seconds_spent"]) for item in page_timings])
+        return models.ProgressResponse(learner_id=learner_id, mastery=mastery, history=history, completed_lessons=completed, learning_streak=_learning_streak_days(assessments), average_page_seconds=average_page_seconds, page_timings=page_timings)
+
+    async def record_adaptive_page_timing(self, req: models.AdaptivePageTimingRequest) -> Dict[str, Any]:
+        seconds = max(0.0, min(float(req.seconds_spent or 0.0), 60 * 60))
+        page_key = str(req.page_key or "").strip()[:128]
+        if seconds <= 0 or not page_key:
+            return {"recorded": False, "seconds_spent": 0.0}
+        try:
+            async with AsyncSessionLocal() as session:
+                learner = await self._require_role(session, req.learner_id, "student")
+                row = await session.scalar(sa.select(db_models.Session).where(db_models.Session.session_id == req.session_id, db_models.Session.learner_id == learner.id))
+                if not row:
+                    raise ValueError("Adaptive lesson session was not found for this learner.")
+                state = dict(row.state or {})
+                timings = dict(state.get("page_timings") or {})
+                existing = dict(timings.get(page_key) or {})
+                timings[page_key] = {
+                    "page_key": page_key,
+                    "page_title": str(req.page_title or page_key)[:256],
+                    "page_kind": req.page_kind,
+                    "seconds_spent": round(float(existing.get("seconds_spent") or 0.0) + seconds, 3),
+                    "visit_count": int(existing.get("visit_count") or 0) + 1,
+                    "last_seen_at": _iso(datetime.now(timezone.utc)),
+                }
+                state["page_timings"] = timings
+                row.state = state
+                await session.commit()
+                return {"recorded": True, "seconds_spent": seconds, "total_seconds": timings[page_key]["seconds_spent"]}
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Database adaptive page timing unavailable; storing locally: %s: %r", type(exc).__name__, exc)
+            state = _LOCAL_SESSIONS.get((req.learner_id, req.session_id))
+            if state is None:
+                raise ValueError("Adaptive lesson session was not found for this learner.")
+            timings = state.setdefault("page_timings", {})
+            existing = timings.get(page_key) or {}
+            timings[page_key] = {
+                "page_key": page_key,
+                "page_title": str(req.page_title or page_key)[:256],
+                "page_kind": req.page_kind,
+                "seconds_spent": round(float(existing.get("seconds_spent") or 0.0) + seconds, 3),
+                "visit_count": int(existing.get("visit_count") or 0) + 1,
+                "last_seen_at": _iso(datetime.now(timezone.utc)),
+            }
+            return {"recorded": True, "seconds_spent": seconds, "total_seconds": timings[page_key]["seconds_spent"]}
 
     async def get_analytics(self, learner_id: str) -> models.AnalyticsResponse:
         try:
@@ -864,7 +931,7 @@ class AsyncRepository:
                     kind=req.kind,
                     title=req.title.strip(),
                     source_material=req.source_material,
-                    generated_content=_draft_preview(req),
+                    generated_content=await _generate_draft_preview(req),
                     status="draft",
                     approval={},
                 )
@@ -877,7 +944,7 @@ class AsyncRepository:
         except Exception as exc:
             logger.warning("Database draft create unavailable; storing local draft: %s: %r", type(exc).__name__, exc)
             draft_id = str(uuid4())
-            draft = {"draft_id": draft_id, "leader_id": req.leader_id, "class_id": req.class_id, "kind": req.kind, "title": req.title.strip(), "source_material": req.source_material, "generated_content": _draft_preview(req), "status": "draft", "approval": {}}
+            draft = {"draft_id": draft_id, "leader_id": req.leader_id, "class_id": req.class_id, "kind": req.kind, "title": req.title.strip(), "source_material": req.source_material, "generated_content": await _generate_draft_preview(req), "status": "draft", "approval": {}}
             _LOCAL_DRAFTS[draft_id] = draft
             return models.ContentDraftResponse(**{key: draft[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")})
 
@@ -900,7 +967,7 @@ class AsyncRepository:
                 draft.status = status
                 draft.approval = approval
                 if req.decision == "request_changes":
-                    draft.generated_content = _regenerated_draft_preview(
+                    draft.generated_content = await _generate_regenerated_draft_preview(
                         req.leader_id,
                         draft.kind,
                         draft.title,
@@ -926,7 +993,7 @@ class AsyncRepository:
                         title=draft.title,
                         source_material=replacement_req.source_material,
                         generated_content={
-                            **_draft_preview(replacement_req),
+                            **(await _generate_draft_preview(replacement_req)),
                             "regeneration_reason": req.instructions.strip() or "Previous draft was rejected by the module leader.",
                         },
                         status="draft",
@@ -949,7 +1016,7 @@ class AsyncRepository:
             draft["status"] = status
             draft["approval"] = approval
             if req.decision == "request_changes":
-                draft["generated_content"] = _regenerated_draft_preview(
+                draft["generated_content"] = await _generate_regenerated_draft_preview(
                     req.leader_id,
                     draft["kind"],
                     draft["title"],
@@ -977,7 +1044,7 @@ class AsyncRepository:
                     "title": draft["title"],
                     "source_material": replacement_req.source_material,
                     "generated_content": {
-                        **_draft_preview(replacement_req),
+                        **(await _generate_draft_preview(replacement_req)),
                         "regeneration_reason": req.instructions.strip() or "Previous draft was rejected by the module leader.",
                     },
                     "status": "draft",
@@ -1079,6 +1146,8 @@ class AsyncRepository:
                 "started_at": _iso(start.created_at) if start else None,
                 "completed_at": _iso(completion.completed_at) if completion else None,
                 "duration_seconds": duration,
+                "passing_score": _draft_passing_score(draft),
+                "passed": (float(completion.score) >= _draft_passing_score(draft)) if completion and draft.kind == "assessment" else None,
                 "page_timings": [
                     {
                         "page_key": item.page_key,
@@ -1149,6 +1218,8 @@ class AsyncRepository:
                 "started_at": _iso(started_at) if started_at else None,
                 "completed_at": _iso(completed_at) if completed_at else None,
                 "duration_seconds": duration,
+                "passing_score": _local_draft_passing_score(draft),
+                "passed": (float(completion["score"]) >= _local_draft_passing_score(draft)) if completion and draft["kind"] == "assessment" else None,
                 "page_timings": [
                     {
                         "page_key": item["page_key"],
@@ -1216,7 +1287,11 @@ class AsyncRepository:
                 progress_metadata={},
             )
             session.add(record)
-        record.mastery_score = max(float(record.mastery_score or 0.0), float(score))
+        metadata = dict(record.progress_metadata or {})
+        attempts = int(metadata.get("assessment_attempts") or 0)
+        previous = float(record.mastery_score or 0.0)
+        record.mastery_score = ((previous * attempts) + float(score)) / (attempts + 1)
+        record.progress_metadata = {**metadata, "assessment_attempts": attempts + 1, "latest_score": float(score)}
         record.status = "mastered" if record.mastery_score >= 0.8 else "in_progress"
 
 
@@ -1430,6 +1505,40 @@ def _average(values: list[float]) -> float:
     return round(sum(clean) / len(clean), 3) if clean else 0.0
 
 
+def _adaptive_page_timing_summary(sessions: list[Any]) -> list[Dict[str, Any]]:
+    combined: dict[str, Dict[str, Any]] = {}
+    for session in sessions:
+        state = session.state if hasattr(session, "state") else session
+        session_id = str(session.session_id if hasattr(session, "session_id") else (state or {}).get("_session_id") or "session")
+        lesson = (state or {}).get("lesson") if isinstance(state, dict) else None
+        selected_lesson = lesson.get("selected_lesson") if isinstance(lesson, dict) and isinstance(lesson.get("selected_lesson"), dict) else {}
+        lesson_title = str(
+            selected_lesson.get("title")
+            or (lesson or {}).get("learning_objective")
+            or (lesson or {}).get("topic")
+            or "Lesson"
+        )
+        timings = (state or {}).get("page_timings") if isinstance(state, dict) else None
+        if not isinstance(timings, dict):
+            continue
+        for key, raw in timings.items():
+            if not isinstance(raw, dict):
+                continue
+            identity = f"{session_id}:{raw.get('page_kind', 'lesson')}:{key}"
+            current = combined.setdefault(identity, {
+                "page_key": f"{session_id}:{key}",
+                "session_id": session_id,
+                "lesson_title": lesson_title,
+                "page_title": str(raw.get("page_title") or key),
+                "page_kind": str(raw.get("page_kind") or "lesson"),
+                "seconds_spent": 0.0,
+                "visit_count": 0,
+            })
+            current["seconds_spent"] = round(float(current["seconds_spent"]) + float(raw.get("seconds_spent") or 0.0), 3)
+            current["visit_count"] = int(current["visit_count"]) + int(raw.get("visit_count") or 0)
+    return sorted(combined.values(), key=lambda item: (item["page_kind"], item["page_key"]))
+
+
 def _current_lesson_title(sessions: list[Any]) -> str:
     for row in sessions:
         lesson = (row.state or {}).get("lesson") if isinstance(row.state, dict) else None
@@ -1454,6 +1563,28 @@ def _draft_status(item: Any) -> str:
     return str(item.status if hasattr(item, "status") else item.get("status", ""))
 
 
+def _draft_passing_score(draft: db_models.ContentDraft) -> float:
+    return _passing_score_from_materials(draft.source_material or {}, draft.generated_content or {})
+
+
+def _local_draft_passing_score(draft: Dict[str, Any]) -> float:
+    return _passing_score_from_materials(draft.get("source_material") or {}, draft.get("generated_content") or {})
+
+
+def _passing_score_from_materials(source_material: Dict[str, Any], generated_content: Dict[str, Any]) -> float:
+    value = generated_content.get("minimum_pass_score", source_material.get("minimum_pass_score"))
+    if value is None:
+        percent = generated_content.get("minimum_pass_percent", source_material.get("minimum_pass_percent"))
+        value = (float(percent) / 100.0) if percent is not None else 0.5
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        score = 0.5
+    if score > 1:
+        score = score / 100.0
+    return max(0.0, min(1.0, score))
+
+
 def _draft_preview(req: models.ContentDraftRequest) -> Dict[str, Any]:
     source_warning = str((req.source_material or {}).get("extraction_warning") or "").lower()
     source_text = _preview_source_text(req.source_material)
@@ -1470,8 +1601,70 @@ def _draft_preview(req: models.ContentDraftRequest) -> Dict[str, Any]:
             "questions": [],
             "estimated_duration": 0,
             "difficulty": "Needs readable source",
+            "minimum_pass_percent": (req.source_material or {}).get("minimum_pass_percent"),
+            "minimum_pass_score": (req.source_material or {}).get("minimum_pass_score"),
         }
-    return _assessment_preview(req.title, source_text) if req.kind == "assessment" else _lesson_preview(req.title, source_text)
+    if req.kind == "assessment":
+        return {
+            **_assessment_preview(req.title, source_text),
+            "minimum_pass_percent": (req.source_material or {}).get("minimum_pass_percent", 50.0),
+            "minimum_pass_score": _passing_score_from_materials(req.source_material or {}, {}),
+        }
+    return _lesson_preview(req.title, source_text)
+
+
+async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, Any]:
+    """Run the Module Leader agent workflow, with a dependable local fallback."""
+    fallback = _draft_preview(req)
+    if fallback.get("needs_readable_source"):
+        return fallback
+    try:
+        analysis = await langgraph_nodes.source_analysis_agent(req.title, req.kind, req.source_material or {})
+        if not analysis.get("readable"):
+            return {
+                **fallback,
+                "source_analysis": analysis,
+            }
+        reviewed = await langgraph_nodes.quality_review_agent(req.title, req.kind, analysis, fallback)
+        if req.kind == "assessment":
+            reviewed["minimum_pass_percent"] = (req.source_material or {}).get("minimum_pass_percent", 50.0)
+            reviewed["minimum_pass_score"] = _passing_score_from_materials(req.source_material or {}, reviewed)
+        reviewed["source_analysis"] = {
+            key: analysis.get(key)
+            for key in ("source_summary", "concepts", "learning_objectives", "difficulty", "warnings")
+        }
+        return reviewed
+    except Exception as exc:
+        logger.warning("Module Leader agent workflow unavailable; using source-grounded fallback: %s: %r", type(exc).__name__, exc)
+        return {
+            **fallback,
+            "agent_workflow": ["Source Analysis Agent", "Quality Review Agent"],
+            "quality_review": {
+                "status": "fallback",
+                "reason": "AI review was unavailable, so EvolvED used its source-grounded generator.",
+            },
+        }
+
+
+async def _generate_regenerated_draft_preview(
+    leader_id: str,
+    kind: str,
+    title: str,
+    source_material: Dict[str, Any],
+    instructions: str,
+) -> Dict[str, Any]:
+    revised_source = dict(source_material)
+    if instructions:
+        source_text = str(revised_source.get("text") or "")
+        revised_source["text"] = f"{source_text}\n\nModule leader requested revision: {instructions}".strip()
+    preview = await _generate_draft_preview(
+        models.ContentDraftRequest(leader_id=leader_id, kind=kind, title=title, source_material=revised_source)
+    )
+    return {
+        **preview,
+        "update_request": instructions,
+        "revised_from_request": bool(instructions),
+    }
 
 
 def _regenerated_draft_preview(leader_id: str, kind: str, title: str, source_material: Dict[str, Any], instructions: str) -> Dict[str, Any]:
@@ -1936,6 +2129,13 @@ def _progress_display_concept(row: db_models.CurriculumProgress) -> str:
     if item:
         return str(item["concept"])
     return str(row.concept or row.curriculum_item_id)
+
+
+def _assessment_history_title(assessment: Any, session: Any | None) -> str:
+    state = (session.state or {}) if session is not None else {}
+    lesson = state.get("lesson") if isinstance(state.get("lesson"), dict) else {}
+    selected = lesson.get("selected_lesson") if isinstance(lesson.get("selected_lesson"), dict) else {}
+    return str(selected.get("title") or lesson.get("topic") or "Assessment")
 
 
 class _LocalAssessment:

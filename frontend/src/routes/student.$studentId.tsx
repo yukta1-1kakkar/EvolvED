@@ -96,6 +96,8 @@ function formatDate(value: string | null | undefined) {
 
 function formatDuration(seconds: number | null | undefined) {
   if (typeof seconds !== "number" || !Number.isFinite(seconds)) return "—";
-  const minutes = Math.round(seconds / 60);
-  return minutes < 1 ? "<1 min" : `${minutes} min`;
+  const totalSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return `${minutes} min ${remainingSeconds} sec`;
 }

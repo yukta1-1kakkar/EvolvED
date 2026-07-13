@@ -245,12 +245,11 @@ function KnowledgePage() {
 
 function buildNodes(items: CurriculumItem[], mastery: Record<string, number>, learnerId?: string): Node[] {
   const positions = layoutPositions(items.length);
-  const masteryByKey = normalizedMasteryMap(mastery);
 
   return items.map((item, index) => {
     const position = positions[index] ?? { x: 50, y: 50 };
     const label = humanize(item.concept);
-    const backendMastery = masteryByKey.get(normalizeTopic(item.concept)) ?? masteryByKey.get(normalizeTopic(item.id)) ?? 0;
+    const backendMastery = relatedCurriculumMastery(item, mastery);
     const roadmapMastery = localRoadmapMastery(learnerId, item, label);
     return {
       id: item.id,
@@ -262,6 +261,28 @@ function buildNodes(items: CurriculumItem[], mastery: Record<string, number>, le
       item,
     };
   });
+}
+
+function relatedCurriculumMastery(item: CurriculumItem, mastery: Record<string, number>) {
+  const concept = normalizeTopic(item.concept);
+  const id = normalizeTopic(item.id);
+  const aliases = concept.includes("vector")
+    ? ["vector", "magnitude", "direction", "component", "scalar", "position"]
+    : concept.includes("matri")
+      ? ["matrix", "matrices", "matrix_multiplication", "matrix_addition"]
+      : concept.includes("projection")
+        ? ["projection", "orthogonal"]
+        : concept.includes("eigen") || concept.includes("diagonal")
+          ? ["eigenvalue", "eigenvector", "diagonal"]
+          : [concept, id];
+  const values = Object.entries(mastery)
+    .filter(([key]) => {
+      const normalized = normalizeTopic(key);
+      return normalized === concept || normalized === id || aliases.some((alias) => normalized.includes(alias));
+    })
+    .map(([, value]) => clamp01(Number(value)))
+    .filter(Number.isFinite);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
 
 function localRoadmapMastery(learnerId: string | undefined, item: CurriculumItem, label: string) {

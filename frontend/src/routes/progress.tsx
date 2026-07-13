@@ -53,6 +53,7 @@ function ProgressPage() {
   const progress = useProgress(currentUser?.id);
   const curriculum = useCurriculum();
   const [range, setRange] = useState<ProgressRange>("30d");
+  const [showPageTiming, setShowPageTiming] = useState(false);
   const masteryByTopic = subjectConceptMastery(progress.data?.mastery ?? {}, curriculum.data?.items ?? [], currentUser?.learningTopic, currentUser?.id);
   const masteredCount = masteryByTopic.filter((m) => m.v >= 0.8).length;
   const subjectMastery = averageMastery(masteryByTopic);
@@ -66,22 +67,64 @@ function ProgressPage() {
   );
   const rangeLabel = RANGE_LABELS[range];
   const loading = progress.isLoading || curriculum.isLoading;
+  const totalLearningSeconds = totalPageTime(progress.data?.page_timings ?? []);
+  const timingSections = groupPageTimingsByLesson(progress.data?.page_timings ?? []);
 
   return (
     <AppShell title="Progress" subtitle="Where you are, how fast you're moving, and what's compounding." accent={progress.isFetching || curriculum.isFetching ? "Syncing" : "Live"}>
       {progress.isError && <ErrorPanel message={progress.error.message} onRetry={() => void progress.refetch()} />}
-      <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+      <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
         {loading ? (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-3xl" />)
+          Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-3xl" />)
         ) : (
           <>
             <Stat icon={Flame} k={`${progress.data?.learning_streak ?? 0} days`} v="learning streak" tone="gold" />
             <Stat icon={TrendingUp} k={`${Math.round(subjectMastery * 100)}%`} v={`${currentUser?.learningTopic ?? "subject"} mastery`} tone="plum" />
             <Stat icon={Clock} k={`${progress.data?.completed_lessons ?? 0}`} v="completed lessons" />
+            <Stat
+              icon={Clock}
+              k={formatMinutesSeconds(totalLearningSeconds)}
+              v="total lesson + assessment time"
+              tone="plum"
+              onClick={() => setShowPageTiming((current) => !current)}
+              expanded={showPageTiming}
+            />
             <Stat icon={Award} k={String(masteredCount)} v="concepts mastered" />
           </>
         )}
       </div>
+
+      {showPageTiming && (progress.data?.page_timings?.length ?? 0) > 0 && (
+        <section className="mb-8 rounded-3xl border border-border bg-card p-6">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Page timing</div>
+          <h3 className="mt-1 font-display text-xl">Time spent on each lesson and assessment page</h3>
+          <p className="mt-2 text-sm text-muted-foreground">These page times add up to the total learning time shown above.</p>
+          <div className="mt-5 space-y-5">
+            {timingSections.map((section, sectionIndex) => (
+              <section key={section.sessionId} className="rounded-3xl border border-border bg-background/40 p-5">
+                <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-plum">Lesson {sectionIndex + 1}</div>
+                    <h4 className="mt-1 font-display text-xl">{section.lessonTitle}</h4>
+                  </div>
+                  <div className="text-sm text-muted-foreground">Lesson + assessment: <span className="font-medium text-foreground tabular-nums">{formatMinutesSeconds(section.totalSeconds)}</span></div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {section.items.map((item) => (
+                    <div key={`${item.page_kind}:${item.page_key}`} className="flex items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-plum">{item.page_kind}</div>
+                        <div className="mt-1 text-sm font-medium">{item.page_title}</div>
+                      </div>
+                      <div className="shrink-0 font-display text-lg tabular-nums">{formatMinutesSeconds(item.seconds_spent)}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid lg:grid-cols-[1.4fr_1fr] gap-6 mb-8">
         <div className="rounded-3xl border border-border bg-card p-6">
@@ -116,10 +159,10 @@ function ProgressPage() {
       <div className="rounded-3xl border border-border bg-card p-6 mb-8">
         <div className="flex items-baseline justify-between mb-6">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Mastery by topic</div>
+            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Core mastery areas</div>
             <h3 className="font-display text-xl mt-1">{currentUser?.learningTopic ?? "Your learning topics"}</h3>
           </div>
-          <span className="text-xs text-muted-foreground">{masteryByTopic.length} tracked concepts</span>
+          <span className="text-xs text-muted-foreground">Grouped from assessed skills</span>
         </div>
         <div className="grid sm:grid-cols-2 gap-x-10 gap-y-4">
           {loading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-8 rounded-xl" />)}
@@ -148,6 +191,12 @@ function ProgressPage() {
 
 function subjectConceptMastery(mastery: Record<string, number>, curriculumItems: CurriculumItem[], learningTopic?: string, learnerId?: string) {
   const masteryByKey = normalizedMasteryMap(mastery);
+  const assessedConcepts = Object.entries(mastery)
+    .map(([topic, value]) => ({ t: humanize(topic), v: clamp01(Number(value)) }))
+    .filter((item) => Number.isFinite(item.v));
+  if (assessedConcepts.length > 0) {
+    return collapseMasteryAreas(assessedConcepts, learningTopic);
+  }
   const topicItems = filterItemsForSelectedTopic(curriculumItems, learningTopic);
   const scopedItems = topicItems.length > 0 ? topicItems : curriculumItems;
   const concepts = scopedItems
@@ -176,6 +225,64 @@ function localRoadmapMastery(learnerId: string | undefined, item: CurriculumItem
 
 function averageMastery(items: Array<{ v: number }>) {
   return items.length ? items.reduce((sum, item) => sum + item.v, 0) / items.length : 0;
+}
+
+function collapseMasteryAreas(items: Array<{ t: string; v: number }>, learningTopic?: string) {
+  const calculusTrack = normalizeTopic(learningTopic).includes("calculus");
+  const definitions = calculusTrack
+    ? [
+        { label: "Limits", terms: ["limit", "continuity"] },
+        { label: "Derivatives", terms: ["derivative", "differentiation", "rate of change"] },
+        { label: "Gradients", terms: ["gradient", "partial", "multivariate"] },
+        { label: "Applications", terms: ["application", "optimization", "interpretation"] },
+      ]
+    : [
+        { label: "Vectors", terms: ["vector", "magnitude", "direction", "component", "scalar", "position"] },
+        { label: "Matrices", terms: ["matrix", "matrices", "multiplication", "addition", "subtraction"] },
+        { label: "Projections", terms: ["projection", "orthogonal"] },
+        { label: "Eigenvalues and eigenvectors", terms: ["eigenvalue", "eigenvector", "diagonal"] },
+      ];
+  const grouped = new Map<string, number[]>();
+  items.forEach((item) => {
+    const key = item.t.toLowerCase();
+    const area = definitions.find((definition) => definition.terms.some((term) => key.includes(term)))?.label ?? "General reasoning";
+    grouped.set(area, [...(grouped.get(area) ?? []), item.v]);
+  });
+  return [...grouped.entries()].map(([t, values]) => ({
+    t,
+    v: values.reduce((sum, value) => sum + value, 0) / values.length,
+  }));
+}
+
+function formatMinutesSeconds(value: number) {
+  const totalSeconds = Math.max(0, Math.round(Number(value) || 0));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+function totalPageTime(items: Array<{ seconds_spent: number }>) {
+  return items.reduce((sum, item) => sum + Math.max(0, Number(item.seconds_spent) || 0), 0);
+}
+
+type PageTimingItem = NonNullable<ReturnType<typeof useProgress>["data"]>["page_timings"][number];
+
+function groupPageTimingsByLesson(items: PageTimingItem[]) {
+  const sections = new Map<string, { sessionId: string; lessonTitle: string; items: PageTimingItem[]; totalSeconds: number }>();
+  items.forEach((item) => {
+    const sessionId = item.session_id || item.page_key.split(":lesson-section-")[0].split(":assessment-question-")[0];
+    const current = sections.get(sessionId) ?? { sessionId, lessonTitle: item.lesson_title || "Lesson", items: [], totalSeconds: 0 };
+    current.items.push(item);
+    current.totalSeconds += Math.max(0, Number(item.seconds_spent) || 0);
+    sections.set(sessionId, current);
+  });
+  return [...sections.values()].map((section) => ({
+    ...section,
+    items: [...section.items].sort((a, b) => {
+      if (a.page_kind !== b.page_kind) return a.page_kind === "lesson" ? -1 : 1;
+      return a.page_key.localeCompare(b.page_key, undefined, { numeric: true });
+    }),
+  }));
 }
 
 function normalizedMasteryMap(mastery: Record<string, number>) {
@@ -216,16 +323,24 @@ function canonicalTrackTopic(value?: string) {
 
 const ROADMAP_MASTERY_TARGET_LESSONS = 8;
 
-function Stat({ icon: Icon, k, v, tone }: { icon: React.ElementType; k: string; v: string; tone?: "gold" | "plum" }) {
-  return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-3xl border border-border bg-card p-5">
+function Stat({ icon: Icon, k, v, tone, onClick, expanded }: { icon: React.ElementType; k: string; v: string; tone?: "gold" | "plum"; onClick?: () => void; expanded?: boolean }) {
+  const content = (
+    <>
       <div className={`size-9 rounded-xl grid place-items-center mb-3 ${tone === "gold" ? "bg-gold/15 text-gold" : tone === "plum" ? "bg-plum/10 text-plum" : "bg-muted text-foreground"}`}>
         <Icon className="size-4" />
       </div>
       <div className="font-display text-2xl">{k}</div>
       <div className="text-xs text-muted-foreground mt-0.5">{v}</div>
-    </motion.div>
+    </>
   );
+  if (onClick) {
+    return (
+      <motion.button type="button" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} onClick={onClick} aria-expanded={expanded} className="rounded-3xl border border-border bg-card p-5 text-left transition-colors hover:border-plum/40 hover:bg-plum/[0.025] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-plum">
+        {content}
+      </motion.button>
+    );
+  }
+  return <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-3xl border border-border bg-card p-5">{content}</motion.div>;
 }
 
 function MasteryChart({ history, currentMastery }: { history: ApiRecord[]; currentMastery: number }) {
@@ -286,6 +401,16 @@ function MasteryChart({ history, currentMastery }: { history: ApiRecord[]; curre
           <circle key={index} cx={x(index)} cy={y(value)} r={index === chartPts.length - 1 ? 5 : 3.5} fill="oklch(0.99 0 0)" stroke="oklch(0.45 0.18 300)" strokeWidth={index === chartPts.length - 1 ? 2.5 : 1.5} />
         ))}
       </svg>
+      <div className="mt-4 flex flex-wrap gap-x-8 gap-y-2 border-t border-border pt-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <span className="h-0.5 w-6 shrink-0 bg-plum" />
+          <span><strong className="font-medium text-foreground">Purple:</strong> previous mastery progress.</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="h-0.5 w-6 shrink-0 bg-emerald-500" />
+          <span><strong className="font-medium text-foreground">Green:</strong> latest and current mastery progress.</span>
+        </div>
+      </div>
     </div>
   );
 }

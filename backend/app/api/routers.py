@@ -211,6 +211,14 @@ async def record_published_content_page_timing(req: models.PublishedContentPageT
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
+@router.post("/student/adaptive/page-timing")
+async def record_adaptive_page_timing(req: models.AdaptivePageTimingRequest):
+    try:
+        return await repository.AsyncRepository().record_adaptive_page_timing(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.get("/teacher/dashboard", response_model=models.TeacherDashboardResponse)
 async def teacher_dashboard(leader_id: str):
     try:
@@ -241,12 +249,17 @@ async def upload_content_draft(
     kind: str = Form(...),
     title: str = Form(...),
     class_id: str | None = Form(None),
+    minimum_pass_percent: float | None = Form(None),
     notes: str = Form(""),
     file: UploadFile | None = File(None),
 ):
     if kind not in {"lesson", "assessment"}:
         raise HTTPException(status_code=422, detail="Draft kind must be lesson or assessment.")
     source: dict[str, Any] = {"notes": notes.strip()}
+    if kind == "assessment":
+        threshold = max(0.0, min(100.0, float(minimum_pass_percent if minimum_pass_percent is not None else 50.0)))
+        source["minimum_pass_percent"] = threshold
+        source["minimum_pass_score"] = threshold / 100.0
     if file:
         content = await file.read()
         source.update(_uploaded_source(file.filename or "uploaded-source", content))

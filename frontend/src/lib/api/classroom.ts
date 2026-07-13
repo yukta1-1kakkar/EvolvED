@@ -32,6 +32,8 @@ export interface TeacherStudentSummary {
     started_at?: string | null;
     completed_at?: string | null;
     duration_seconds?: number | null;
+    passing_score?: number | null;
+    passed?: boolean | null;
     page_timings?: Array<{
       page_key: string;
       page_title: string;
@@ -184,6 +186,7 @@ export function uploadContentDraft(input: {
   kind: "lesson" | "assessment";
   title: string;
   classId?: string;
+  minimumPassPercent?: number;
   notes?: string;
   file?: File | null;
 }) {
@@ -192,6 +195,7 @@ export function uploadContentDraft(input: {
   form.set("kind", input.kind);
   form.set("title", input.title);
   if (input.classId) form.set("class_id", input.classId);
+  if (input.kind === "assessment") form.set("minimum_pass_percent", String(input.minimumPassPercent ?? 50));
   if (input.notes) form.set("notes", input.notes);
   if (input.file) form.set("file", input.file);
   return apiFormRequest<ContentDraft>("/content-drafts/upload", form, { timeoutMs: 120000 });

@@ -181,6 +181,16 @@ export interface ProgressResponse {
   history: ApiRecord[];
   completed_lessons: number;
   learning_streak: number;
+  average_page_seconds: number;
+  page_timings: Array<{
+    page_key: string;
+    session_id: string;
+    lesson_title: string;
+    page_title: string;
+    page_kind: "lesson" | "assessment";
+    seconds_spent: number;
+    visit_count: number;
+  }>;
 }
 
 export interface AnalyticsResponse {

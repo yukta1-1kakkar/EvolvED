@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { quizQueryKey } from "@/hooks/useAssessment";
 import { useAuth } from "@/hooks/useAuth";
+import { useAdaptivePageTimer } from "@/hooks/useAdaptivePageTimer";
 import { lessonQueryKey, useLesson, useRoadmap, useTutorInteraction } from "@/hooks/useLesson";
 import { generateLesson, generateQuiz, synthesizeLessonAudio } from "@/lib/api";
 import { completePublishedContent, getStudentClassroom, recordPublishedContentPageTiming, startPublishedContent, type StudentClassAlert, type StudentClassroomResponse } from "@/lib/api/classroom";
@@ -698,6 +699,7 @@ export function LessonExperience({
   const [liveTranscript, setLiveTranscript] = useState("");
   const [assessmentPreload, setAssessmentPreload] = useState<"idle" | "preloading" | "ready">("idle");
   const [readerMode, setReaderMode] = useState<"standard" | "dyslexia" | "focus">(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
+  const [lessonPageIndex, setLessonPageIndex] = useState(0);
   const tutorAudioRef = useRef<HTMLAudioElement>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
 
@@ -769,6 +771,7 @@ export function LessonExperience({
 
   useEffect(() => {
     setTutorOpen(false);
+    setLessonPageIndex(0);
   }, [lesson.data?.lesson_id]);
 
   useEffect(() => {
@@ -873,10 +876,21 @@ export function LessonExperience({
     }
   }
 
+  const lessonSections = uniqueRecords(lesson.data?.lesson_structure ?? []);
+  const currentLessonSection = lessonSections[Math.min(lessonPageIndex, Math.max(0, lessonSections.length - 1))];
+  const isLastLessonPage = lessonSections.length > 0 && lessonPageIndex === lessonSections.length - 1;
+  useAdaptivePageTimer({
+    learnerId: currentUser?.id ?? "",
+    sessionId: lesson.data?.lesson_id ?? "",
+    pageKey: currentLessonSection ? `lesson-section-${lessonPageIndex + 1}` : "",
+    pageTitle: currentLessonSection ? recordTitle(currentLessonSection, lessonPageIndex) : "",
+    pageKind: "lesson",
+    enabled: Boolean(currentLessonSection),
+  });
+
   if (lesson.isLoading) return <LessonSkeleton />;
   if (lesson.isError) return <ErrorPanel message={lesson.error.message} onRetry={() => void lesson.refetch()} />;
   if (!lesson.data) return null;
-  const lessonSections = uniqueRecords(lesson.data.lesson_structure);
 
   return (
     <div className={`relative ${readerModeClass(readerMode)}`}>
@@ -909,28 +923,26 @@ export function LessonExperience({
         </section>
 
         <ReaderControls mode={readerMode} onChange={setReaderMode} />
-        <AdaptiveLessonPayload lesson={lesson.data} />
-
-        {lessonSections.map((section, index) => (
-          <LessonSection key={recordKey(section, index)} section={section} index={index} />
-        ))}
-
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="rounded-3xl border border-border bg-card p-5">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Lesson path</div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {lesson.data.modality_sequence.map((modality, index) => (
-                <span key={`${modality}-${index}`} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-                  {humanize(modality)}
-                </span>
-              ))}
+        {lessonSections.length > 0 && currentLessonSection && (
+          <>
+            <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-5 py-3 text-sm">
+              <span className="text-muted-foreground">Lesson part {lessonPageIndex + 1} of {lessonSections.length}</span>
+              <span className="font-medium">One subsection per page</span>
             </div>
-          </div>
-          <AgentList icon={MessageCircle} title="Try as you learn" empty="No practice prompts returned." items={lesson.data.interaction_points} />
-          <AgentList icon={Target} title="Check your understanding" empty="No checkpoints returned." items={lesson.data.assessment_points} />
-        </div>
+            {lessonPageIndex === 0 && <AdaptiveLessonPayload lesson={lesson.data} />}
+            <LessonSection key={recordKey(currentLessonSection, lessonPageIndex)} section={currentLessonSection} index={lessonPageIndex} />
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4">
+              <button type="button" disabled={lessonPageIndex === 0} onClick={() => setLessonPageIndex((value) => Math.max(0, value - 1))} className="rounded-full border border-border px-5 py-2.5 text-sm disabled:opacity-50">Previous</button>
+              {!isLastLessonPage && (
+                <button type="button" onClick={() => setLessonPageIndex((value) => Math.min(lessonSections.length - 1, value + 1))} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background">
+                  Next subsection <ArrowRight className="size-4" />
+                </button>
+              )}
+            </div>
+          </>
+        )}
 
-        <section className="rounded-3xl border border-plum/20 bg-plum/[0.04] p-6">
+        {isLastLessonPage && <section className="rounded-3xl border border-plum/20 bg-plum/[0.04] p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="text-[10px] uppercase tracking-[0.22em] text-plum">Lesson complete</div>
@@ -951,7 +963,7 @@ export function LessonExperience({
               <ClipboardCheck className="size-4" /> Start assessment
             </Link>
           </div>
-        </section>
+        </section>}
       </article>
 
       <button
