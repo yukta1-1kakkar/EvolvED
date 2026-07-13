@@ -1950,7 +1950,7 @@ function isValidMediaUrl(value: string, kind: "image" | "audio") {
 
 function resolveMediaUrl(value: string) {
   if (!value || value.startsWith("data:") || value.startsWith("blob:") || /^https?:\/\//i.test(value)) return value;
-  const apiBase = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").trim();
+  const apiBase = (import.meta.env.VITE_API_URL || "/api").trim();
   const mediaPath = value.startsWith("/") ? value : `/${value}`;
   if (/^https?:\/\//i.test(apiBase)) {
     return new URL(mediaPath, apiBase).toString();

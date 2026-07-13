@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ArrowDownUp, ExternalLink, LineChart, Play, Search, Target, Users } from "lucide-react";
+import { ArrowDownUp, ExternalLink, LineChart, Search, Target, Users } from "lucide-react";
 import { useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
-import { getTeacherDashboard, type TeacherStudentSummary } from "@/lib/api/classroom";
+import { getTeacherDashboard } from "@/lib/api/classroom";
 
 export const Route = createFileRoute("/class-insights")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -15,7 +15,7 @@ export const Route = createFileRoute("/class-insights")({
   head: () => ({
     meta: [
       { title: "Class Insights - EvolvED" },
-      { name: "description", content: "Class progress, lesson completion, engagement, and assessment performance for module leaders." },
+      { name: "description", content: "Class progress, lesson completion, and assessment performance for module leaders." },
     ],
   }),
   component: ClassInsightsPage,
@@ -56,7 +56,6 @@ function ClassInsightsPage() {
     .map((student, index) => ({ ...student, rank: index + 1 }));
   const visibleStudents = students.filter((student) => student.name.toLowerCase().includes(studentSearch.toLowerCase()));
   const completed = students.filter((student) => (student.completed_lessons ?? 0) > 0).length;
-  const started = students.filter(hasStartedLesson).length;
   const averageProgress = average(students.map((student) => student.progress));
   const averageAssessment = average(students.flatMap((student) => student.assessment_scores ?? []));
   const published = (dashboard.data?.drafts ?? []).filter((draft) => draft.status === "accepted" && (!selectedClassId || draft.class_id === selectedClassId));
@@ -95,7 +94,7 @@ function ClassInsightsPage() {
     .map((student, index) => ({ ...student, rank: student.score === null ? null : index + 1 }));
 
   return (
-    <AppShell title="Class insights" subtitle="Class progress, completion, engagement, and assessment performance." accent={dashboard.isFetching ? "Syncing" : "Live"}>
+    <AppShell title="Class insights" subtitle="Class progress, completion, and assessment performance." accent={dashboard.isFetching ? "Syncing" : "Live"}>
       {dashboard.isError && (
         <div className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           {dashboard.error.message}
@@ -159,14 +158,13 @@ function ClassInsightsPage() {
         </div>
       </div>
 
-      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {dashboard.isLoading ? (
-          Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-2xl" />)
+          Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-2xl" />)
         ) : (
           <>
             <InsightCard icon={Users} label="Learners" value={students.length} />
             <InsightCard icon={LineChart} label="Overall progress" value={pct(averageProgress)} />
-            <InsightCard icon={Play} label="Learner engagement" value={started} />
             <InsightCard icon={Target} label="Lesson completion" value={pct(students.length ? completed / students.length : 0)} />
             <InsightCard icon={Target} label="Assessment performance" value={pct(averageAssessment)} />
           </>
@@ -303,10 +301,6 @@ function TableHead({ headings }: { headings: string[] }) {
       </tr>
     </thead>
   );
-}
-
-function hasStartedLesson(student: TeacherStudentSummary) {
-  return student.progress > 0 || student.current_lesson !== "Not started";
 }
 
 function pct(value: number | null | undefined) {

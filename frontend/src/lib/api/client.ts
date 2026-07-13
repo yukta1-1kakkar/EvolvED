@@ -21,7 +21,7 @@ export interface ApiRequestOptions<TBody extends ApiJson | undefined = undefined
   timeoutMs?: number;
 }
 
-const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").trim();
+const apiBaseUrl = (import.meta.env.VITE_API_URL || "/api").trim();
 
 if (!apiBaseUrl) {
   throw new Error("Missing VITE_API_URL. Add it to frontend/.env.");
