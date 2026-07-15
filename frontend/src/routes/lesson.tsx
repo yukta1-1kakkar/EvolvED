@@ -1,6 +1,7 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowDown,
   ArrowRight,
   BookMarked,
   CheckCircle2,
@@ -389,7 +390,7 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
           )}
         </article>
       ))}
-      {flowSteps.length > 0 && <AgentList icon={GitBranch} title="Lesson flow" empty="" items={flowSteps.map((prompt) => ({ prompt }))} />}
+      {flowDiagrams.length > 0 && <VisualLesson visualElements={[]} conceptMaps={[]} flowDiagrams={flowDiagrams} />}
       <div ref={completionMarkerRef} className="rounded-2xl border border-border bg-card p-6">
         <h3 className="font-display text-xl">Finish this lesson</h3>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -478,7 +479,7 @@ function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives
     pages.push({
       key: "lesson-flow",
       title: "Lesson flow",
-      render: () => <AgentList icon={GitBranch} title="Lesson flow" empty="" items={flowSteps.map((prompt) => ({ prompt }))} />,
+      render: () => <VisualLesson visualElements={[]} conceptMaps={[]} flowDiagrams={flowDiagrams} />,
     });
   }
   pages.push({
@@ -1614,18 +1615,21 @@ function FlowDiagram({ flow, index }: { flow: ApiRecord; index: number }) {
       <div className="flex items-center gap-2 text-lg font-medium">
         <GitBranch className="size-4 text-plum" /> {recordTitle(flow, index)}
       </div>
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
+      {stringValue(flow.description) && <p className="mt-2 text-sm leading-6 text-muted-foreground">{stringValue(flow.description)}</p>}
+      <ol className="mt-4 flex flex-col items-stretch">
         {steps.map((step, stepIndex) => (
-          <div
-            key={`${recordKey(flow, index)}-${stepIndex}`}
-            className="min-h-28 break-words rounded-xl bg-muted/35 p-5 text-lg leading-8 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
-            style={{ animationDelay: `${stepIndex * 80}ms` }}
-          >
-            <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Step {stepIndex + 1}</div>
-            <MathText text={valueToText(step)} />
-          </div>
+          <li key={`${recordKey(flow, index)}-${stepIndex}`} className="flex flex-col items-center">
+            <div
+              className="w-full break-words rounded-xl border border-plum/20 bg-plum/5 p-5 text-base leading-7 shadow-sm animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
+              style={{ animationDelay: `${stepIndex * 80}ms` }}
+            >
+              <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-plum">Step {stepIndex + 1}</div>
+              <MathText text={valueToText(step)} />
+            </div>
+            {stepIndex < steps.length - 1 && <ArrowDown className="my-1 size-6 shrink-0 text-plum" aria-hidden="true" />}
+          </li>
         ))}
-      </div>
+      </ol>
     </div>
   );
 }

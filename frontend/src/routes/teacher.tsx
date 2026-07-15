@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Check, FileText, Loader2, ShieldCheck, Upload, X } from "lucide-react";
+import { ArrowDown, Check, FileText, GitBranch, Loader2, ShieldCheck, Upload, X } from "lucide-react";
 import { useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
@@ -233,6 +233,7 @@ function DraftPreview({
   const unreadableSource = Boolean(content.needs_readable_source) || isUnreadableSourceText(summary) || arrayValue(content.learning_objectives).some((item) => isUnreadableSourceText(String(item)));
   const sections = unreadableSource ? [] : arrayValue(content.sections);
   const questions = unreadableSource ? [] : arrayValue(content.questions);
+  const flowcharts = unreadableSource ? [] : arrayValue(content.flowcharts).map(recordValue).filter((flow) => arrayValue(flow.steps).length > 1);
   const readableMessage = "This upload was not converted into readable teaching text. Upload a text-based PDF, DOCX, PPTX, Markdown, or paste OCR text in the notes box.";
   const finalDraft = draft.status === "accepted" || draft.status === "rejected";
   return (
@@ -278,7 +279,7 @@ function DraftPreview({
               );
             })}
           </div>
-          <Panel title="Flowchart" items={arrayValue(recordValue(arrayValue(content.flowcharts)[0]).steps).map(String)} />
+          {flowcharts.map((flow, index) => <FlowchartPreview key={`${textValue(flow.title)}-${index}`} flow={flow} index={index} />)}
         </>
       )}
 
@@ -355,6 +356,31 @@ function Panel({ title, items, compact = false }: { title: string; items: string
         {items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
       </ul>
     </div>
+  );
+}
+
+function FlowchartPreview({ flow, index }: { flow: Record<string, unknown>; index: number }) {
+  const steps = arrayValue(flow.steps).map(String).filter(Boolean);
+  if (steps.length < 2) return null;
+  return (
+    <section className="rounded-xl border border-border bg-background/70 p-4" aria-label={textValue(flow.title) || `Flowchart ${index + 1}`}>
+      <div className="flex items-center gap-2">
+        <GitBranch className="size-4 text-plum" aria-hidden="true" />
+        <h4 className="font-medium">{textValue(flow.title) || `Process flow ${index + 1}`}</h4>
+      </div>
+      {textValue(flow.description) && <p className="mt-2 text-sm leading-6 text-muted-foreground">{textValue(flow.description)}</p>}
+      <ol className="mt-4 flex flex-col items-stretch">
+        {steps.map((step, stepIndex) => (
+          <li key={`${step}-${stepIndex}`} className="flex flex-col items-center">
+            <div className="w-full rounded-xl border border-plum/20 bg-plum/5 p-4 shadow-sm">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-plum">Step {stepIndex + 1}</div>
+              <p className="mt-1 break-words text-sm leading-6 text-foreground">{step}</p>
+            </div>
+            {stepIndex < steps.length - 1 && <ArrowDown className="my-1 size-5 shrink-0 text-plum" aria-hidden="true" />}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
