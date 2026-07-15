@@ -1,6 +1,8 @@
 import { apiFormRequest, apiRequest } from "@/lib/api/client";
 import type { ApiRecord } from "@/types/api";
 
+const DRAFT_GENERATION_TIMEOUT_MS = 300000;
+
 export interface ClassSummary {
   class_id: string;
   name: string;
@@ -198,13 +200,13 @@ export function uploadContentDraft(input: {
   if (input.kind === "assessment") form.set("minimum_pass_percent", String(input.minimumPassPercent ?? 50));
   if (input.notes) form.set("notes", input.notes);
   if (input.file) form.set("file", input.file);
-  return apiFormRequest<ContentDraft>("/content-drafts/upload", form, { timeoutMs: 120000 });
+  return apiFormRequest<ContentDraft>("/content-drafts/upload", form, { timeoutMs: DRAFT_GENERATION_TIMEOUT_MS });
 }
 
 export function decideContentDraft(draftId: string, leaderId: string, decision: "accept" | "reject" | "request_changes", instructions = "") {
   return apiRequest<ContentDraft, { leader_id: string; decision: string; instructions: string }>(`/content-drafts/${draftId}/approval`, {
     method: "POST",
     body: { leader_id: leaderId, decision, instructions },
-    timeoutMs: 60000,
+    timeoutMs: DRAFT_GENERATION_TIMEOUT_MS,
   });
 }

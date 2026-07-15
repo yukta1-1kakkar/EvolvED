@@ -910,6 +910,7 @@ class AsyncRepository:
             return {"recorded": True, "seconds_spent": seconds, "total_seconds": total}
 
     async def create_content_draft(self, req: models.ContentDraftRequest) -> models.ContentDraftResponse:
+        generated_content = None
         try:
             async with AsyncSessionLocal() as session:
                 leader = await self._require_role(session, req.leader_id, "module_leader")
@@ -918,6 +919,7 @@ class AsyncRepository:
                 )
                 if not class_row:
                     raise ValueError("Create a classroom before generating content for class students.")
+                generated_content = await _generate_draft_preview(req)
                 draft = db_models.ContentDraft(
                     draft_id=str(uuid4()),
                     leader_id=leader.id,
@@ -925,7 +927,7 @@ class AsyncRepository:
                     kind=req.kind,
                     title=req.title.strip(),
                     source_material=req.source_material,
-                    generated_content=await _generate_draft_preview(req),
+                    generated_content=generated_content,
                     status="draft",
                     approval={},
                 )
@@ -938,7 +940,7 @@ class AsyncRepository:
         except Exception as exc:
             logger.warning("Database draft create unavailable; storing local draft: %s: %r", type(exc).__name__, exc)
             draft_id = str(uuid4())
-            draft = {"draft_id": draft_id, "leader_id": req.leader_id, "class_id": req.class_id, "kind": req.kind, "title": req.title.strip(), "source_material": req.source_material, "generated_content": await _generate_draft_preview(req), "status": "draft", "approval": {}}
+            draft = {"draft_id": draft_id, "leader_id": req.leader_id, "class_id": req.class_id, "kind": req.kind, "title": req.title.strip(), "source_material": req.source_material, "generated_content": generated_content or await _generate_draft_preview(req), "status": "draft", "approval": {}}
             _LOCAL_DRAFTS[draft_id] = draft
             return models.ContentDraftResponse(**{key: draft[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")})
 

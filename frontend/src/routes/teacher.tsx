@@ -168,8 +168,13 @@ function TeacherDashboard() {
             />
             <Button type="submit" className="w-full" disabled={uploadDraft.isPending || !draftClassId || !draftTitle.trim() || (!draftFile && !draftNotes.trim())}>
               {uploadDraft.isPending ? <Loader2 className="animate-spin" /> : <Upload />}
-              Generate draft preview
+              {uploadDraft.isPending ? "Generating draft preview…" : "Generate draft preview"}
             </Button>
+            {uploadDraft.isPending && (
+              <p className="text-sm text-muted-foreground" role="status">
+                Source analysis and quality review run in sequence. Keep this page open; generation can take up to five minutes.
+              </p>
+            )}
             {uploadDraft.isError && <p className="text-sm text-destructive">{uploadDraft.error.message}</p>}
           </form>
         </div>
