@@ -1,6 +1,12 @@
 import type { ApiJson, ApiPrimitive } from "@/types/api";
 
-const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_TIMEOUT_MS = 45000;
+const API_READY_TTL_MS = 5 * 60 * 1000;
+const API_WAKE_TIMEOUT_MS = 120000;
+const TRANSIENT_GATEWAY_STATUSES = new Set([502, 503, 504]);
+
+let apiReadyUntil = 0;
+let apiReadyPromise: Promise<void> | undefined;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -44,6 +50,43 @@ function buildUrl(path: string, query?: Record<string, ApiPrimitive | undefined>
   return url;
 }
 
+async function wakeApi() {
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(() => controller.abort(), API_WAKE_TIMEOUT_MS);
+    try {
+      // ponytail: /docs exists on old and new backend deploys, so frontend/backend rollout order cannot break readiness checks.
+      const response = await fetch(buildUrl("/docs"), { method: "GET", signal: controller.signal });
+      lastStatus = response.status;
+      await response.body?.cancel();
+      if (!TRANSIENT_GATEWAY_STATUSES.has(response.status)) {
+        apiReadyUntil = Date.now() + API_READY_TTL_MS;
+        return;
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError") && attempt === 2) {
+        throw new ApiError("We could not reach EvolvED services. Please try again shortly.", 0);
+      }
+    } finally {
+      globalThis.clearTimeout(timeout);
+    }
+    if (attempt < 2) await new Promise((resolve) => globalThis.setTimeout(resolve, 1000 * (attempt + 1)));
+  }
+  throw new ApiError(
+    "EvolvED services are still starting. Please try again shortly.",
+    lastStatus || 503,
+  );
+}
+
+async function ensureApiReady() {
+  if (Date.now() < apiReadyUntil) return;
+  apiReadyPromise ??= wakeApi().finally(() => {
+    apiReadyPromise = undefined;
+  });
+  await apiReadyPromise;
+}
+
 export function apiUrl(path: string, query?: Record<string, ApiPrimitive | undefined>) {
   return buildUrl(path, query).toString();
 }
@@ -83,6 +126,7 @@ export async function apiRequest<TResponse, TBody extends ApiJson | undefined = 
   path: string,
   options: ApiRequestOptions<TBody> = {},
 ): Promise<TResponse> {
+  await ensureApiReady();
   const controller = new AbortController();
   const timeout = globalThis.setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -127,6 +171,7 @@ export async function apiBlobRequest<TBody extends ApiJson | undefined = undefin
   path: string,
   options: ApiRequestOptions<TBody> = {},
 ): Promise<Blob> {
+  await ensureApiReady();
   const controller = new AbortController();
   const timeout = globalThis.setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -167,6 +212,7 @@ export async function apiFormRequest<TResponse>(
   formData: FormData,
   options: Pick<ApiRequestOptions, "query" | "timeoutMs"> = {},
 ): Promise<TResponse> {
+  await ensureApiReady();
   const controller = new AbortController();
   const timeout = globalThis.setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
