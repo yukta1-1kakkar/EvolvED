@@ -12,7 +12,11 @@ let serverEntryPromise: Promise<ServerEntry> | undefined;
 async function proxyBackend(request: Request): Promise<Response> {
   const backendUrl = process.env.BACKEND_URL?.trim();
   const hostPort = process.env.BACKEND_HOSTPORT?.trim();
-  const baseUrl = backendUrl || (hostPort ? `http://${hostPort}` : "");
+  // ponytail: keep this staging fallback until every Render service has synced the Blueprint env change.
+  const renderBackendUrl = process.env.RENDER_SERVICE_NAME === "evolved-web-staging"
+    ? "https://evolved-api-staging.onrender.com"
+    : "";
+  const baseUrl = backendUrl || renderBackendUrl || (hostPort ? `http://${hostPort}` : "");
   if (!baseUrl) {
     return Response.json({ detail: "The backend service is not configured." }, { status: 503 });
   }
