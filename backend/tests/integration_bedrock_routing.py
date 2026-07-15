@@ -14,6 +14,7 @@ EXPECTED_ROUTES = {
     "learner": "us.anthropic.claude-sonnet-4-6",
     "pedagogy": "us.anthropic.claude-sonnet-4-6",
     "planning": "us.anthropic.claude-sonnet-4-6",
+    "draft": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     "content": "us.anthropic.claude-sonnet-4-6",
     "quiz": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     "assessment": "us.anthropic.claude-haiku-4-5-20251001-v1:0",

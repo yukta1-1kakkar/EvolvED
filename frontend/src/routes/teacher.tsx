@@ -175,7 +175,7 @@ function TeacherDashboard() {
             </Button>
             {uploadDraft.isPending && (
               <p className="text-sm text-muted-foreground" role="status">
-                EvolvED is building a source-grounded teaching sequence. This usually takes about a minute; a structured source-based version returns if AI review is unavailable.
+                EvolvED is reading the source and building a source-grounded, adaptive teaching sequence. This usually takes under a minute.
               </p>
             )}
             {uploadDraft.isError && <p className="text-sm text-destructive">{uploadDraft.error.message}</p>}
@@ -227,6 +227,7 @@ function DraftPreview({
   success?: string;
 }) {
   const content = draft.generated_content;
+  const generation = recordValue(content.generation);
   const statusTone = draft.status === "accepted" ? "bg-emerald-500/10 text-emerald-700" : draft.status === "rejected" ? "bg-destructive/10 text-destructive" : "bg-gold/10 text-gold";
   const summary = textValue(content.summary) || textValue(content.fairness);
   const unreadableSource = Boolean(content.needs_readable_source) || isUnreadableSourceText(summary) || arrayValue(content.learning_objectives).some((item) => isUnreadableSourceText(String(item)));
@@ -240,6 +241,7 @@ function DraftPreview({
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className={`rounded-full px-2.5 py-1 text-xs capitalize ${statusTone}`}>{draft.status.replaceAll("_", " ")}</span>
           <span className="rounded-full bg-muted px-2.5 py-1 text-xs capitalize text-muted-foreground">{draft.kind}</span>
+          {textValue(generation.mode) === "primary_model" && <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-700">Primary AI generation passed</span>}
           {typeof draft.source_material.filename === "string" && <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">{draft.source_material.filename}</span>}
         </div>
         <h3 className="font-display text-2xl">{textValue(content.title) || draft.title}</h3>
@@ -259,6 +261,9 @@ function DraftPreview({
       {!unreadableSource && draft.kind === "lesson" && (
         <>
           <Panel title="What learners will be able to do" items={arrayValue(content.learning_objectives).map(String)} />
+          <p className="rounded-xl border border-plum/20 bg-plum/5 p-3 text-sm text-muted-foreground">
+            Adaptive delivery ready: each section includes guided, standard, concise, and spoken explanations selected from each student&apos;s pace and modality.
+          </p>
           <div className="grid gap-3">
             {sections.map((section, index) => {
               const record = recordValue(section);

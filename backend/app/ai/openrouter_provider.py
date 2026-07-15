@@ -14,6 +14,7 @@ class OpenRouterProvider(LLMProvider):
         temperature: float = 0.2,
         max_tokens: int | None = None,
         max_attempts: int | None = None,
+        response_schema: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         if not settings.openrouter_api_key:
             raise RuntimeError("OpenRouter API key is not configured")
@@ -25,6 +26,8 @@ class OpenRouterProvider(LLMProvider):
             "temperature": temperature,
             "max_tokens": max_tokens or settings.bedrock_max_tokens,
         }
+        if response_schema:
+            payload["response_format"] = {"type": "json_object"}
         headers = {
             "Authorization": f"Bearer {settings.openrouter_api_key}",
             "Content-Type": "application/json",

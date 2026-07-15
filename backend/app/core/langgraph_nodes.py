@@ -33,6 +33,7 @@ async def _call_layer(layer: str, messages: list[Dict[str, str]], **kwargs):
     try:
         response = await provider.call_chat_model(messages, model=primary, **kwargs)
         response["model"] = primary
+        response["provider"] = settings.active_provider.lower()
         return response
     except Exception as exc:
         fallback = settings.reasoning_model
@@ -45,6 +46,7 @@ async def _call_layer(layer: str, messages: list[Dict[str, str]], **kwargs):
         try:
             response = await provider.call_chat_model(messages, model=fallback, **kwargs)
             response["model"] = fallback
+            response["provider"] = settings.active_provider.lower()
             return response
         except Exception as fallback_exc:
             logger.error("%s fallback model unavailable: %s: %s", layer, fallback, fallback_exc)
@@ -60,6 +62,7 @@ async def _call_openrouter_layer(layer: str, messages: list[Dict[str, str]], ori
     openrouter = OpenRouterProvider()
     try:
         response = await openrouter.call_chat_model(messages, model=ModelRouter.get_model(layer), **kwargs)
+        response["provider"] = "openrouter"
         logger.warning("%s Bedrock unavailable, generated with OpenRouter instead: %s", layer, original_exc)
         return response
     except Exception as exc:
@@ -1781,31 +1784,39 @@ async def quality_review_agent(
         contract = (
             "Return a complete teachable lesson with a meaningful source-derived title, source_locked=true, workflow, "
             "3 to 5 specific learning_objectives, a plain-language summary that tells learners what they will understand, "
-            "estimated_duration, difficulty, and 4 to 7 logically ordered sections. Cover prerequisites and key terms, "
+            "estimated_duration, difficulty, and 4 to 6 logically ordered sections. Cover prerequisites and key terms, "
             "the problem, the proposed approach, a worked conceptual example, evidence/results, and limitations when "
             "those are present in the source. Every section needs a descriptive title, a clear explanatory summary, "
-            "2 to 5 concise subsections, source-grounded examples, and checks_for_understanding. Include only source-grounded visual aids, flowcharts, an "
-            "accessibility_version, and delivery_support for gentle, balanced, and fast paces plus visual, audio, and "
-            "reading modalities. Use concrete, plain-language explanations and source-grounded examples in a logical "
+            "2 to 5 concise subsections, at least one source-grounded example, and at least one check_for_understanding. "
+            "Also give every section guided_explanation (slower, scaffolded, terminology unpacked), quick_takeaway "
+            "(one concise but complete explanation), and spoken_explanation (natural narration without visual references). "
+            "These are alternate presentations of the same facts, not different learning outcomes. Include a flowchart "
+            "only when it genuinely explains a source process. Keep the complete JSON below 2,800 words. Use concrete, plain-language explanations and source-grounded examples in a logical "
             "teaching sequence. Do not copy author names, journal headers, affiliations, code links, citation lists, or "
             "raw abstract paragraphs into lesson sections. Do not say 'uploaded source' in objectives. Do not invent a "
             "generic image merely to fill a visual field."
         )
-    source_text = str((source_material or {}).get("text") or "")[:45000]
+    source_text = _representative_source_excerpt(str((source_material or {}).get("text") or ""))
+    analysis_for_prompt = {key: value for key, value in source_analysis.items() if key != "source_text"}
     prompt = (
         "You are the Source-Grounded Lesson and Assessment Agent for a module leader. Analyze the complete source, then "
         "rewrite and quality-check the candidate content for "
         "accuracy, completeness, appropriate difficulty, accessibility, clarity, answer correctness, and source fidelity. "
         "Remove unsupported claims. Return JSON only, containing the corrected final content rather than a review report. "
         f"Required contract: {contract} Title: {title}. Kind: {kind}. "
-        f"Source analysis: {json.dumps(source_analysis, ensure_ascii=False)}. "
+        f"Source analysis: {json.dumps(analysis_for_prompt, ensure_ascii=False)}. "
         f"Candidate draft: {json.dumps(draft, ensure_ascii=False)}. Full extracted source:\n{source_text}"
     )
     resp = await _call_layer(
-        "content" if kind == "lesson" else "assessment",
-        [{"role": "user", "content": prompt}],
+        "draft",
+        [
+            {"role": "system", "content": "You create accurate, highly teachable classroom material. Return one valid JSON object only, without Markdown fences."},
+            {"role": "user", "content": prompt},
+        ],
         temperature=0.0,
-        max_tokens=6000,
+        max_tokens=4800,
+        max_attempts=1,
+        response_schema=_draft_response_schema(kind),
     )
     reviewed = _json_from_model_text(resp["choices"][0]["message"]["content"])
     if kind == "lesson":
@@ -1813,6 +1824,13 @@ async def quality_review_agent(
             raise ValueError("Quality Review Agent returned an incomplete lesson")
         if not isinstance(reviewed.get("learning_objectives"), list) or len(reviewed["learning_objectives"]) < 2:
             raise ValueError("Quality Review Agent returned a lesson without sufficient objectives")
+        for section in reviewed["sections"]:
+            if not isinstance(section, dict) or not section.get("title") or not section.get("summary"):
+                raise ValueError("Quality Review Agent returned an incomplete lesson section")
+            summary = str(section["summary"]).strip()
+            section["guided_explanation"] = str(section.get("guided_explanation") or summary).strip()
+            section["quick_takeaway"] = str(section.get("quick_takeaway") or summary).strip()
+            section["spoken_explanation"] = str(section.get("spoken_explanation") or section["guided_explanation"]).strip()
     else:
         questions = reviewed.get("questions")
         if not isinstance(questions, list) or len(questions) < 5:
@@ -1836,6 +1854,84 @@ async def quality_review_agent(
             "status": "passed",
             "checks": ["accuracy", "completeness", "difficulty", "accessibility", "source_fidelity"],
         },
+        "generation": {
+            "provider": str(resp.get("provider") or settings.active_provider).lower(),
+            "model": str(resp.get("model") or ModelRouter.get_model("draft")),
+            "mode": "primary_model",
+        },
+    }
+
+
+def _representative_source_excerpt(source_text: str, max_chars: int = 32000) -> str:
+    text = str(source_text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    # ponytail: three windows preserve paper setup, method, and findings; replace with retrieval if sources exceed model context routinely.
+    start_size = max_chars * 4 // 10
+    middle_size = max_chars * 3 // 10
+    end_size = max_chars - start_size - middle_size
+    middle_start = max(start_size, len(text) // 2 - middle_size // 2)
+    return "\n\n[BEGINNING OF SOURCE]\n" + text[:start_size] + "\n\n[MIDDLE OF SOURCE]\n" + text[middle_start:middle_start + middle_size] + "\n\n[END OF SOURCE]\n" + text[-end_size:]
+
+
+def _draft_response_schema(kind: str) -> Dict[str, Any]:
+    if kind == "assessment":
+        question = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "type": {"type": "string"},
+                "bloom_level": {"type": "string"},
+                "question": {"type": "string"},
+                "topic": {"type": "string"},
+                "answer": {"type": "string"},
+                "options": {"type": "array", "items": {"type": "string"}},
+                "explanation": {"type": "string"},
+                "rubric": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["id", "type", "bloom_level", "question", "topic", "answer"],
+        }
+        return {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "fairness": {"type": "string"},
+                "estimated_duration": {"type": "integer"},
+                "difficulty": {"type": "string"},
+                "questions": {"type": "array", "items": question},
+                "topic_distribution": {"type": "array", "items": {}},
+            },
+            "required": ["title", "fairness", "estimated_duration", "difficulty", "questions"],
+        }
+    section = {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "summary": {"type": "string"},
+            "guided_explanation": {"type": "string"},
+            "quick_takeaway": {"type": "string"},
+            "spoken_explanation": {"type": "string"},
+            "subsections": {"type": "array", "items": {"type": "string"}},
+            "examples": {"type": "array", "items": {"type": "string"}},
+            "checks_for_understanding": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "title", "summary", "guided_explanation", "quick_takeaway", "spoken_explanation",
+            "subsections", "examples", "checks_for_understanding",
+        ],
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "summary": {"type": "string"},
+            "learning_objectives": {"type": "array", "items": {"type": "string"}},
+            "estimated_duration": {"type": "integer"},
+            "difficulty": {"type": "string"},
+            "sections": {"type": "array", "items": section},
+            "flowcharts": {"type": "array", "items": {"type": "object"}},
+        },
+        "required": ["title", "summary", "learning_objectives", "estimated_duration", "difficulty", "sections"],
     }
 
 

@@ -1496,6 +1496,8 @@ def _student_published_content(kind: str, content: Dict[str, Any], learner: db_m
     pace = _normalized_pace(learner.pace_preference)
     modality = _normalized_modality(learner.preferred_modality)
     support = _ensure_delivery_support(safe_content, kind)["delivery_support"]
+    if kind == "lesson":
+        safe_content["sections"] = _personalized_lesson_sections(safe_content.get("sections"), pace, modality)
     base_duration = int(safe_content.get("estimated_duration") or 0)
     multiplier = {"gentle": 1.25, "balanced": 1.0, "fast": 0.8}[pace]
     safe_content["estimated_duration"] = max(1, round(base_duration * multiplier)) if base_duration else 0
@@ -1506,10 +1508,33 @@ def _student_published_content(kind: str, content: Dict[str, Any], learner: db_m
         "modality_label": {"visual": "Visual examples and diagrams", "audio": "Audio learning", "reading": "Detailed written explanations"}[modality],
         "pace_guidance": support["pace"][pace],
         "modality_guidance": support["modality"][modality],
+        "content_adapted": kind == "lesson",
     }
     if kind == "lesson" and modality == "audio":
         safe_content["audio_narration"] = _lesson_narration(safe_content)
     return safe_content
+
+
+def _personalized_lesson_sections(value: Any, pace: str, modality: str) -> list[Dict[str, Any]]:
+    sections: list[Dict[str, Any]] = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        section = copy.deepcopy(item)
+        standard = str(section.get("summary") or "").strip()
+        if pace == "fast":
+            selected = str(section.get("quick_takeaway") or standard).strip()
+            variant = "quick_takeaway"
+        elif pace == "gentle" or modality == "reading":
+            selected = str(section.get("guided_explanation") or standard).strip()
+            variant = "guided_explanation"
+        else:
+            selected = standard
+            variant = "standard"
+        section["summary"] = selected
+        section["presentation_variant"] = variant
+        sections.append(section)
+    return sections
 
 
 def _normalized_pace(value: Any) -> str:
@@ -1563,7 +1588,7 @@ def _lesson_narration(content: Dict[str, Any]) -> str:
     for section in content.get("sections") or []:
         if not isinstance(section, dict):
             continue
-        parts.extend([str(section.get("title") or ""), str(section.get("summary") or "")])
+        parts.extend([str(section.get("title") or ""), str(section.get("spoken_explanation") or section.get("summary") or "")])
         parts.extend(str(item) for item in section.get("subsections") or [])
     return "\n\n".join(part.strip() for part in parts if part.strip())
 

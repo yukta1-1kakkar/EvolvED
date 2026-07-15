@@ -10,6 +10,7 @@ class LLMProvider(abc.ABC):
         temperature: float = 0.2,
         max_tokens: int | None = None,
         max_attempts: int | None = None,
+        response_schema: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         pass
 

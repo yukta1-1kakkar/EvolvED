@@ -116,6 +116,7 @@ class BedrockProvider(LLMProvider):
         temperature: float = 0.2,
         max_tokens: int | None = None,
         max_attempts: int | None = None,
+        response_schema: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         system, anthropic_messages = self._normalise_messages(messages)
         payload: dict[str, Any] = {
@@ -126,6 +127,13 @@ class BedrockProvider(LLMProvider):
         }
         if system:
             payload["system"] = system
+        if response_schema:
+            payload["tools"] = [{
+                "name": "return_structured_result",
+                "description": "Return the completed result using the required JSON structure.",
+                "input_schema": response_schema,
+            }]
+            payload["tool_choice"] = {"type": "tool", "name": "return_structured_result"}
 
         model_id = model or settings.lesson_planning_model
 
@@ -138,8 +146,11 @@ class BedrockProvider(LLMProvider):
                 accept="application/json",
             )
             raw = json.loads(response["body"].read())
-            text = "".join(part.get("text", "") for part in raw.get("content", []) if part.get("type") == "text")
-            return {"choices": [{"message": {"content": text}}], "raw": raw}
+            tool_result = next((part.get("input") for part in raw.get("content", []) if part.get("type") == "tool_use"), None)
+            text = json.dumps(tool_result, ensure_ascii=False) if isinstance(tool_result, dict) else "".join(
+                part.get("text", "") for part in raw.get("content", []) if part.get("type") == "text"
+            )
+            return {"choices": [{"message": {"content": text}}], "raw": raw, "structured_output": isinstance(tool_result, dict)}
 
         try:
             return await self._run_with_retries(f"Claude invocation for {model_id}", _invoke, max_attempts=max_attempts)
