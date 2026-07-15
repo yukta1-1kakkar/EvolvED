@@ -10,23 +10,33 @@ type ServerEntry = {
 let serverEntryPromise: Promise<ServerEntry> | undefined;
 
 async function proxyBackend(request: Request): Promise<Response> {
+  const backendUrl = process.env.BACKEND_URL?.trim();
   const hostPort = process.env.BACKEND_HOSTPORT?.trim();
-  if (!hostPort) {
+  const baseUrl = backendUrl || (hostPort ? `http://${hostPort}` : "");
+  if (!baseUrl) {
     return Response.json({ detail: "The backend service is not configured." }, { status: 503 });
   }
 
   const source = new URL(request.url);
-  const target = new URL(`${source.pathname.replace(/^\/api/, "") || "/"}${source.search}`, `http://${hostPort}`);
+  const target = new URL(`${source.pathname.replace(/^\/api/, "") || "/"}${source.search}`, baseUrl);
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("content-length");
 
-  return fetch(target, {
-    method: request.method,
-    headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
-    redirect: "manual",
-  });
+  try {
+    return await fetch(target, {
+      method: request.method,
+      headers,
+      body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
+      redirect: "manual",
+    });
+  } catch (error) {
+    console.error(`Backend proxy failed for ${target.origin}:`, error);
+    return Response.json(
+      { detail: "The API service is starting or temporarily unavailable. Please try again shortly." },
+      { status: 503 },
+    );
+  }
 }
 
 async function getServerEntry(): Promise<ServerEntry> {

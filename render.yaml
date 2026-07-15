@@ -52,8 +52,10 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 22.16.0
-      - key: BACKEND_HOSTPORT
+      # Free Render web services cannot receive private-network traffic, so the
+      # frontend proxy must use the API's public URL.
+      - key: BACKEND_URL
         fromService:
           type: web
           name: evolved-api-staging
-          property: hostport
+          envVarKey: RENDER_EXTERNAL_URL
