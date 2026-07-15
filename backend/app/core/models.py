@@ -274,6 +274,8 @@ class ContentDraftResponse(BaseModel):
     source_material: Dict[str, Any] = Field(default_factory=dict)
     generated_content: Dict[str, Any] = Field(default_factory=dict)
     approval: Dict[str, Any] = Field(default_factory=dict)
+    published_recipient_count: int = 0
+    publication_message: Optional[str] = None
 
 
 class ApprovalRequest(BaseModel):

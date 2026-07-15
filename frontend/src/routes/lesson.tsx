@@ -245,6 +245,7 @@ function PublishedLessonsPage({ learnerId }: { learnerId: string }) {
 function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAlert; lessons: StudentClassAlert[]; learnerId: string }) {
   const { currentUser } = useAuth();
   const content = alert.published_content;
+  const presentation = recordArray(content.learner_presentation)[0] ?? {};
   const sections = recordArray(content.sections);
   const objectives = recordsFrom(content.learning_objectives).map(String);
   const flowSteps = recordsFrom(recordArray(content.flowcharts)[0]?.steps).map(String);
@@ -285,6 +286,17 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
     <div className={`space-y-5 ${readerModeClass(readerMode)}`}>
       <ReaderControls mode={readerMode} onChange={setReaderMode} />
       <div className="published-reader space-y-5">
+        <section className="rounded-2xl border border-plum/20 bg-plum/5 p-4" aria-label="Personalized lesson presentation">
+          <div className="text-xs uppercase tracking-[0.16em] text-plum">Your lesson format</div>
+          <div className="mt-2 flex flex-wrap gap-2 text-sm font-medium">
+            <span className="rounded-full bg-background px-3 py-1">{stringValue(presentation.pace_label) || "Balanced"}</span>
+            <span className="rounded-full bg-background px-3 py-1">{stringValue(presentation.modality_label) || "Detailed written explanations"}</span>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">{stringValue(presentation.pace_guidance)} {stringValue(presentation.modality_guidance)}</p>
+        </section>
+        {stringValue(presentation.modality) === "audio" && stringValue(content.audio_narration) && (
+          <AudioLesson narration={stringValue(content.audio_narration)} />
+        )}
         {lessons.length > 1 && (
           <nav className="flex flex-wrap gap-2" aria-label="Published lessons">
             {lessons.map((lesson) => (
@@ -389,6 +401,7 @@ type PublishedLessonPageItem = {
 };
 
 function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives: string[], flowSteps: string[]): PublishedLessonPageItem[] {
+  const visualFirst = stringValue((recordArray(alert.published_content.learner_presentation)[0] ?? {}).modality) === "visual";
   const pages: PublishedLessonPageItem[] = [
     {
       key: "lesson-overview",
@@ -405,6 +418,13 @@ function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives
       key: "lesson-objectives",
       title: "Learning objectives",
       render: () => <AgentList icon={Target} title="Learning objectives" empty="" items={objectives.map((prompt) => ({ prompt }))} />,
+    });
+  }
+  if (visualFirst && flowSteps.length > 0) {
+    pages.push({
+      key: "lesson-flow",
+      title: "Lesson flow",
+      render: () => <AgentList icon={GitBranch} title="Lesson flow" empty="" items={flowSteps.map((prompt) => ({ prompt }))} />,
     });
   }
   sections.forEach((section, index) => {
@@ -425,7 +445,7 @@ function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives
       ),
     });
   });
-  if (flowSteps.length > 0) {
+  if (!visualFirst && flowSteps.length > 0) {
     pages.push({
       key: "lesson-flow",
       title: "Lesson flow",

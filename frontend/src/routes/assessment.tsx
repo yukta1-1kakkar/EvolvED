@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Accessibility, ArrowRight, BookOpen, Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
+import { Accessibility, ArrowRight, BookOpen, Check, Loader2, RotateCcw, Sparkles, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
@@ -193,6 +193,7 @@ function PublishedAssessmentPage({ learnerId }: { learnerId: string }) {
 
 function PublishedAssessment({ alert, assessments, learnerId }: { alert: StudentClassAlert; assessments: StudentClassAlert[]; learnerId: string }) {
   const questions = arrayValue(alert.published_content.questions).filter((item): item is ApiRecord => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+  const presentation = recordValue(alert.published_content.learner_presentation);
   const navigate = useNavigate();
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [confidence, setConfidence] = useState<Record<string, number>>({});
@@ -234,6 +235,14 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
     });
   }
 
+  function readCurrentQuestion() {
+    if (!currentQuestion || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const prompt = textValue(currentQuestion.prompt);
+    const options = arrayValue(currentQuestion.options).map(String).join(". ");
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(`${prompt}. ${options}`));
+  }
+
   if (submit.data) {
     return (
       <div className="grid min-h-72 place-items-center rounded-3xl border border-border bg-card p-8">
@@ -249,6 +258,14 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
     <div className={readerModeClass(readerMode)}>
       <div className="max-w-5xl space-y-4">
         <ReaderControls mode={readerMode} onChange={setReaderMode} />
+        <section className="rounded-2xl border border-plum/20 bg-plum/5 p-4" aria-label="Personalized assessment presentation">
+          <div className="text-xs uppercase tracking-[0.16em] text-plum">Your assessment format</div>
+          <div className="mt-2 flex flex-wrap gap-2 text-sm font-medium">
+            <span className="rounded-full bg-background px-3 py-1">{textValue(presentation.pace_label) || "Balanced"}</span>
+            <span className="rounded-full bg-background px-3 py-1">{textValue(presentation.modality_label) || "Detailed written explanations"}</span>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">{textValue(presentation.pace_guidance)} {textValue(presentation.modality_guidance)}</p>
+        </section>
         {assessments.length > 1 && (
           <nav className="flex flex-wrap gap-2" aria-label="Published assessments">
             {assessments.map((assessment) => (
@@ -268,6 +285,11 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
             <div className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
               Question {Math.min(pageIndex + 1, Math.max(1, normalizedQuestions.length))} of {normalizedQuestions.length}
             </div>
+            {textValue(presentation.modality) === "audio" && currentQuestion && (
+              <button type="button" onClick={readCurrentQuestion} className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs">
+                <Volume2 className="size-3.5" /> Read question aloud
+              </button>
+            )}
           </div>
         </section>
         {currentQuestion && (
@@ -623,6 +645,10 @@ function vectorVisualFromQuestionText(question: ApiRecord) {
 
 function arrayValue(value: ApiJson | undefined) {
   return Array.isArray(value) ? value : [];
+}
+
+function recordValue(value: ApiJson | undefined): ApiRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
 function textValue(value: unknown) {

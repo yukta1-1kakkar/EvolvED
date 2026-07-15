@@ -1772,14 +1772,18 @@ async def quality_review_agent(
             "MCQs also need exactly 4 plausible options containing the exact answer and an explanation. "
             "Short-answer questions need a 3-item rubric. Cover multiple source concepts and never ask vague questions "
             "about an 'uploaded document'. Include title, source_locked=true, workflow, fairness, questions, "
-            "topic_distribution, estimated_duration, and difficulty."
+            "topic_distribution, estimated_duration, difficulty, and delivery_support for gentle, balanced, and fast "
+            "paces plus visual, audio, and reading modalities. Assessment questions and marking must remain identical "
+            "for every learner; only presentation guidance may vary."
         )
     else:
         contract = (
             "Return a complete teachable lesson with title, source_locked=true, workflow, learning_objectives, summary, "
             "estimated_duration, difficulty, and 3 to 7 sections. Every section needs title, summary, subsections, "
-            "examples, and checks_for_understanding. Include generated_images, flowcharts, and accessibility_version. "
-            "Use concrete explanations and examples grounded in the supplied source, with a logical teaching sequence."
+            "examples, and checks_for_understanding. Include only source-grounded visual aids, flowcharts, an "
+            "accessibility_version, and delivery_support for gentle, balanced, and fast paces plus visual, audio, and "
+            "reading modalities. Use concrete, plain-language explanations and source-grounded examples in a logical "
+            "teaching sequence. Do not invent a generic image merely to fill a visual field."
         )
     prompt = (
         "You are the Quality Review Agent for a module leader. Rewrite and quality-check the candidate content for "

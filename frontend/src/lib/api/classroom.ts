@@ -74,6 +74,8 @@ export interface ContentDraft {
   source_material: ApiRecord;
   generated_content: ApiRecord;
   approval: ApiRecord;
+  published_recipient_count: number;
+  publication_message?: string | null;
 }
 
 export interface StudentClassAlert {

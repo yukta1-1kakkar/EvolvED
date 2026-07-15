@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -690,7 +691,7 @@ class AsyncRepository:
                 completions = (await session.scalars(sa.select(db_models.ContentCompletion).where(db_models.ContentCompletion.learner_id == learner.id).order_by(db_models.ContentCompletion.completed_at.desc()))).all()
                 completion_by_draft = {item.draft_id: item for item in completions}
                 classes = [_class_summary(row, 0) for row in class_rows]
-                alerts = [_student_alert(draft, next((item for item in class_rows if item.id == draft.class_id), None), leaders.get(draft.leader_id), completion_by_draft.get(draft.id)) for draft in drafts]
+                alerts = [_student_alert(draft, next((item for item in class_rows if item.id == draft.class_id), None), leaders.get(draft.leader_id), learner, completion_by_draft.get(draft.id)) for draft in drafts]
                 results = [
                     _completion_result(item, next((draft for draft in drafts if draft.id == item.draft_id), None))
                     for item in completions
@@ -705,7 +706,8 @@ class AsyncRepository:
             local_classes = [item for item in _LOCAL_CLASSES.values() if item["class_id"] in class_ids]
             classes = [models.ClassSummary(**{**item, "created_at": _iso(item["created_at"]), "student_count": _local_class_count(item["class_id"])}) for item in local_classes]
             local_completions = [item for item in _LOCAL_COMPLETIONS if item["learner_id"] == learner_id]
-            alerts = [_local_student_alert(draft, next((item for item in local_classes if item["class_id"] == draft.get("class_id")), None), next((item for item in local_completions if item["draft_id"] == draft.get("draft_id")), None)) for draft in _LOCAL_DRAFTS.values() if draft.get("class_id") in class_ids and draft.get("status") == "accepted"]
+            local_learner = self._local_learner(learner_id)
+            alerts = [_local_student_alert(draft, next((item for item in local_classes if item["class_id"] == draft.get("class_id")), None), local_learner, next((item for item in local_completions if item["draft_id"] == draft.get("draft_id")), None)) for draft in _LOCAL_DRAFTS.values() if draft.get("class_id") in class_ids and draft.get("status") == "accepted"]
             results = [_local_completion_result(item, _LOCAL_DRAFTS.get(item["draft_id"])) for item in local_completions]
             results.extend(_local_student_result(item) for item in _LOCAL_ASSESSMENTS if item.get("learner_id") == learner_id and not str(item.get("session_id") or "").startswith("published:"))
         results.sort(key=lambda item: item.created_at or "", reverse=True)
@@ -934,7 +936,7 @@ class AsyncRepository:
                 session.add(draft)
                 await session.commit()
                 await session.refresh(draft)
-                return _draft_response(draft)
+                return _draft_response(draft, class_row.class_id)
         except ValueError:
             raise
         except Exception as exc:
@@ -942,7 +944,7 @@ class AsyncRepository:
             draft_id = str(uuid4())
             draft = {"draft_id": draft_id, "leader_id": req.leader_id, "class_id": req.class_id, "kind": req.kind, "title": req.title.strip(), "source_material": req.source_material, "generated_content": generated_content or await _generate_draft_preview(req), "status": "draft", "approval": {}}
             _LOCAL_DRAFTS[draft_id] = draft
-            return models.ContentDraftResponse(**{key: draft[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")})
+            return _local_draft_response(draft)
 
     async def approve_content_draft(self, draft_id: str, req: models.ApprovalRequest) -> models.ContentDraftResponse:
         status = "accepted" if req.decision == "accept" else "rejected" if req.decision == "reject" else "changes_requested"
@@ -953,6 +955,7 @@ class AsyncRepository:
                 draft = await session.scalar(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.draft_id == draft_id, db_models.ContentDraft.leader_id == leader.id))
                 if not draft:
                     raise ValueError("Draft was not found for this module leader.")
+                class_row = await session.get(db_models.ClassGroup, draft.class_id) if draft.class_id else None
                 if req.decision == "accept" and draft.class_id is None:
                     class_row = await session.scalar(
                         sa.select(db_models.ClassGroup).where(db_models.ClassGroup.leader_id == leader.id, db_models.ClassGroup.active == True).order_by(db_models.ClassGroup.created_at)
@@ -960,6 +963,14 @@ class AsyncRepository:
                     if not class_row:
                         raise ValueError("Select or create a classroom before publishing this content.")
                     draft.class_id = class_row.id
+                if req.decision == "accept":
+                    recipient_count = int(await session.scalar(
+                        sa.select(sa.func.count(db_models.Enrollment.id)).where(
+                            db_models.Enrollment.class_id == draft.class_id,
+                            db_models.Enrollment.status == "active",
+                        )
+                    ) or 0)
+                    approval.update(_publication_details(draft.kind, class_row.name if class_row else "the class", recipient_count))
                 draft.status = status
                 draft.approval = approval
                 if req.decision == "request_changes":
@@ -1001,7 +1012,7 @@ class AsyncRepository:
                     return _draft_response(replacement)
                 await session.commit()
                 await session.refresh(draft)
-                return _draft_response(draft)
+                return _draft_response(draft, class_row.class_id if class_row else None)
         except ValueError:
             raise
         except Exception as exc:
@@ -1010,6 +1021,10 @@ class AsyncRepository:
             if not draft or draft["leader_id"] != req.leader_id:
                 raise ValueError("Draft was not found for this module leader.")
             draft["status"] = status
+            if req.decision == "accept":
+                class_row = _LOCAL_CLASSES.get(str(draft.get("class_id") or ""))
+                recipient_count = _local_class_count(str(draft.get("class_id") or ""))
+                approval.update(_publication_details(draft["kind"], str((class_row or {}).get("name") or "the class"), recipient_count))
             draft["approval"] = approval
             if req.decision == "request_changes":
                 draft["generated_content"] = await _generate_regenerated_draft_preview(
@@ -1048,7 +1063,7 @@ class AsyncRepository:
                 }
                 _LOCAL_DRAFTS[replacement_id] = replacement
                 return models.ContentDraftResponse(**{key: replacement[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")})
-            return models.ContentDraftResponse(**{key: draft[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")})
+            return _local_draft_response(draft)
 
     def _state(self, learner: db_models.Learner) -> models.LearnerState:
         model = {**_initial_model(), **(learner.learner_model or {})}
@@ -1360,7 +1375,7 @@ def _class_summary(row: db_models.ClassGroup, student_count: int) -> models.Clas
     )
 
 
-def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGroup | None, leader: db_models.Learner | None, completion: db_models.ContentCompletion | None = None) -> models.StudentClassAlert:
+def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGroup | None, leader: db_models.Learner | None, learner: db_models.Learner, completion: db_models.ContentCompletion | None = None) -> models.StudentClassAlert:
     class_name = class_row.name if class_row else "Class"
     leader_name = leader.full_name if leader and leader.full_name else "Module leader"
     kind = draft.kind or "lesson"
@@ -1373,14 +1388,14 @@ def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGrou
         title=draft.title,
         draft_id=draft.draft_id,
         message=f"{leader_name} published a new {kind} in {class_name}: {draft.title}",
-        published_content=_student_published_content(kind, draft.generated_content or {}),
+        published_content=_student_published_content(kind, draft.generated_content or {}, learner),
         completed=completion is not None,
         completed_at=_iso(completion.completed_at) if completion else None,
         created_at=_iso(draft.updated_at or draft.created_at),
     )
 
 
-def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None, completion: Dict[str, Any] | None = None) -> models.StudentClassAlert:
+def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None, learner: db_models.Learner, completion: Dict[str, Any] | None = None) -> models.StudentClassAlert:
     class_name = str((class_row or {}).get("name") or "Class")
     kind = str(draft.get("kind") or "lesson")
     title = str(draft.get("title") or "Untitled")
@@ -1393,7 +1408,7 @@ def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None
         title=title,
         draft_id=str(draft.get("draft_id") or ""),
         message=f"Module leader published a new {kind} in {class_name}: {title}",
-        published_content=_student_published_content(kind, draft.get("generated_content") or {}),
+        published_content=_student_published_content(kind, draft.get("generated_content") or {}, learner),
         completed=completion is not None,
         completed_at=_iso(completion.get("completed_at")) if completion else None,
         created_at=_iso((draft.get("approval") or {}).get("decided_at")),
@@ -1469,16 +1484,96 @@ def _completion_evaluation(kind: str, title: str, score: float) -> str:
     return f"Completed the full teacher-published lesson {title}. All lesson sections were reached before completion."
 
 
-def _student_published_content(kind: str, content: Dict[str, Any]) -> Dict[str, Any]:
-    if kind != "assessment":
-        return content
-    safe_content = dict(content)
-    safe_content["questions"] = [
-        {key: value for key, value in question.items() if key not in {"answer", "correct_answer", "explanation", "rubric"}}
-        if isinstance(question, dict) else question
-        for question in content.get("questions", [])
-    ]
+def _student_published_content(kind: str, content: Dict[str, Any], learner: db_models.Learner) -> Dict[str, Any]:
+    safe_content = copy.deepcopy(content)
+    if kind == "assessment":
+        safe_content["questions"] = [
+            {key: value for key, value in question.items() if key not in {"answer", "correct_answer", "explanation", "rubric"}}
+            if isinstance(question, dict) else question
+            for question in content.get("questions", [])
+        ]
+    pace = _normalized_pace(learner.pace_preference)
+    modality = _normalized_modality(learner.preferred_modality)
+    support = _ensure_delivery_support(safe_content, kind)["delivery_support"]
+    base_duration = int(safe_content.get("estimated_duration") or 0)
+    multiplier = {"gentle": 1.25, "balanced": 1.0, "fast": 0.8}[pace]
+    safe_content["estimated_duration"] = max(1, round(base_duration * multiplier)) if base_duration else 0
+    safe_content["learner_presentation"] = {
+        "pace": pace,
+        "pace_label": {"gentle": "Gentle and thorough", "balanced": "Balanced", "fast": "Fast and challenging"}[pace],
+        "modality": modality,
+        "modality_label": {"visual": "Visual examples and diagrams", "audio": "Audio learning", "reading": "Detailed written explanations"}[modality],
+        "pace_guidance": support["pace"][pace],
+        "modality_guidance": support["modality"][modality],
+    }
+    if kind == "lesson" and modality == "audio":
+        safe_content["audio_narration"] = _lesson_narration(safe_content)
     return safe_content
+
+
+def _normalized_pace(value: Any) -> str:
+    text = str(value or "balanced").lower()
+    if "gentle" in text or "thorough" in text:
+        return "gentle"
+    if "fast" in text or "challeng" in text:
+        return "fast"
+    return "balanced"
+
+
+def _normalized_modality(value: Any) -> str:
+    values = value if isinstance(value, list) else [value]
+    text = " ".join(str(item).lower() for item in values)
+    if "visual" in text or "diagram" in text:
+        return "visual"
+    if "audio" in text or "listen" in text or "auditory" in text:
+        return "audio"
+    return "reading"
+
+
+def _delivery_support(kind: str) -> Dict[str, Dict[str, str]]:
+    noun = "assessment" if kind == "assessment" else "lesson"
+    return {
+        "pace": {
+            "gentle": f"Work through the {noun} in smaller steps and take time to revisit each explanation.",
+            "balanced": f"Work through the {noun} at a steady pace, using each checkpoint before moving on.",
+            "fast": f"Use the concise sequence and move quickly through familiar ideas, pausing on new concepts.",
+        },
+        "modality": {
+            "visual": "Use the source-grounded flow and diagrams to connect the main ideas.",
+            "audio": "Use Read aloud to listen while following the source-grounded text.",
+            "reading": "Use the detailed written explanations and source-grounded examples.",
+        },
+    }
+
+
+def _ensure_delivery_support(content: Dict[str, Any], kind: str) -> Dict[str, Any]:
+    result = copy.deepcopy(content)
+    defaults = _delivery_support(kind)
+    existing = result.get("delivery_support") if isinstance(result.get("delivery_support"), dict) else {}
+    result["delivery_support"] = {
+        group: {**values, **(existing.get(group) if isinstance(existing.get(group), dict) else {})}
+        for group, values in defaults.items()
+    }
+    return result
+
+
+def _lesson_narration(content: Dict[str, Any]) -> str:
+    parts = [str(content.get("title") or ""), str(content.get("summary") or "")]
+    for section in content.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        parts.extend([str(section.get("title") or ""), str(section.get("summary") or "")])
+        parts.extend(str(item) for item in section.get("subsections") or [])
+    return "\n\n".join(part.strip() for part in parts if part.strip())
+
+
+def _publication_details(kind: str, class_name: str, recipient_count: int) -> Dict[str, Any]:
+    noun = "Lesson" if kind == "lesson" else "Assessment"
+    students = "student" if recipient_count == 1 else "students"
+    return {
+        "published_recipient_count": recipient_count,
+        "publication_message": f"{noun} has been sent to all {recipient_count} {students} in {class_name}.",
+    }
 
 
 def _local_class_count(class_id: str) -> int:
@@ -1617,7 +1712,7 @@ async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, 
                 **fallback,
                 "source_analysis": analysis,
             }
-        reviewed = await langgraph_nodes.quality_review_agent(req.title, req.kind, analysis, fallback)
+        reviewed = _ensure_delivery_support(await langgraph_nodes.quality_review_agent(req.title, req.kind, analysis, fallback), req.kind)
         if req.kind == "assessment":
             reviewed["minimum_pass_percent"] = (req.source_material or {}).get("minimum_pass_percent", 50.0)
             reviewed["minimum_pass_score"] = _passing_score_from_materials(req.source_material or {}, reviewed)
@@ -1696,6 +1791,7 @@ def _draft_needs_healing(generated_content: Dict[str, Any]) -> bool:
 def _draft_response(row: db_models.ContentDraft, class_id: str | None = None) -> models.ContentDraftResponse:
     source_material = row.source_material or {}
     generated_content = _healed_draft_preview(row.kind, row.title, source_material, row.generated_content or {})
+    approval = row.approval or {}
     return models.ContentDraftResponse(
         draft_id=row.draft_id,
         class_id=class_id,
@@ -1704,7 +1800,9 @@ def _draft_response(row: db_models.ContentDraft, class_id: str | None = None) ->
         status=row.status,
         source_material=source_material,
         generated_content=generated_content,
-        approval=row.approval or {},
+        approval=approval,
+        published_recipient_count=int(approval.get("published_recipient_count") or 0),
+        publication_message=approval.get("publication_message"),
     )
 
 
@@ -1713,20 +1811,26 @@ def _local_draft_response(row: Dict[str, Any]) -> models.ContentDraftResponse:
         **row,
         "generated_content": _healed_draft_preview(row["kind"], row["title"], row.get("source_material") or {}, row.get("generated_content") or {}),
     }
+    approval = healed.get("approval") or {}
     return models.ContentDraftResponse(
         **{key: healed[key] for key in ("draft_id", "kind", "title", "status", "source_material", "generated_content", "approval")},
         class_id=healed.get("class_id"),
+        published_recipient_count=int(approval.get("published_recipient_count") or 0),
+        publication_message=approval.get("publication_message"),
     )
 
 
 def _lesson_preview(title: str, source_text: str) -> Dict[str, Any]:
     paragraphs = _source_paragraphs(source_text)
+    source_sentences = _source_sentences(_teaching_source_text(source_text))
+    if len(paragraphs) < 3 and len(source_sentences) >= 3:
+        paragraphs = source_sentences
     sections = [
         {
             "title": _section_title(paragraph, index),
             "summary": _teaching_summary(paragraph),
             "subsections": _source_sentences(paragraph)[:3],
-            "examples": [f"Use the uploaded source to discuss: {_compact(paragraph, 18)}"],
+            "examples": [f"Source example: {_compact(paragraph, 32)}"],
             "checks_for_understanding": [
                 f"What problem does {_section_title(paragraph, index).lower()} help solve?",
                 f"Name one practical use or limitation from this section.",
@@ -1743,20 +1847,21 @@ def _lesson_preview(title: str, source_text: str) -> Dict[str, Any]:
         "estimated_duration": max(20, min(60, len(sections) * 10)),
         "difficulty": "Intermediate" if len(source_text.split()) > 700 else "Foundational",
         "sections": sections,
-        "generated_images": [{"type": "diagram", "prompt": f"Diagram for {section['title']}"} for section in sections[:2]],
+        "generated_images": [],
         "flowcharts": [{"title": f"{title} learning flow", "steps": [section["title"] for section in sections[:5]]}],
         "accessibility_version": {
             "font": "readable sans-serif",
             "spacing": "increased",
             "chunks": [section["title"] for section in sections[:5]],
         },
+        "delivery_support": _delivery_support("lesson"),
     }
 
 
 def _assessment_preview(title: str, source_text: str) -> Dict[str, Any]:
     paragraphs = _source_paragraphs(source_text)
     concepts = _assessment_concepts(title, paragraphs, source_text)
-    questions = [_assessment_question(concept, index) for index, concept in enumerate(concepts[:8], 1)]
+    questions = [_assessment_question(concept, index, concepts[:8]) for index, concept in enumerate(concepts[:8], 1)]
     return {
         "title": title,
         "source_locked": True,
@@ -1766,6 +1871,7 @@ def _assessment_preview(title: str, source_text: str) -> Dict[str, Any]:
         "topic_distribution": [{"topic": question["topic"], "count": 1} for question in questions],
         "estimated_duration": max(15, min(45, len(questions) * 4)),
         "difficulty": "Intermediate" if len(source_text.split()) > 700 else "Foundational",
+        "delivery_support": _delivery_support("assessment"),
     }
 
 
@@ -1807,7 +1913,7 @@ def _assessment_concepts(title: str, paragraphs: list[str], source_text: str) ->
     ]
 
 
-def _assessment_question(concept: dict[str, str], index: int) -> dict[str, Any]:
+def _assessment_question(concept: dict[str, str], index: int, concepts: list[dict[str, str]]) -> dict[str, Any]:
     topic = concept["topic"]
     evidence = concept["evidence"]
     application = concept["application"]
@@ -1816,7 +1922,7 @@ def _assessment_question(concept: dict[str, str], index: int) -> dict[str, Any]:
             "id": f"q{index}",
             "type": "short_answer",
             "bloom_level": "apply",
-            "question": f"Explain one practical application of {topic.lower()} using details from the uploaded document.",
+            "question": f"How would you apply this idea about {topic.lower()}: {evidence}?",
             "answer": application,
             "rubric": [
                 "Mentions the source concept accurately.",
@@ -1830,7 +1936,7 @@ def _assessment_question(concept: dict[str, str], index: int) -> dict[str, Any]:
             "id": f"q{index}",
             "type": "short_answer",
             "bloom_level": "analyze",
-            "question": f"What limitation, safety concern, or decision point should a learner consider when using {topic.lower()}?",
+            "question": f"Based on this source statement, what limitation or decision point matters for {topic.lower()}: {evidence}?",
             "answer": application,
             "rubric": [
                 "Identifies a limitation, safety issue, or decision point.",
@@ -1840,7 +1946,7 @@ def _assessment_question(concept: dict[str, str], index: int) -> dict[str, Any]:
             "topic": topic,
         }
     stems = _document_question_stems(topic, evidence)
-    distractors = _assessment_distractors(topic)
+    distractors = [item["evidence"] for item in concepts if item is not concept]
     answer = evidence
     options = _unique_options([answer, *distractors])
     return {
@@ -1853,21 +1959,6 @@ def _assessment_question(concept: dict[str, str], index: int) -> dict[str, Any]:
         "explanation": f"The correct answer is grounded in this source evidence: {answer}",
         "topic": topic,
     }
-
-
-def _assessment_distractors(topic: str) -> list[str]:
-    topic_lower = topic.lower()
-    return [
-        f"{topic} is mentioned only as a citation detail and is not part of the document's content.",
-        f"{topic} removes the need for learner interpretation or clinical judgment.",
-        f"{topic} is presented as unrelated to the main subject of the uploaded document.",
-        f"{topic} is described as a purely administrative step.",
-    ] if any(word in topic_lower for word in ("imaging", "diagnosis", "clinical", "medical", "image", "patient", "safety")) else [
-        f"{topic} is unrelated to the document's central ideas.",
-        f"{topic} is only a formatting detail in the uploaded file.",
-        f"{topic} contradicts the document's explanation.",
-        f"{topic} can be ignored without changing the document's meaning.",
-    ]
 
 
 def _document_question_stems(topic: str, evidence: str) -> list[str]:

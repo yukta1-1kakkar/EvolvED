@@ -30,6 +30,7 @@ function TeacherDashboard() {
   const [draftFile, setDraftFile] = useState<File | null>(null);
   const [selectedDraftId, setSelectedDraftId] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [publicationNotice, setPublicationNotice] = useState("");
   const dashboard = useQuery({
     queryKey: ["teacher-dashboard", currentUser?.id],
     queryFn: () => getTeacherDashboard(currentUser?.id ?? ""),
@@ -49,6 +50,7 @@ function TeacherDashboard() {
       file: draftFile,
     }),
     onSuccess: async (draft) => {
+      setPublicationNotice("");
       setDraftTitle("");
       setMinimumPassPercent(50);
       setDraftNotes("");
@@ -67,6 +69,7 @@ function TeacherDashboard() {
     onSuccess: async (draft) => {
       setInstructions("");
       setSelectedDraftId(draft.draft_id);
+      setPublicationNotice(draft.status === "accepted" ? draft.publication_message ?? `${draft.kind === "lesson" ? "Lesson" : "Assessment"} published successfully.` : "");
       await queryClient.invalidateQueries({ queryKey: ["teacher-dashboard", currentUser?.id] });
     },
   });
@@ -192,6 +195,7 @@ function TeacherDashboard() {
               onDecision={(decision) => decideDraft.mutate(decision)}
               deciding={decideDraft.isPending}
               error={decideDraft.isError ? decideDraft.error.message : undefined}
+              success={publicationNotice}
             />
           ) : (
             <div className="grid min-h-72 place-items-center rounded-xl bg-muted/30 px-4 text-center text-sm text-muted-foreground">
@@ -212,6 +216,7 @@ function DraftPreview({
   onDecision,
   deciding,
   error,
+  success,
 }: {
   draft: ContentDraft;
   instructions: string;
@@ -219,6 +224,7 @@ function DraftPreview({
   onDecision: (decision: "accept" | "reject" | "request_changes") => void;
   deciding: boolean;
   error?: string;
+  success?: string;
 }) {
   const content = draft.generated_content;
   const statusTone = draft.status === "accepted" ? "bg-emerald-500/10 text-emerald-700" : draft.status === "rejected" ? "bg-destructive/10 text-destructive" : "bg-gold/10 text-gold";
@@ -318,6 +324,7 @@ function DraftPreview({
         </Button>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {success && <p className="rounded-xl border border-emerald-600/25 bg-emerald-500/10 p-3 text-sm text-emerald-700" role="status">{success}</p>}
     </div>
   );
 }
