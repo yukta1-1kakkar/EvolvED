@@ -162,7 +162,56 @@ def test_pdf_article_text_builds_teaching_lesson_not_author_metadata():
     assert preview["estimated_duration"] >= 20
     assert preview["sections"]
     assert "Corresponding author" not in preview["summary"]
-    assert "teachable lesson" in preview["summary"]
+    assert "This lesson explains" in preview["summary"]
+
+
+def test_ieee_paper_builds_conceptual_lesson_instead_of_front_matter():
+    source_text = """IEEE TRANSACTIONS ON NEURAL NETWORKS AND LEARNING SYSTEMS, VOL. X, AUGUST 202X
+Learning to Predict Gradients for Semi-Supervised Continual Learning
+Yan Luo, Yongkang Wong, Member, IEEE, Mohan Kankanhalli, Fellow, IEEE
+Abstract—A key challenge for machine intelligence is to learn new visual concepts without forgetting previously acquired knowledge.
+There is a gap between continual learning and human learning because existing methods assume known labels.
+Continual learning models can suffer from catastrophic forgetting while learning new tasks.
+Semi-supervised continual learning uses labeled and unlabeled data, and the unlabeled classes may be unknown.
+The authors propose a gradient learner trained on labeled data to predict pseudo gradients for unlabeled data.
+The method maps learned features to gradients and uses a fitness loss to train the gradient learner.
+Predicted gradients allow unlabeled samples to update an existing gradient-based continual learning model without pseudo labels.
+Experiments evaluate classification accuracy, backward transfer, and forward transfer across several benchmarks.
+The reported results show improved average accuracy and backward transfer, indicating less catastrophic forgetting.
+Using more unrelated unlabeled data does not always improve performance, so the sampling trade-off matters.
+The code is available at https://github.com/luoyan407/grad_prediction.git."""
+
+    preview = _draft_preview(models.ContentDraftRequest(
+        leader_id="teacher",
+        kind="lesson",
+        title="gradpred tnnls",
+        source_material={"filename": "gradpred_tnnls.pdf", "content_type": "pdf", "text": source_text},
+    ))
+
+    assert preview["title"] == "Learning to Predict Gradients for Semi-Supervised Continual Learning"
+    assert len(preview["sections"]) >= 4
+    assert preview["sections"][0]["title"] == "The problem and why it matters"
+    rendered = " ".join([preview["summary"], *preview["learning_objectives"], *(section["title"] for section in preview["sections"])]).lower()
+    assert "ieee transactions" not in rendered
+    assert "the code is available" not in rendered
+    assert "using evidence from the uploaded source" not in rendered
+    assert "proposed approach" in rendered
+    assert "evidence and main findings" in rendered
+    assert "how the approach works" in rendered
+    assert "limitations and practical meaning" in rendered
+
+    healed = _healed_draft_preview("lesson", "gradpred tnnls", {
+        "filename": "gradpred_tnnls.pdf",
+        "content_type": "pdf",
+        "text": source_text,
+    }, {
+        "title": "gradpred tnnls",
+        "summary": "This draft turns the uploaded source into a teachable lesson on gradpred tnnls.",
+        "learning_objectives": ["Explain ieee transactions using evidence from the uploaded source."],
+        "sections": [{"title": "Ieee Transactions On Neural Networks And Learning"}],
+    })
+    assert healed["title"] == "Learning to Predict Gradients for Semi-Supervised Continual Learning"
+    assert healed.get("healed_from_source") is True
 
 
 def test_request_change_regenerates_preview_with_instruction():
@@ -281,29 +330,18 @@ def test_old_match_assessment_heals_from_source():
     assert "best matches" not in question_text.lower()
 
 
-def test_module_leader_generation_runs_both_agents(monkeypatch):
+def test_module_leader_generation_uses_one_bounded_source_grounded_call(monkeypatch):
     calls = []
 
-    async def analyze(title, kind, source_material):
-        calls.append("source")
-        return {
-            "readable": True,
-            "source_summary": "Vectors have magnitude and direction.",
-            "concepts": [{"name": "Vectors", "evidence": "magnitude and direction", "importance": "core"}] * 3,
-            "learning_objectives": ["Explain vectors.", "Apply vector addition."],
-            "difficulty": "Foundational",
-            "warnings": [],
-        }
-
-    async def review(title, kind, analysis, draft):
+    async def review(title, kind, analysis, draft, source_material):
         calls.append("quality")
+        assert "Vectors have magnitude and direction" in source_material["text"]
         return {
             **draft,
-            "agent_workflow": ["Source Analysis Agent", "Quality Review Agent"],
+            "agent_workflow": ["Source-Grounded Generation Agent", "Quality Review Contract"],
             "quality_review": {"status": "passed"},
         }
 
-    monkeypatch.setattr("app.core.repository.langgraph_nodes.source_analysis_agent", analyze)
     monkeypatch.setattr("app.core.repository.langgraph_nodes.quality_review_agent", review)
     result = asyncio.run(
         _generate_draft_preview(
@@ -316,7 +354,7 @@ def test_module_leader_generation_runs_both_agents(monkeypatch):
         )
     )
 
-    assert calls == ["source", "quality"]
+    assert calls == ["quality"]
     assert result["quality_review"]["status"] == "passed"
     assert result["source_analysis"]["learning_objectives"]
 
@@ -347,9 +385,10 @@ if __name__ == "__main__":
     test_stale_blocked_pdf_draft_heals_from_readable_source()
     test_noisy_pdf_text_gets_review_lesson_instead_of_blocked_preview()
     test_pdf_article_text_builds_teaching_lesson_not_author_metadata()
+    test_ieee_paper_builds_conceptual_lesson_instead_of_front_matter()
     test_request_change_regenerates_preview_with_instruction()
     test_assessment_uses_uploaded_source_concepts()
     test_assessment_blocks_unreadable_scaffold_instead_of_fake_questions()
     test_assessment_asks_direct_questions_for_policy_document()
     test_old_match_assessment_heals_from_source()
-    test_module_leader_generation_runs_both_agents(MonkeyPatch())
+    test_module_leader_generation_uses_one_bounded_source_grounded_call(MonkeyPatch())

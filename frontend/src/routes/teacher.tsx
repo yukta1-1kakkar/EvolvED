@@ -242,7 +242,8 @@ function DraftPreview({
           <span className="rounded-full bg-muted px-2.5 py-1 text-xs capitalize text-muted-foreground">{draft.kind}</span>
           {typeof draft.source_material.filename === "string" && <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">{draft.source_material.filename}</span>}
         </div>
-        <h3 className="font-display text-2xl">{draft.title}</h3>
+        <h3 className="font-display text-2xl">{textValue(content.title) || draft.title}</h3>
+        {textValue(content.title) && textValue(content.title) !== draft.title && <p className="mt-1 text-xs text-muted-foreground">Draft label: {draft.title}</p>}
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{unreadableSource ? readableMessage : summary || "Generated from uploaded source material."}</p>
         {unreadableSource && (
           <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
@@ -257,7 +258,7 @@ function DraftPreview({
 
       {!unreadableSource && draft.kind === "lesson" && (
         <>
-          <Panel title="Learning objectives" items={arrayValue(content.learning_objectives).map(String)} />
+          <Panel title="What learners will be able to do" items={arrayValue(content.learning_objectives).map(String)} />
           <div className="grid gap-3">
             {sections.map((section, index) => {
               const record = recordValue(section);
@@ -265,7 +266,9 @@ function DraftPreview({
                 <article key={index} className="rounded-xl border border-border bg-background/70 p-4">
                   <h4 className="font-medium">{textValue(record.title) || `Section ${index + 1}`}</h4>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground">{textValue(record.summary)}</p>
-                  <Panel title="Subsections" items={arrayValue(record.subsections).map(String)} compact />
+                  <Panel title="Key points" items={arrayValue(record.subsections).map(String)} compact />
+                  <Panel title="Examples" items={arrayValue(record.examples).map(String)} compact />
+                  <Panel title="Checks for understanding" items={arrayValue(record.checks_for_understanding).map(String)} compact />
                 </article>
               );
             })}

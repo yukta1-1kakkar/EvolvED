@@ -368,9 +368,23 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
           <h3 className="font-display text-2xl">{stringValue(section.title) || `Section ${index + 1}`}</h3>
           <p className="mt-3 text-base leading-8 text-muted-foreground">{stringValue(section.summary)}</p>
           {recordsFrom(section.subsections).length > 0 && (
-            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted-foreground">
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted-foreground" aria-label="Key points">
               {recordsFrom(section.subsections).map((item, itemIndex) => <li key={itemIndex}>{String(item)}</li>)}
             </ul>
+          )}
+          {recordsFrom(section.examples).length > 0 && (
+            <div className="mt-5 rounded-2xl bg-muted/35 p-4">
+              <h4 className="text-sm font-medium">Example</h4>
+              {recordsFrom(section.examples).map((item, itemIndex) => <p key={itemIndex} className="mt-2 text-sm leading-6 text-muted-foreground">{String(item)}</p>)}
+            </div>
+          )}
+          {recordsFrom(section.checks_for_understanding).length > 0 && (
+            <div className="mt-5">
+              <h4 className="text-sm font-medium">Check your understanding</h4>
+              <ul className="mt-2 list-disc space-y-2 pl-6 text-sm text-muted-foreground">
+                {recordsFrom(section.checks_for_understanding).map((item, itemIndex) => <li key={itemIndex}>{String(item)}</li>)}
+              </ul>
+            </div>
           )}
         </article>
       ))}
@@ -437,9 +451,23 @@ function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives
           <h3 className="font-display text-2xl">{title}</h3>
           <p className="mt-3 text-base leading-8 text-muted-foreground">{stringValue(section.summary)}</p>
           {recordsFrom(section.subsections).length > 0 && (
-            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted-foreground">
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted-foreground" aria-label="Key points">
               {recordsFrom(section.subsections).map((item, itemIndex) => <li key={itemIndex}>{String(item)}</li>)}
             </ul>
+          )}
+          {recordsFrom(section.examples).length > 0 && (
+            <div className="mt-5 rounded-2xl bg-muted/35 p-4">
+              <h4 className="text-sm font-medium">Example</h4>
+              {recordsFrom(section.examples).map((item, itemIndex) => <p key={itemIndex} className="mt-2 text-sm leading-6 text-muted-foreground">{String(item)}</p>)}
+            </div>
+          )}
+          {recordsFrom(section.checks_for_understanding).length > 0 && (
+            <div className="mt-5">
+              <h4 className="text-sm font-medium">Check your understanding</h4>
+              <ul className="mt-2 list-disc space-y-2 pl-6 text-sm text-muted-foreground">
+                {recordsFrom(section.checks_for_understanding).map((item, itemIndex) => <li key={itemIndex}>{String(item)}</li>)}
+              </ul>
+            </div>
           )}
         </article>
       ),

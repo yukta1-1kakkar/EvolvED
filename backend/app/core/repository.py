@@ -927,7 +927,7 @@ class AsyncRepository:
                     leader_id=leader.id,
                     class_id=class_row.id if class_row else None,
                     kind=req.kind,
-                    title=req.title.strip(),
+                    title=str(generated_content.get("title") or req.title).strip(),
                     source_material=req.source_material,
                     generated_content=generated_content,
                     status="draft",
@@ -942,7 +942,8 @@ class AsyncRepository:
         except Exception as exc:
             logger.warning("Database draft create unavailable; storing local draft: %s: %r", type(exc).__name__, exc)
             draft_id = str(uuid4())
-            draft = {"draft_id": draft_id, "leader_id": req.leader_id, "class_id": req.class_id, "kind": req.kind, "title": req.title.strip(), "source_material": req.source_material, "generated_content": generated_content or await _generate_draft_preview(req), "status": "draft", "approval": {}}
+            generated_content = generated_content or await _generate_draft_preview(req)
+            draft = {"draft_id": draft_id, "leader_id": req.leader_id, "class_id": req.class_id, "kind": req.kind, "title": str(generated_content.get("title") or req.title).strip(), "source_material": req.source_material, "generated_content": generated_content, "status": "draft", "approval": {}}
             _LOCAL_DRAFTS[draft_id] = draft
             return _local_draft_response(draft)
 
@@ -1388,7 +1389,7 @@ def _student_alert(draft: db_models.ContentDraft, class_row: db_models.ClassGrou
         title=draft.title,
         draft_id=draft.draft_id,
         message=f"{leader_name} published a new {kind} in {class_name}: {draft.title}",
-        published_content=_student_published_content(kind, draft.generated_content or {}, learner),
+        published_content=_student_published_content(kind, _healed_draft_preview(kind, draft.title, draft.source_material or {}, draft.generated_content or {}), learner),
         completed=completion is not None,
         completed_at=_iso(completion.completed_at) if completion else None,
         created_at=_iso(draft.updated_at or draft.created_at),
@@ -1408,7 +1409,7 @@ def _local_student_alert(draft: Dict[str, Any], class_row: Dict[str, Any] | None
         title=title,
         draft_id=str(draft.get("draft_id") or ""),
         message=f"Module leader published a new {kind} in {class_name}: {title}",
-        published_content=_student_published_content(kind, draft.get("generated_content") or {}, learner),
+        published_content=_student_published_content(kind, _healed_draft_preview(kind, title, draft.get("source_material") or {}, draft.get("generated_content") or {}), learner),
         completed=completion is not None,
         completed_at=_iso(completion.get("completed_at")) if completion else None,
         created_at=_iso((draft.get("approval") or {}).get("decided_at")),
@@ -1701,18 +1702,19 @@ def _draft_preview(req: models.ContentDraftRequest) -> Dict[str, Any]:
 
 
 async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, Any]:
-    """Run the Module Leader agent workflow, with a dependable local fallback."""
+    """Generate once from the full source, with a dependable local fallback."""
     fallback = _draft_preview(req)
     if fallback.get("needs_readable_source"):
         return fallback
     try:
-        analysis = await langgraph_nodes.source_analysis_agent(req.title, req.kind, req.source_material or {})
-        if not analysis.get("readable"):
-            return {
-                **fallback,
-                "source_analysis": analysis,
-            }
-        reviewed = _ensure_delivery_support(await langgraph_nodes.quality_review_agent(req.title, req.kind, analysis, fallback), req.kind)
+        analysis = _local_source_analysis(req.title, req.kind, req.source_material or {}, fallback)
+        reviewed = _ensure_delivery_support(
+            await asyncio.wait_for(
+                langgraph_nodes.quality_review_agent(req.title, req.kind, analysis, fallback, req.source_material or {}),
+                timeout=100,
+            ),
+            req.kind,
+        )
         if req.kind == "assessment":
             reviewed["minimum_pass_percent"] = (req.source_material or {}).get("minimum_pass_percent", 50.0)
             reviewed["minimum_pass_score"] = _passing_score_from_materials(req.source_material or {}, reviewed)
@@ -1725,7 +1727,7 @@ async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, 
         logger.warning("Module Leader agent workflow unavailable; using source-grounded fallback: %s: %r", type(exc).__name__, exc)
         return {
             **fallback,
-            "agent_workflow": ["Source Analysis Agent", "Quality Review Agent"],
+            "agent_workflow": ["Source-Grounded Generation Agent", "Quality Review Contract"],
             "quality_review": {
                 "status": "fallback",
                 "reason": "AI review was unavailable, so EvolvED used its source-grounded generator.",
@@ -1785,7 +1787,19 @@ def _draft_needs_healing(generated_content: Dict[str, Any]) -> bool:
     summary = str(generated_content.get("summary") or "")
     questions = generated_content.get("questions") if isinstance(generated_content.get("questions"), list) else []
     question_text = " ".join(str((item or {}).get("question", "")) + " " + " ".join(map(str, (item or {}).get("options", []))) for item in questions if isinstance(item, dict))
-    return bool(summary and _looks_unreadable_source(summary)) or _looks_like_fallback_assessment(question_text) or _looks_like_match_assessment(question_text)
+    objectives = " ".join(map(str, generated_content.get("learning_objectives") or [])).lower()
+    section_titles = " ".join(
+        str(item.get("title") or "")
+        for item in generated_content.get("sections") or []
+        if isinstance(item, dict)
+    ).lower()
+    weak_lesson = (
+        "this draft turns the uploaded source into a teachable lesson" in summary.lower()
+        or "using evidence from the uploaded source" in objectives
+        or "ieee transactions" in section_titles
+        or "the code is available at" in section_titles
+    )
+    return weak_lesson or bool(summary and _looks_unreadable_source(summary)) or _looks_like_fallback_assessment(question_text) or _looks_like_match_assessment(question_text)
 
 
 def _draft_response(row: db_models.ContentDraft, class_id: str | None = None) -> models.ContentDraftResponse:
@@ -1821,41 +1835,123 @@ def _local_draft_response(row: Dict[str, Any]) -> models.ContentDraftResponse:
 
 
 def _lesson_preview(title: str, source_text: str) -> Dict[str, Any]:
-    paragraphs = _source_paragraphs(source_text)
-    source_sentences = _source_sentences(_teaching_source_text(source_text))
-    if len(paragraphs) < 3 and len(source_sentences) >= 3:
-        paragraphs = source_sentences
-    sections = [
-        {
-            "title": _section_title(paragraph, index),
-            "summary": _teaching_summary(paragraph),
-            "subsections": _source_sentences(paragraph)[:3],
-            "examples": [f"Source example: {_compact(paragraph, 32)}"],
-            "checks_for_understanding": [
-                f"What problem does {_section_title(paragraph, index).lower()} help solve?",
-                f"Name one practical use or limitation from this section.",
-            ],
-        }
-        for index, paragraph in enumerate(paragraphs[:5], 1)
-    ]
+    lesson_title = _source_title(title, source_text)
+    sections = _lesson_sections(source_text)
     return {
-        "title": title,
+        "title": lesson_title,
         "source_locked": True,
         "workflow": "draft_requires_module_leader_approval",
-        "learning_objectives": _learning_objectives(title, paragraphs),
-        "summary": _lesson_summary(title, paragraphs),
+        "learning_objectives": _learning_objectives(lesson_title, sections),
+        "summary": _lesson_summary(lesson_title, sections),
         "estimated_duration": max(20, min(60, len(sections) * 10)),
         "difficulty": "Intermediate" if len(source_text.split()) > 700 else "Foundational",
         "sections": sections,
         "generated_images": [],
-        "flowcharts": [{"title": f"{title} learning flow", "steps": [section["title"] for section in sections[:5]]}],
+        "flowcharts": [{"title": f"{lesson_title} learning flow", "steps": [section["title"] for section in sections[:6]]}],
         "accessibility_version": {
             "font": "readable sans-serif",
             "spacing": "increased",
-            "chunks": [section["title"] for section in sections[:5]],
+            "chunks": [section["title"] for section in sections[:6]],
         },
         "delivery_support": _delivery_support("lesson"),
     }
+
+
+def _lesson_sections(source_text: str) -> list[Dict[str, Any]]:
+    sentences = [sentence for sentence in _source_sentences(_teaching_source_text(source_text)) if _is_teaching_sentence(sentence)]
+    categories = [
+        ("The problem and why it matters", ("challenge", "problem", "gap", "forget", "motivation", "need")),
+        ("Key concepts and learning setting", ("continual learning", "semi-supervised", "labeled", "unlabeled", "task", "class")),
+        ("The proposed approach", ("propose", "method", "approach", "framework", "novel", "learner")),
+        ("How the approach works", ("gradient", "train", "update", "feature", "loss", "algorithm", "predict")),
+        ("Evidence and main findings", ("experiment", "evaluate", "result", "performance", "accuracy", "dataset", "metric")),
+        ("Limitations and practical meaning", ("limitation", "trade-off", "however", "does not", "future", "conclusion", "implies")),
+    ]
+    sections: list[Dict[str, Any]] = []
+    for title, keywords in categories:
+        ranked = sorted(
+            (
+                (sum(sentence.lower().count(keyword) for keyword in keywords), index, sentence)
+                for index, sentence in enumerate(sentences)
+            ),
+            key=lambda item: (-item[0], item[1]),
+        )
+        evidence = [sentence for score, _, sentence in ranked if score > 0][:2]
+        if not evidence:
+            continue
+        main_idea = _compact(" ".join(evidence[:2]), 75)
+        sections.append({
+            "title": title,
+            "summary": main_idea,
+            "subsections": [_compact(sentence, 32) for sentence in evidence],
+            "examples": [f"Use this source-backed case to explain the idea: {_compact(evidence[0], 36)}"],
+            "checks_for_understanding": _section_checks(title),
+            "source_evidence": [_compact(sentence, 40) for sentence in evidence],
+        })
+    if len(sections) >= 4:
+        return sections[:6]
+    for index, paragraph in enumerate(_source_paragraphs(source_text), 1):
+        if len(sections) >= 4:
+            break
+        summary = _teaching_summary(paragraph)
+        if not summary or any(summary in section["summary"] for section in sections):
+            continue
+        title = f"Core idea {index}"
+        sections.append({
+            "title": title,
+            "summary": summary,
+            "subsections": [_compact(item, 32) for item in _source_sentences(paragraph)[:3]],
+            "examples": [f"Source-backed example: {_compact(paragraph, 36)}"],
+            "checks_for_understanding": _section_checks(title),
+            "source_evidence": [_compact(paragraph, 40)],
+        })
+    return sections
+
+
+def _section_checks(title: str) -> list[str]:
+    lower = title.lower()
+    if "problem" in lower:
+        return ["What problem is the work trying to solve?", "Why do existing approaches struggle with this problem?"]
+    if "approach" in lower or "works" in lower:
+        return ["Describe the proposed approach in your own words.", "What information enters the method, and what does it produce?"]
+    if "evidence" in lower:
+        return ["Which results support the paper's main claim?", "What do the reported metrics actually measure?"]
+    if "limitation" in lower:
+        return ["When might the approach be less effective?", "What should a practitioner verify before applying it?"]
+    return [f"Explain {lower} in your own words.", "How does this idea connect to the next part of the lesson?"]
+
+
+def _source_title(fallback: str, source_text: str) -> str:
+    lines = [re.sub(r"\s+", " ", line).strip(" -") for line in source_text.splitlines() if line.strip()]
+    candidates: list[str] = []
+    for index, line in enumerate(lines[:30]):
+        lower = line.lower()
+        if _is_academic_metadata(line) or lower.startswith(("abstract", "index terms", "keywords")):
+            continue
+        words = line.split()
+        if 4 <= len(words) <= 18 and not line.endswith(('.', ':')):
+            candidates.append(line)
+            if index + 1 < len(lines):
+                next_line = lines[index + 1]
+                if 2 <= len(next_line.split()) <= 12 and not _is_academic_metadata(next_line):
+                    candidates.append(f"{line} {next_line}")
+    if candidates:
+        return max(candidates, key=lambda item: len(item.split()))
+    pre_abstract = re.split(r"\bAbstract\s*[—-]", " ".join(source_text.split()), maxsplit=1, flags=re.IGNORECASE)[0]
+    pre_abstract = re.sub(r"^.*?\b(?:20\dX|20\d{2})\s+\d+\s+", "", pre_abstract, flags=re.IGNORECASE)
+    pre_abstract = re.split(r"(?=\b[A-Z][a-z]+\s+[A-Z][a-z]+,\s+[A-Z])", pre_abstract, maxsplit=1)[0].strip(" ,.-")
+    if 4 <= len(pre_abstract.split()) <= 18:
+        return pre_abstract
+    return " ".join(str(fallback or "Lesson").replace("_", " ").split()).strip()
+
+
+def _is_academic_metadata(value: str) -> bool:
+    lower = value.lower()
+    return bool(
+        re.search(r"\b(ieee transactions|vol\.|member, ieee|fellow, ieee|university|institute|department|corresponding author|arxiv:)\b", lower)
+        or "@" in value
+        or re.fullmatch(r"\d+", value.strip())
+    )
 
 
 def _assessment_preview(title: str, source_text: str) -> Dict[str, Any]:
@@ -2067,28 +2163,56 @@ def _is_teaching_sentence(sentence: str) -> bool:
     lower = text.lower()
     if len(text) < 45:
         return False
-    if "@" in text or "corresponding author" in lower:
+    if "@" in text or "corresponding author" in lower or _is_academic_metadata(text):
         return False
     if re.search(r"\b(department|institute|university|college|ghaziabad|bengaluru)\b", lower) and len(text.split()) < 35:
         return False
-    if lower.startswith(("abstract", "keywords", "references", "copyright")):
+    if lower.startswith(("abstract", "keywords", "index terms", "references", "copyright", "the code is available", "figure ", "table ")):
         return False
     return True
 
 
-def _lesson_summary(title: str, paragraphs: list[str]) -> str:
-    if not paragraphs:
+def _lesson_summary(title: str, sections: list[Dict[str, Any]]) -> str:
+    if not sections:
         return f"Uploaded source material for {title} is ready for review."
-    focus = _compact(" ".join(paragraphs[:2]), 55)
-    return f"This draft turns the uploaded source into a teachable lesson on {title}. It introduces the core idea, explains the main mechanisms or concepts, and prepares learners to apply the material through examples, checks, and guided discussion. Source focus: {focus}"
+    sequence = ", ".join(str(section["title"]).lower() for section in sections[:4])
+    return f"This lesson explains {title}. You will learn {sequence}, then use the paper's evidence to judge what the approach achieves and where caution is needed."
 
 
-def _learning_objectives(title: str, paragraphs: list[str]) -> list[str]:
-    objectives = []
-    for index, paragraph in enumerate(paragraphs[:3], 1):
-        concept = _section_title(paragraph, index).lower()
-        objectives.append(f"Explain {concept} using evidence from the uploaded source.")
-    return objectives or [f"Explain {title} from the uploaded source.", f"Identify key vocabulary and applications from {title}.", f"Apply the uploaded material to a guided practice task."]
+def _learning_objectives(title: str, sections: list[Dict[str, Any]]) -> list[str]:
+    available = {str(section.get("title") or "").lower() for section in sections}
+    objectives = [f"Explain the central problem addressed by {title}."]
+    if any("approach" in item or "works" in item for item in available):
+        objectives.append("Describe the proposed method step by step, including its inputs and outputs.")
+    if any("evidence" in item for item in available):
+        objectives.append("Interpret the experimental evidence and the meaning of the reported metrics.")
+    if any("limitation" in item for item in available):
+        objectives.append("Identify the method's limitations and when its assumptions may not hold.")
+    return objectives[:4]
+
+
+def _local_source_analysis(title: str, kind: str, source_material: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    sections = fallback.get("sections") if isinstance(fallback.get("sections"), list) else []
+    concepts = [
+        {
+            "name": str(section.get("title") or f"Concept {index}"),
+            "evidence": _compact(str(section.get("summary") or ""), 35),
+            "importance": "Part of the source's teaching sequence",
+        }
+        for index, section in enumerate(sections, 1)
+        if isinstance(section, dict)
+    ]
+    source_text = _preview_source_text(source_material)
+    return {
+        "readable": not _looks_unreadable_source(source_text),
+        "source_summary": str(fallback.get("summary") or fallback.get("fairness") or ""),
+        "concepts": concepts,
+        "learning_objectives": fallback.get("learning_objectives") or [],
+        "difficulty": fallback.get("difficulty") or "Foundational",
+        "warnings": [str(source_material.get("extraction_warning"))] if source_material.get("extraction_warning") else [],
+        "draft_kind": kind,
+        "requested_title": title,
+    }
 
 
 def _teaching_summary(paragraph: str) -> str:

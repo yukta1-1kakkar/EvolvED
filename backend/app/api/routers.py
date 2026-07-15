@@ -484,10 +484,11 @@ def _decode_pdf_string(token: str) -> str:
 
 
 def _clean_extracted_text(value: str) -> str:
-    text = re.sub(r"(?<=\w)-\s+(?=\w)", "", value)
+    text = value.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"(?<=\w)-\s*\n\s*(?=\w)", "", text)
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+", " ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]
+    return "\n".join(line for line in lines if line).strip()
 
 
 def _is_readable_source_text(value: str) -> bool:

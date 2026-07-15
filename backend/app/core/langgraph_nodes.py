@@ -1762,6 +1762,7 @@ async def quality_review_agent(
     kind: str,
     source_analysis: Dict[str, Any],
     draft: Dict[str, Any],
+    source_material: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Generate and review a publishable Module Leader lesson or assessment."""
     if not source_analysis.get("readable"):
@@ -1778,20 +1779,27 @@ async def quality_review_agent(
         )
     else:
         contract = (
-            "Return a complete teachable lesson with title, source_locked=true, workflow, learning_objectives, summary, "
-            "estimated_duration, difficulty, and 3 to 7 sections. Every section needs title, summary, subsections, "
-            "examples, and checks_for_understanding. Include only source-grounded visual aids, flowcharts, an "
+            "Return a complete teachable lesson with a meaningful source-derived title, source_locked=true, workflow, "
+            "3 to 5 specific learning_objectives, a plain-language summary that tells learners what they will understand, "
+            "estimated_duration, difficulty, and 4 to 7 logically ordered sections. Cover prerequisites and key terms, "
+            "the problem, the proposed approach, a worked conceptual example, evidence/results, and limitations when "
+            "those are present in the source. Every section needs a descriptive title, a clear explanatory summary, "
+            "2 to 5 concise subsections, source-grounded examples, and checks_for_understanding. Include only source-grounded visual aids, flowcharts, an "
             "accessibility_version, and delivery_support for gentle, balanced, and fast paces plus visual, audio, and "
             "reading modalities. Use concrete, plain-language explanations and source-grounded examples in a logical "
-            "teaching sequence. Do not invent a generic image merely to fill a visual field."
+            "teaching sequence. Do not copy author names, journal headers, affiliations, code links, citation lists, or "
+            "raw abstract paragraphs into lesson sections. Do not say 'uploaded source' in objectives. Do not invent a "
+            "generic image merely to fill a visual field."
         )
+    source_text = str((source_material or {}).get("text") or "")[:45000]
     prompt = (
-        "You are the Quality Review Agent for a module leader. Rewrite and quality-check the candidate content for "
+        "You are the Source-Grounded Lesson and Assessment Agent for a module leader. Analyze the complete source, then "
+        "rewrite and quality-check the candidate content for "
         "accuracy, completeness, appropriate difficulty, accessibility, clarity, answer correctness, and source fidelity. "
         "Remove unsupported claims. Return JSON only, containing the corrected final content rather than a review report. "
         f"Required contract: {contract} Title: {title}. Kind: {kind}. "
         f"Source analysis: {json.dumps(source_analysis, ensure_ascii=False)}. "
-        f"Candidate draft: {json.dumps(draft, ensure_ascii=False)}"
+        f"Candidate draft: {json.dumps(draft, ensure_ascii=False)}. Full extracted source:\n{source_text}"
     )
     resp = await _call_layer(
         "content" if kind == "lesson" else "assessment",
@@ -1801,7 +1809,7 @@ async def quality_review_agent(
     )
     reviewed = _json_from_model_text(resp["choices"][0]["message"]["content"])
     if kind == "lesson":
-        if not isinstance(reviewed.get("sections"), list) or len(reviewed["sections"]) < 3:
+        if not isinstance(reviewed.get("sections"), list) or len(reviewed["sections"]) < 4:
             raise ValueError("Quality Review Agent returned an incomplete lesson")
         if not isinstance(reviewed.get("learning_objectives"), list) or len(reviewed["learning_objectives"]) < 2:
             raise ValueError("Quality Review Agent returned a lesson without sufficient objectives")
@@ -1820,10 +1828,10 @@ async def quality_review_agent(
                 raise ValueError("Quality Review Agent returned an invalid MCQ")
     return {
         **reviewed,
-        "title": title,
+        "title": str(reviewed.get("title") or title).strip(),
         "source_locked": True,
-        "workflow": "source_analysis_then_quality_review_requires_module_leader_approval",
-        "agent_workflow": ["Source Analysis Agent", "Quality Review Agent"],
+        "workflow": "source_grounded_generation_requires_module_leader_approval",
+        "agent_workflow": ["Source-Grounded Generation Agent", "Quality Review Contract"],
         "quality_review": {
             "status": "passed",
             "checks": ["accuracy", "completeness", "difficulty", "accessibility", "source_fidelity"],
