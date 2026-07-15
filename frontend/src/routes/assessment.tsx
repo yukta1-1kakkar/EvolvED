@@ -218,6 +218,7 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
     draftId: alert.draft_id,
     pageKey: currentQuestion ? `assessment-question-${pageIndex + 1}` : "assessment-intro",
     pageTitle: currentQuestion ? `Question ${pageIndex + 1}` : alert.title,
+    active: !submit.isPending && !submit.data,
   });
 
   useEffect(() => {
@@ -370,10 +371,11 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
 
 type ReaderMode = "standard" | "dyslexia" | "focus";
 
-function usePublishedAssessmentPageTimer({ learnerId, draftId, pageKey, pageTitle }: { learnerId: string; draftId: string; pageKey: string; pageTitle: string }) {
+function usePublishedAssessmentPageTimer({ learnerId, draftId, pageKey, pageTitle, active }: { learnerId: string; draftId: string; pageKey: string; pageTitle: string; active: boolean }) {
   const startedAtRef = useRef(Date.now());
 
   useEffect(() => {
+    if (!active) return;
     startedAtRef.current = Date.now();
     function flush() {
       const now = Date.now();
@@ -401,7 +403,7 @@ function usePublishedAssessmentPageTimer({ learnerId, draftId, pageKey, pageTitl
       window.removeEventListener("beforeunload", flush);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [draftId, learnerId, pageKey, pageTitle]);
+  }, [active, draftId, learnerId, pageKey, pageTitle]);
 }
 
 function ReaderControls({ mode, onChange }: { mode: ReaderMode; onChange: (mode: ReaderMode) => void }) {

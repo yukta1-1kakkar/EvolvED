@@ -846,6 +846,11 @@ class AsyncRepository:
                 )
                 if not draft:
                     raise ValueError("Published content was not found in one of your joined classes.")
+                if await session.scalar(sa.select(db_models.ContentCompletion.id).where(
+                    db_models.ContentCompletion.learner_id == learner.id,
+                    db_models.ContentCompletion.draft_id == draft.id,
+                )):
+                    return {"recorded": False, "seconds_spent": 0.0, "reason": "content_completed"}
                 timing = await session.scalar(
                     sa.select(db_models.ContentPageTiming).where(
                         db_models.ContentPageTiming.learner_id == learner.id,
@@ -888,6 +893,8 @@ class AsyncRepository:
             draft = _LOCAL_DRAFTS.get(req.draft_id)
             if not draft or draft.get("class_id") not in class_ids or draft.get("status") != "accepted":
                 raise ValueError("Published content was not found in one of your joined classes.")
+            if any(item["learner_id"] == req.learner_id and item["draft_id"] == req.draft_id for item in _LOCAL_COMPLETIONS):
+                return {"recorded": False, "seconds_spent": 0.0, "reason": "content_completed"}
             timing = next((item for item in _LOCAL_PAGE_TIMINGS if item["learner_id"] == req.learner_id and item["draft_id"] == req.draft_id and item["page_key"] == page_key), None)
             now = datetime.now(timezone.utc)
             if not timing:
@@ -1146,7 +1153,10 @@ class AsyncRepository:
         for draft in published:
             completion = completion_by_draft.get(draft.id)
             start = starts.get(f"published-start:{learner.learner_id}:{draft.draft_id}")
-            draft_timings = [item for item in page_timings if item.draft_id == draft.id]
+            draft_timings = _timings_before_completion(
+                [item for item in page_timings if item.draft_id == draft.id],
+                completion.completed_at if completion else None,
+            )
             duration = sum(float(item.seconds_spent or 0.0) for item in draft_timings) if draft_timings else None
             content_activity.append({
                 "draft_id": draft.draft_id,
@@ -1218,7 +1228,10 @@ class AsyncRepository:
             start = _LOCAL_SESSIONS.get((learner_id, f"published-start:{learner_id}:{draft['draft_id']}"))
             started_at = (start or {}).get("started_at")
             completed_at = (completion or {}).get("completed_at")
-            draft_timings = [item for item in page_timings if item["draft_id"] == draft["draft_id"]]
+            draft_timings = _timings_before_completion(
+                [item for item in page_timings if item["draft_id"] == draft["draft_id"]],
+                (completion or {}).get("completed_at"),
+            )
             duration = sum(float(item.get("seconds_spent") or 0.0) for item in draft_timings) if draft_timings else None
             content_activity.append({
                 "draft_id": draft["draft_id"],
@@ -1620,6 +1633,30 @@ def _rank_students(students: list[models.TeacherStudentSummary]) -> list[models.
 def _average(values: list[float]) -> float:
     clean = [float(value) for value in values if isinstance(value, (int, float))]
     return round(sum(clean) / len(clean), 3) if clean else 0.0
+
+
+def _timings_before_completion(timings: list[Any], completed_at: Any) -> list[Any]:
+    completion_time = _utc_time(completed_at)
+    if not completion_time:
+        return timings
+    valid = []
+    for timing in timings:
+        last_seen = timing.get("last_seen_at") if isinstance(timing, dict) else getattr(timing, "last_seen_at", None)
+        seen_time = _utc_time(last_seen)
+        if not seen_time or seen_time <= completion_time:
+            valid.append(timing)
+    return valid
+
+
+def _utc_time(value: Any) -> datetime | None:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def _adaptive_page_timing_summary(sessions: list[Any]) -> list[Dict[str, Any]]:

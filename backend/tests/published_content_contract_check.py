@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -66,6 +67,12 @@ def main() -> None:
     assert gentle["sections"][0]["presentation_variant"] == "guided_explanation"
     assert "Natural spoken explanation." in audio["audio_narration"]
     assert audio["learner_presentation"]["content_adapted"] is True
+    completed_at = datetime.now(timezone.utc)
+    valid_timings = repository._timings_before_completion([
+        {"seconds_spent": 66, "last_seen_at": completed_at - timedelta(seconds=1)},
+        {"seconds_spent": 480, "last_seen_at": completed_at + timedelta(minutes=8)},
+    ], completed_at)
+    assert [item["seconds_spent"] for item in valid_timings] == [66]
     assert repository._publication_details("lesson", "Biology", 2)["publication_message"] == "Lesson has been sent to all 2 students in Biology."
     print("published content personalization and delivery acknowledgement: ok")
 
