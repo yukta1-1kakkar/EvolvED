@@ -175,7 +175,7 @@ function TeacherDashboard() {
             </Button>
             {uploadDraft.isPending && (
               <p className="text-sm text-muted-foreground" role="status">
-                Source analysis and quality review run in sequence. Keep this page open; generation can take up to five minutes.
+                EvolvED is building a source-grounded teaching sequence. This usually takes about a minute; a structured source-based version returns if AI review is unavailable.
               </p>
             )}
             {uploadDraft.isError && <p className="text-sm text-destructive">{uploadDraft.error.message}</p>}

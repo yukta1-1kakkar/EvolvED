@@ -1711,7 +1711,7 @@ async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, 
         reviewed = _ensure_delivery_support(
             await asyncio.wait_for(
                 langgraph_nodes.quality_review_agent(req.title, req.kind, analysis, fallback, req.source_material or {}),
-                timeout=100,
+                timeout=70,
             ),
             req.kind,
         )
