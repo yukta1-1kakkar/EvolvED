@@ -1488,11 +1488,7 @@ def _completion_evaluation(kind: str, title: str, score: float) -> str:
 def _student_published_content(kind: str, content: Dict[str, Any], learner: db_models.Learner) -> Dict[str, Any]:
     safe_content = copy.deepcopy(content)
     if kind == "assessment":
-        safe_content["questions"] = [
-            {key: value for key, value in question.items() if key not in {"answer", "correct_answer", "explanation", "rubric"}}
-            if isinstance(question, dict) else question
-            for question in content.get("questions", [])
-        ]
+        safe_content["questions"] = [_student_assessment_question(question) for question in content.get("questions", []) if isinstance(question, dict)]
     pace = _normalized_pace(learner.pace_preference)
     modality = _normalized_modality(learner.preferred_modality)
     support = _ensure_delivery_support(safe_content, kind)["delivery_support"]
@@ -1513,6 +1509,14 @@ def _student_published_content(kind: str, content: Dict[str, Any], learner: db_m
     if kind == "lesson" and modality == "audio":
         safe_content["audio_narration"] = _lesson_narration(safe_content)
     return safe_content
+
+
+def _student_assessment_question(question: Dict[str, Any]) -> Dict[str, Any]:
+    safe = {key: copy.deepcopy(value) for key, value in question.items() if key not in {"answer", "correct_answer", "explanation", "rubric"}}
+    question_type = str(safe.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if question_type == "short_answer":
+        safe.pop("options", None)
+    return safe
 
 
 def _personalized_lesson_sections(value: Any, pace: str, modality: str) -> list[Dict[str, Any]]:

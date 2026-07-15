@@ -239,7 +239,7 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
     if (!currentQuestion || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     const prompt = textValue(currentQuestion.prompt);
-    const options = arrayValue(currentQuestion.options).map(String).join(". ");
+    const options = questionRequirements(currentQuestion).needsOptions ? arrayValue(currentQuestion.options).map(String).join(". ") : "";
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(`${prompt}. ${options}`));
   }
 
@@ -308,14 +308,14 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
                 Previous
               </button>
               <div className="text-sm text-muted-foreground">Answer this question to continue.</div>
-              <button type="button" disabled={!answerComplete(answers[currentQuestionId]) || isLastQuestion} onClick={() => setPageIndex((value) => Math.min(normalizedQuestions.length - 1, value + 1))} className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+              <button type="button" disabled={!publishedAnswerComplete(currentQuestion, answers[currentQuestionId]) || isLastQuestion} onClick={() => setPageIndex((value) => Math.min(normalizedQuestions.length - 1, value + 1))} className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
                 Next question <ArrowRight className="size-4" />
               </button>
             </div>
           </>
         )}
         {normalizedQuestions.length > 0 && (
-          <button type="button" onClick={submitQuiz} disabled={!isLastQuestion || normalizedQuestions.some((question, index) => !answerComplete(answers[questionId(question, index)])) || submit.isPending} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+          <button type="button" onClick={submitQuiz} disabled={!isLastQuestion || normalizedQuestions.some((question, index) => !publishedAnswerComplete(question, answers[questionId(question, index)])) || submit.isPending} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
             {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Submit published assessment
           </button>
         )}
@@ -358,7 +358,7 @@ function PublishedAssessment({ alert, assessments, learnerId }: { alert: Student
           );
         })}
         {questions.length > 0 && (
-          <button type="button" onClick={submitQuiz} disabled={questions.some((question, index) => !answerComplete(answers[questionId(question, index)])) || submit.isPending} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
+          <button type="button" onClick={submitQuiz} disabled={questions.some((question, index) => !publishedAnswerComplete(question, answers[questionId(question, index)])) || submit.isPending} className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background disabled:opacity-50">
             {submit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Submit published assessment
           </button>
         )}
@@ -522,14 +522,17 @@ function QuestionCard({
   onAnswer: (value: AssessmentAnswer) => void;
   onConfidence: (value: number) => void;
 }) {
-  const options = optionsFromQuestion(question);
+  const requirements = questionRequirements(question);
+  const options = requirements.needsOptions ? optionsFromQuestion(question) : [];
   const visual = visualFromQuestion(question);
-  const needsOption = answer.selected_options.length === 0;
+  const needsOption = requirements.needsOptions && answer.selected_options.length === 0;
   const answerLength = answer.long_answer.trim().length;
-  const needsLongAnswer = answerLength < MIN_LONG_ANSWER_CHARS;
+  const needsLongAnswer = requirements.needsLongAnswer && answerLength < MIN_LONG_ANSWER_CHARS;
 
   function toggleOption(option: string) {
-    const selectedOptions = answer.selected_options.includes(option)
+    const selectedOptions = requirements.singleOption
+      ? [option]
+      : answer.selected_options.includes(option)
       ? answer.selected_options.filter((item) => item !== option)
       : [...answer.selected_options, option];
     onAnswer({ ...answer, selected_options: selectedOptions });
@@ -537,7 +540,7 @@ function QuestionCard({
 
   return (
     <section className="rounded-3xl border border-border bg-card p-6">
-      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Question {index + 1} - Multiple select + long answer</div>
+      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Question {index + 1} - {requirements.label}</div>
       <MathText as="h2" className="mt-3 font-display text-2xl" text={textValue(question.prompt)} />
       {visual && (
         <figure className="mt-5">
@@ -552,8 +555,8 @@ function QuestionCard({
           )}
         </figure>
       )}
-      <div className="mt-5">
-        <div className="text-xs font-medium text-muted-foreground">Select all correct choices</div>
+      {requirements.needsOptions && <div className="mt-5">
+        <div className="text-xs font-medium text-muted-foreground">{requirements.singleOption ? "Select one answer" : "Select all correct choices"}</div>
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {options.map((option) => {
             const selected = answer.selected_options.includes(option);
@@ -572,15 +575,15 @@ function QuestionCard({
             );
           })}
         </div>
-      </div>
-      <label className="mt-5 block">
+      </div>}
+      {requirements.needsLongAnswer && <label className="mt-5 block">
         <textarea
           value={answer.long_answer}
           onChange={(event) => onAnswer({ ...answer, long_answer: event.target.value })}
           className="mt-2 min-h-36 w-full rounded-2xl border border-input bg-background p-4 text-base leading-7 outline-none focus:border-plum"
           placeholder="Write your answer and reasoning"
         />
-      </label>
+      </label>}
       {(needsOption || needsLongAnswer) && (
         <p className="mt-2 text-xs text-muted-foreground">
           {needsOption ? "Select at least one choice. " : ""}
@@ -606,13 +609,26 @@ function answerComplete(answer: AssessmentAnswer | undefined) {
   return Boolean(answer && answer.selected_options.length > 0 && answer.long_answer.trim().length >= MIN_LONG_ANSWER_CHARS);
 }
 
+function publishedAnswerComplete(question: ApiRecord, answer: AssessmentAnswer | undefined) {
+  if (!answer) return false;
+  const requirements = questionRequirements(question);
+  return (!requirements.needsOptions || answer.selected_options.length > 0)
+    && (!requirements.needsLongAnswer || answer.long_answer.trim().length >= MIN_LONG_ANSWER_CHARS);
+}
+
+function questionRequirements(question: ApiRecord) {
+  const type = textValue(question.type).trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  if (type === "short_answer") return { needsOptions: false, needsLongAnswer: true, singleOption: false, label: "Short answer" };
+  if (type === "mcq" || type === "multiple_choice") return { needsOptions: true, needsLongAnswer: false, singleOption: true, label: "Multiple choice" };
+  return { needsOptions: true, needsLongAnswer: true, singleOption: false, label: "Multiple select + long answer" };
+}
+
 function questionId(question: ApiRecord, index: number) {
   return textValue(question.id) || `question-${index + 1}`;
 }
 
 function optionsFromQuestion(question: ApiRecord) {
-  const options = arrayValue(question.options).map(String).filter(Boolean);
-  return options.length > 0 ? options : ["I can identify the concept", "I can use the diagram", "I can explain the reasoning", "I need to review this"];
+  return arrayValue(question.options).map(String).filter(Boolean);
 }
 
 function visualFromQuestion(question: ApiRecord): { imageUrl?: string; title?: string; description?: string; data?: unknown; isVector?: boolean } | null {
@@ -631,7 +647,7 @@ function visualFromQuestion(question: ApiRecord): { imageUrl?: string; title?: s
 
 function vectorVisualFromQuestionText(question: ApiRecord) {
   const prompt = textValue(question.prompt);
-  const options = optionsFromQuestion(question).join(" ");
+  const options = questionRequirements(question).needsOptions ? optionsFromQuestion(question).join(" ") : "";
   const text = `${prompt} ${options}`;
   const coordinateCount = text.match(/\((-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\)/g)?.length ?? 0;
   if (coordinateCount < 2 || !/\b(diagram|arrow|vector)\b/i.test(text) || !isVectorVisualText(text)) return null;

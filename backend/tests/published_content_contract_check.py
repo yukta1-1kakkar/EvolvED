@@ -21,6 +21,12 @@ def main() -> None:
             "answer": "A source-grounded answer",
             "explanation": "Private evaluation",
             "options": ["A", "B", "C", "D"],
+        }, {
+            "id": "q2",
+            "type": "short_answer",
+            "question": "Explain the source concept.",
+            "answer": "Private answer",
+            "options": ["This must not be shown", "Neither should this"],
         }],
     }, learner)
 
@@ -29,6 +35,8 @@ def main() -> None:
     assert published["learner_presentation"]["modality"] == "audio"
     assert "answer" not in published["questions"][0]
     assert "explanation" not in published["questions"][0]
+    assert "answer" not in published["questions"][1]
+    assert "options" not in published["questions"][1]
 
     lesson = {
         "estimated_duration": 20,

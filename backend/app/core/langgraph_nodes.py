@@ -1838,7 +1838,11 @@ async def quality_review_agent(
         for question in questions:
             if not isinstance(question, dict) or not question.get("question") or not question.get("answer") or not question.get("topic"):
                 raise ValueError("Quality Review Agent returned an invalid assessment question")
-            if question.get("type") == "mcq" and (
+            question_type = str(question.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+            question["type"] = question_type
+            if question_type == "short_answer":
+                question.pop("options", None)
+            if question_type == "mcq" and (
                 not isinstance(question.get("options"), list)
                 or len(question["options"]) != 4
                 or question["answer"] not in question["options"]
