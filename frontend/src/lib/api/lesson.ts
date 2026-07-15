@@ -55,6 +55,6 @@ export function synthesizeLessonAudio(text: string) {
   return apiBlobRequest<ApiRecord>("/tts", {
     method: "POST",
     body: { text },
-    timeoutMs: 45000,
+    timeoutMs: 120000,
   });
 }

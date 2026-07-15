@@ -1790,8 +1790,10 @@ async def quality_review_agent(
             "2 to 5 concise subsections, at least one source-grounded example, and at least one check_for_understanding. "
             "Also give every section guided_explanation (slower, scaffolded, terminology unpacked), quick_takeaway "
             "(one concise but complete explanation), and spoken_explanation (natural narration without visual references). "
-            "These are alternate presentations of the same facts, not different learning outcomes. Include a flowchart "
-            "only when it genuinely explains a source process. Keep the complete JSON below 2,800 words. Use concrete, plain-language explanations and source-grounded examples in a logical "
+            "These are alternate presentations of the same facts, not different learning outcomes. Include 1 to 3 "
+            "source-specific flowcharts, process maps, or timelines, each with a title, short description, and 2 to 6 "
+            "ordered steps taken from relationships in the source. Never create decorative or generic filler visuals. "
+            "Keep the complete JSON below 2,800 words. Use concrete, plain-language explanations and source-grounded examples in a logical "
             "teaching sequence. Do not copy author names, journal headers, affiliations, code links, citation lists, or "
             "raw abstract paragraphs into lesson sections. Do not say 'uploaded source' in objectives. Do not invent a "
             "generic image merely to fill a visual field."
@@ -1831,6 +1833,17 @@ async def quality_review_agent(
             section["guided_explanation"] = str(section.get("guided_explanation") or summary).strip()
             section["quick_takeaway"] = str(section.get("quick_takeaway") or summary).strip()
             section["spoken_explanation"] = str(section.get("spoken_explanation") or section["guided_explanation"]).strip()
+        flowcharts = reviewed.get("flowcharts") if isinstance(reviewed.get("flowcharts"), list) else []
+        normalized_flowcharts = []
+        for flow in flowcharts:
+            if not isinstance(flow, dict) or not isinstance(flow.get("steps"), list):
+                continue
+            steps = [str(step).strip() for step in flow["steps"] if str(step).strip()][:6]
+            if len(steps) >= 2:
+                normalized_flowcharts.append({**flow, "steps": steps})
+        reviewed["flowcharts"] = normalized_flowcharts[:3]
+        if not reviewed["flowcharts"]:
+            raise ValueError("Quality Review Agent returned a lesson without a source-specific visual")
     else:
         questions = reviewed.get("questions")
         if not isinstance(questions, list) or len(questions) < 5:
@@ -1933,9 +1946,20 @@ def _draft_response_schema(kind: str) -> Dict[str, Any]:
             "estimated_duration": {"type": "integer"},
             "difficulty": {"type": "string"},
             "sections": {"type": "array", "items": section},
-            "flowcharts": {"type": "array", "items": {"type": "object"}},
+            "flowcharts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "steps": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 6},
+                    },
+                    "required": ["title", "description", "steps"],
+                },
+            },
         },
-        "required": ["title", "summary", "learning_objectives", "estimated_duration", "difficulty", "sections"],
+        "required": ["title", "summary", "learning_objectives", "estimated_duration", "difficulty", "sections", "flowcharts"],
     }
 
 

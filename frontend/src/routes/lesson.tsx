@@ -248,10 +248,11 @@ function PublishedLesson({ alert, lessons, learnerId }: { alert: StudentClassAle
   const presentation = recordArray(content.learner_presentation)[0] ?? {};
   const sections = recordArray(content.sections);
   const objectives = recordsFrom(content.learning_objectives).map(String);
-  const flowSteps = recordsFrom(recordArray(content.flowcharts)[0]?.steps).map(String);
+  const flowDiagrams = recordArray(content.flowcharts).filter((flow) => recordsFrom(flow.steps).length >= 2);
+  const flowSteps = recordsFrom(flowDiagrams[0]?.steps).map(String);
   const queryClient = useQueryClient();
   const [readerMode, setReaderMode] = useState<"standard" | "dyslexia" | "focus">(() => currentUser?.accessibilitySupport ? "dyslexia" : "standard");
-  const pages = useMemo(() => lessonPages(alert, sections, objectives, flowSteps), [alert, flowSteps, objectives, sections]);
+  const pages = useMemo(() => lessonPages(alert, sections, objectives, flowSteps, flowDiagrams), [alert, flowDiagrams, flowSteps, objectives, sections]);
   const [pageIndex, setPageIndex] = useState(0);
   const currentPage = pages[Math.min(pageIndex, pages.length - 1)];
   const isLastPage = pageIndex >= pages.length - 1;
@@ -414,7 +415,7 @@ type PublishedLessonPageItem = {
   render: () => ReactNode;
 };
 
-function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives: string[], flowSteps: string[]): PublishedLessonPageItem[] {
+function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives: string[], flowSteps: string[], flowDiagrams: ApiRecord[]): PublishedLessonPageItem[] {
   const visualFirst = stringValue((recordArray(alert.published_content.learner_presentation)[0] ?? {}).modality) === "visual";
   const pages: PublishedLessonPageItem[] = [
     {
@@ -434,11 +435,11 @@ function lessonPages(alert: StudentClassAlert, sections: ApiRecord[], objectives
       render: () => <AgentList icon={Target} title="Learning objectives" empty="" items={objectives.map((prompt) => ({ prompt }))} />,
     });
   }
-  if (visualFirst && flowSteps.length > 0) {
+  if (visualFirst && flowDiagrams.length > 0) {
     pages.push({
       key: "lesson-flow",
-      title: "Lesson flow",
-      render: () => <AgentList icon={GitBranch} title="Lesson flow" empty="" items={flowSteps.map((prompt) => ({ prompt }))} />,
+      title: "Visual explanation",
+      render: () => <VisualLesson visualElements={[]} conceptMaps={[]} flowDiagrams={flowDiagrams} />,
     });
   }
   sections.forEach((section, index) => {
@@ -1351,6 +1352,8 @@ function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?
     if (!narration || storedAudioUrl) return;
     let cancelled = false;
     let objectUrl = "";
+    const browserSpeechAvailable = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+    setUseBrowserNarration(browserSpeechAvailable);
 
     synthesizeLessonAudio(narration)
       .then((blob) => {
@@ -1364,7 +1367,6 @@ function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?
       })
       .catch((error) => {
         console.error("Lesson audio generation/playback failed", error);
-        const browserSpeechAvailable = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
         setUseBrowserNarration(browserSpeechAvailable);
         setStatus("");
       });
@@ -1449,14 +1451,14 @@ function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?
             />
           </div>
         ) : useBrowserNarration ? (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={playBrowserNarration} disabled={speaking} className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm text-background disabled:opacity-60">
-              <Play className="size-4" /> Play
+              <Play className="size-4" /> Listen now
             </button>
             <button type="button" onClick={pauseBrowserNarration} disabled={!speaking} className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm text-muted-foreground disabled:opacity-60">
               <Pause className="size-4" /> Pause
             </button>
-            {speaking && <span className="self-center text-sm text-muted-foreground">{status}</span>}
+            {status && <span className="self-center text-sm text-muted-foreground">{speaking ? status : "Browser narration ready while server audio prepares."}</span>}
           </div>
         ) : (
           status ? (

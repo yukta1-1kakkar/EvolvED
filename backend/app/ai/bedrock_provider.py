@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 from typing import Any, Dict, List
 
 import boto3
@@ -20,6 +21,24 @@ from app.ai.base import LLMProvider
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _speech_chunks(text: str, max_chars: int = 2600) -> list[str]:
+    sentences = re.split(r"(?<=[.!?])\s+", " ".join(str(text or "").split()))
+    chunks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        parts = [sentence[index:index + max_chars] for index in range(0, len(sentence), max_chars)] or [""]
+        for part in parts:
+            candidate = f"{current} {part}".strip()
+            if current and len(candidate) > max_chars:
+                chunks.append(current)
+                current = part
+            else:
+                current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 class BedrockProvider(LLMProvider):
@@ -192,21 +211,24 @@ class BedrockProvider(LLMProvider):
     async def synthesize_speech(self, text: str, model: str | None = None, voice: str = "Joanna") -> bytes:
         polly_voice = "Joanna" if voice in {"", "alloy", None} else voice
 
-        def _synthesize() -> bytes:
-            client = self._polly_client()
-            response = client.synthesize_speech(
-                Text=text,
-                OutputFormat="mp3",
-                VoiceId=polly_voice,
-                Engine=model or settings.polly_engine,
-            )
-            stream = response.get("AudioStream")
-            if not stream:
-                raise RuntimeError("Polly response did not include an audio stream")
-            return stream.read()
-
         try:
-            return await self._run_with_retries("Polly speech synthesis", _synthesize)
+            async def synthesize_chunk(chunk: str, index: int) -> bytes:
+                def invoke() -> bytes:
+                    response = self._polly_client().synthesize_speech(
+                        Text=chunk,
+                        OutputFormat="mp3",
+                        VoiceId=polly_voice,
+                        Engine=model or settings.polly_engine,
+                    )
+                    stream = response.get("AudioStream")
+                    if not stream:
+                        raise RuntimeError("Polly response did not include an audio stream")
+                    return stream.read()
+
+                return await self._run_with_retries(f"Polly speech synthesis chunk {index}", invoke)
+
+            chunks = _speech_chunks(text)
+            return b"".join(await asyncio.gather(*(synthesize_chunk(chunk, index) for index, chunk in enumerate(chunks, 1))))
         except (BotoCoreError, ClientError) as exc:
             raise RuntimeError(f"Polly speech synthesis failed: {exc}") from exc
         except RuntimeError as exc:
