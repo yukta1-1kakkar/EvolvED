@@ -28,11 +28,23 @@ async function proxyBackend(request: Request): Promise<Response> {
   headers.delete("content-length");
 
   try {
-    return await fetch(target, {
+    const response = await fetch(target, {
       method: request.method,
       headers,
       body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
       redirect: "manual",
+    });
+    const responseHeaders = new Headers(response.headers);
+    // Undici decompresses the body but preserves the upstream encoding/length.
+    // Relaying those headers makes clients treat valid JSON as truncated.
+    responseHeaders.delete("content-encoding");
+    responseHeaders.delete("content-length");
+    responseHeaders.delete("transfer-encoding");
+    responseHeaders.delete("connection");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
     });
   } catch (error) {
     console.error(`Backend proxy failed for ${target.origin}:`, error);
