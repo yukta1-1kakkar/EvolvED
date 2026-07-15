@@ -9,6 +9,26 @@ type ServerEntry = {
 
 let serverEntryPromise: Promise<ServerEntry> | undefined;
 
+async function proxyBackend(request: Request): Promise<Response> {
+  const hostPort = process.env.BACKEND_HOSTPORT?.trim();
+  if (!hostPort) {
+    return Response.json({ detail: "The backend service is not configured." }, { status: 503 });
+  }
+
+  const source = new URL(request.url);
+  const target = new URL(`${source.pathname.replace(/^\/api/, "") || "/"}${source.search}`, `http://${hostPort}`);
+  const headers = new Headers(request.headers);
+  headers.delete("host");
+  headers.delete("content-length");
+
+  return fetch(target, {
+    method: request.method,
+    headers,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
+    redirect: "manual",
+  });
+}
+
 async function getServerEntry(): Promise<ServerEntry> {
   if (!serverEntryPromise) {
     serverEntryPromise = import("@tanstack/react-start/server-entry").then(
@@ -40,6 +60,9 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      if (new URL(request.url).pathname.startsWith("/api/")) {
+        return await proxyBackend(request);
+      }
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);

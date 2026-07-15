@@ -1,0 +1,59 @@
+databases:
+  - name: evolved-staging-db
+    plan: free
+    databaseName: evolved_staging
+    user: evolved_staging
+
+services:
+  - type: web
+    name: evolved-api-staging
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m alembic -c alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /docs
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: DATABASE_URL
+        fromDatabase:
+          name: evolved-staging-db
+          property: connectionString
+      - key: DATABASE_USE_LOCAL_SQLITE
+        value: "false"
+      - key: ACTIVE_PROVIDER
+        value: bedrock
+      - key: AWS_REGION
+        value: us-east-1
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_SESSION_TOKEN
+        sync: false
+      - key: MODULE_LEADER_SIGNUP_CODE
+        sync: false
+      - key: CHROMA_TENANT
+        sync: false
+      - key: CHROMA_DATABASE
+        sync: false
+      - key: CHROMA_API_KEY
+        sync: false
+
+  - type: web
+    name: evolved-web-staging
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: BACKEND_HOSTPORT
+        fromService:
+          type: web
+          name: evolved-api-staging
+          property: hostport

@@ -37,3 +37,16 @@ EvolvED is a full-stack adaptive learning system for Linear Algebra and Calculus
 - Backend syntax check: `python -m compileall backend/app`.
 - Backend focused tests: run the files in `backend/tests/` with `pytest` after installing test dependencies.
 - Lifecycle integration: run `EVOLVED_E2E_BASE_URL=http://127.0.0.1:8000 python tests/integration_lifecycle.py` against a running backend.
+
+## Staging deployment
+
+`render.yaml` defines a free testing environment with a Node frontend, FastAPI backend, and managed PostgreSQL database. Create a Render Blueprint from this repository and provide the requested AWS, Chroma, and module-leader signup secrets in the dashboard.
+
+After deployment, verify both services through the public frontend URL:
+
+```sh
+cd frontend
+npm run check:staging -- https://evolved-web-staging.onrender.com
+```
+
+The free PostgreSQL instance expires after 30 days and generated media uses ephemeral service storage, so this configuration is for staging tests only.
