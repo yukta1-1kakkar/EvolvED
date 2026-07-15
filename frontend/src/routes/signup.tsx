@@ -9,9 +9,6 @@ import { AuthLayout } from "@/components/auth/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
-import { createLearnerProfile } from "@/lib/api";
-import { joinClass } from "@/lib/api/classroom";
-import type { AuthUser } from "@/lib/auth";
 import { ROUTES } from "@/lib/routes";
 
 const passwordRules = {
@@ -38,7 +35,7 @@ const signupSchema = z
     termsAccepted: z.boolean(),
   })
   .superRefine((values, context) => {
-    if (values.role !== "module_leader" && (!Number.isInteger(values.age) || values.age < 8 || values.age > 120)) {
+    if (values.role === "student" && (!Number.isInteger(values.age) || values.age < 8 || values.age > 120)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["age"],
@@ -77,12 +74,6 @@ const signupSchema = z
 ;
 
 type SignupFormValues = z.infer<typeof signupSchema>;
-type ClassStudentPreferences = {
-  educationLevel: string;
-  pacePreference: string;
-  preferredModality: string;
-  accessibilitySupport: boolean;
-};
 
 export const Route = createFileRoute("/signup")({
   head: () => ({
@@ -95,17 +86,9 @@ export const Route = createFileRoute("/signup")({
 });
 
 function SignupPage() {
-  const { signup, completeProfile, loading } = useAuth();
+  const { signup, loading } = useAuth();
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
-  const [classCode, setClassCode] = useState("");
-  const [classStudent, setClassStudent] = useState<AuthUser | null>(null);
-  const [classPreferences, setClassPreferences] = useState<ClassStudentPreferences>({
-    educationLevel: "",
-    pacePreference: "",
-    preferredModality: "",
-    accessibilitySupport: false,
-  });
 
   const {
     register,
@@ -131,7 +114,6 @@ function SignupPage() {
   const password = watch("password");
   const role = watch("role");
   const strength = useMemo(() => getPasswordStrength(password), [password]);
-  const classJoin = useClassJoinMutation(classStudent, classCode, classPreferences, completeProfile, navigate);
 
   async function onSubmit(values: SignupFormValues) {
     try {
@@ -139,7 +121,7 @@ function SignupPage() {
         fullName: values.fullName,
         email: values.email,
         password: values.password,
-        age: values.role !== "module_leader" ? values.age : undefined,
+        age: values.role === "student" ? values.age : undefined,
         role: values.role,
         moduleLeaderCode: values.role === "module_leader" ? values.moduleLeaderCode?.trim() : undefined,
       });
@@ -153,80 +135,6 @@ function SignupPage() {
         message: error instanceof Error ? error.message : "Signup failed. Please try again.",
       });
     }
-  }
-
-  if (classStudent) {
-    return (
-      <AuthLayout
-        eyebrow="Join your classroom"
-        title="Enter the class code from your module leader."
-        subtitle="This connects your new student account to the correct classroom."
-      >
-        <div>
-          <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Class student</div>
-          <h2 className="mt-3 font-display text-3xl leading-tight">Join a class</h2>
-          <p className="mt-2 text-sm text-muted-foreground">Signed up as {classStudent.fullName}. Add the class code to continue.</p>
-        </div>
-        <form
-          className="mt-7 space-y-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (classCode.trim()) classJoin.join();
-          }}
-        >
-          <Field label="Class code" htmlFor="classCode" error={classJoin.error}>
-            <Input
-              id="classCode"
-              value={classCode}
-              onChange={(event) => setClassCode(event.target.value.toUpperCase())}
-              placeholder="ABC123"
-              className="h-12 rounded-xl bg-background/70 px-4 text-lg tracking-[0.2em]"
-            />
-          </Field>
-          <Field label="Education level" htmlFor="classEducationLevel">
-            <Select id="classEducationLevel" value={classPreferences.educationLevel} onChange={(event) => setClassPreferences((current) => ({ ...current, educationLevel: event.target.value }))}>
-              <option value="">Choose a level</option>
-              <option>School</option>
-              <option>Undergraduate</option>
-              <option>Postgraduate</option>
-              <option>Professional or independent learner</option>
-            </Select>
-          </Field>
-          <Field label="Preferred pace" htmlFor="classPacePreference">
-            <Select id="classPacePreference" value={classPreferences.pacePreference} onChange={(event) => setClassPreferences((current) => ({ ...current, pacePreference: event.target.value }))}>
-              <option value="">Choose a pace</option>
-              <option value="gentle">Gentle and thorough</option>
-              <option value="balanced">Balanced</option>
-              <option value="fast">Fast and challenging</option>
-            </Select>
-          </Field>
-          <Field label="Preferred learning style" htmlFor="classPreferredModality">
-            <Select id="classPreferredModality" value={classPreferences.preferredModality} onChange={(event) => setClassPreferences((current) => ({ ...current, preferredModality: event.target.value }))}>
-              <option value="">Choose a style</option>
-              <option value="visual">Visual examples and diagrams</option>
-              <option value="audio">Audio learning</option>
-              <option value="reading">Detailed written explanations</option>
-            </Select>
-          </Field>
-          <label className="flex items-start gap-3 rounded-xl border border-border bg-background/45 p-3 text-sm text-muted-foreground">
-            <input type="checkbox" checked={classPreferences.accessibilitySupport} onChange={(event) => setClassPreferences((current) => ({ ...current, accessibilitySupport: event.target.checked }))} className="mt-0.5 size-4 accent-plum" />
-            <span>I would like dyslexia-aware spacing, chunked explanations, focus mode, and clearer step-by-step lessons.</span>
-          </label>
-          {classJoin.success && (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700">
-              <div className="flex items-center gap-2 font-medium">
-                <CheckCircle2 className="size-4" />
-                Joined {classJoin.success}
-              </div>
-            </div>
-          )}
-          <Button type="submit" className="h-12 w-full rounded-xl" disabled={!classCode.trim() || !classPreferences.educationLevel || !classPreferences.pacePreference || !classPreferences.preferredModality || classJoin.pending}>
-            {classJoin.pending ? <Loader2 className="animate-spin" /> : <UserRoundPlus />}
-            Join class and continue
-          </Button>
-        </form>
-      </AuthLayout>
-    );
   }
 
   return (
@@ -298,7 +206,7 @@ function SignupPage() {
           />
         </Field>
 
-        {role !== "module_leader" && (
+        {role === "student" && (
           <Field label="Age" htmlFor="age" error={errors.age?.message}>
             <Input
               id="age"
@@ -439,65 +347,6 @@ function RoleButton({
   );
 }
 
-function useClassJoinMutation(
-  classStudent: AuthUser | null,
-  classCode: string,
-  preferences: ClassStudentPreferences,
-  completeProfile: (learningTopic: string, learningProject?: string, preferences?: { accountType?: "individual_student" | "class_student"; educationLevel?: string; pacePreference?: string; preferredModality?: string; topicFamiliarity?: string; learningAvailability?: string; accessibilitySupport?: boolean }) => void,
-  navigate: ReturnType<typeof useNavigate>,
-) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  return {
-    pending,
-    error,
-    success,
-    join: async () => {
-      if (!classStudent || !classCode.trim()) return;
-      setPending(true);
-      setError("");
-      setSuccess("");
-      try {
-        const joinedClass = await joinClass(classStudent.id, classCode.trim());
-        await createLearnerProfile({
-          learner_id: classStudent.id,
-          age_group: getAgeGroup(classStudent.age),
-          education_level: preferences.educationLevel,
-          learning_goal: `Learn with ${joinedClass.name}.`,
-          pace_preference: preferences.pacePreference,
-          preferred_modality: [preferences.preferredModality],
-          topic: null,
-          topic_familiarity: null,
-          accessibility: {
-            class_student: true,
-            additional_support: preferences.accessibilitySupport,
-            dyslexia_support: preferences.accessibilitySupport,
-            chunked_explanations: preferences.accessibilitySupport,
-            readable_spacing: preferences.accessibilitySupport,
-            focus_mode_available: true,
-          },
-          learning_project: joinedClass.name,
-        });
-        completeProfile("", joinedClass.name, {
-          accountType: "class_student",
-          educationLevel: preferences.educationLevel,
-          pacePreference: preferences.pacePreference,
-          preferredModality: preferences.preferredModality,
-          accessibilitySupport: preferences.accessibilitySupport,
-        });
-        setSuccess(joinedClass.name);
-        await navigate({ to: ROUTES.ALERTS, replace: true });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not join this class. Check the code and try again.");
-      } finally {
-        setPending(false);
-      }
-    },
-  };
-}
-
 function signupSubtitle(role: SignupFormValues["role"]) {
   if (role === "module_leader") return "Create a module leader workspace for classes, approvals, and student analytics.";
   if (role === "class_student") return "Create a simple student account, then join a module leader's class with a code.";
@@ -520,13 +369,6 @@ function submitLabel(role: SignupFormValues["role"]) {
   if (role === "module_leader") return "Create teacher workspace";
   if (role === "class_student") return "Next: enter class code";
   return "Create learner profile";
-}
-
-function getAgeGroup(age: number | undefined) {
-  if (!age) return null;
-  if (age < 13) return "child";
-  if (age < 18) return "teen";
-  return "adult";
 }
 
 function Field({

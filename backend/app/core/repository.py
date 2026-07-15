@@ -73,7 +73,7 @@ class AsyncRepository:
         role = _normalized_role(req.role)
         if role == "module_leader":
             _require_module_leader_signup_code(req.module_leader_code)
-        if role == "student" and req.age is None:
+        if role == "student" and not class_student and req.age is None:
             raise ValueError("Student accounts require a learner age.")
         age_group = _age_group(req.age) if req.age is not None else None
         try:
@@ -100,10 +100,6 @@ class AsyncRepository:
                 learner = await session.scalar(sa.select(db_models.Learner).where(db_models.Learner.email == req.email.lower()))
                 if not learner or not learner.password_hash or not _verify_password(req.password, learner.password_hash):
                     raise ValueError("We could not verify those credentials.")
-                if _should_promote_pending_teacher(learner):
-                    learner.role = "module_leader"
-                    await session.commit()
-                    await session.refresh(learner)
         except Exception as exc:
             if isinstance(exc, ValueError):
                 raise
@@ -112,8 +108,6 @@ class AsyncRepository:
             learner = _LOCAL_LEARNERS.get(learner_id or "")
         if not learner or not learner.password_hash or not _verify_password(req.password, learner.password_hash):
             raise ValueError("We could not verify those credentials.")
-        if _should_promote_pending_teacher(learner):
-            learner.role = "module_leader"
         return _auth_user(learner)
 
     async def upsert_learner(self, profile: models.LearnerProfile) -> models.LearnerState:
@@ -1322,10 +1316,6 @@ def _auth_user(learner: db_models.Learner) -> models.AuthUser:
         accessibility=learner.accessibility or {},
         created_at=_iso(learner.created_at),
     )
-
-
-def _should_promote_pending_teacher(learner: db_models.Learner) -> bool:
-    return (learner.role or "student") == "student" and learner.age is None and learner.onboarding_status == "profile_pending"
 
 
 def _require_module_leader_signup_code(value: str | None) -> None:

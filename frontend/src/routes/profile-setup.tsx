@@ -27,7 +27,6 @@ type ProfileFormValues = z.infer<typeof profileSchema>;
 const classStudentProfileSchema = z.object({
   pacePreference: z.string().min(1, "Choose a learning pace."),
   preferredModality: z.string().min(1, "Choose a learning style."),
-  accessibility: z.boolean(),
 });
 type ClassStudentProfileValues = z.infer<typeof classStudentProfileSchema>;
 
@@ -57,7 +56,6 @@ function ClassStudentProfileSetupPage() {
     setError,
   } = useForm<ClassStudentProfileValues>({
     resolver: zodResolver(classStudentProfileSchema),
-    defaultValues: { accessibility: false },
   });
 
   useEffect(() => {
@@ -75,10 +73,6 @@ function ClassStudentProfileSetupPage() {
         preferred_modality: [values.preferredModality],
         accessibility: {
           class_student: true,
-          additional_support: values.accessibility,
-          dyslexia_support: values.accessibility,
-          chunked_explanations: values.accessibility,
-          readable_spacing: values.accessibility,
           focus_mode_available: true,
         },
       });
@@ -86,7 +80,6 @@ function ClassStudentProfileSetupPage() {
         accountType: "class_student",
         pacePreference: values.pacePreference,
         preferredModality: values.preferredModality,
-        accessibilitySupport: values.accessibility,
       });
       await navigate({ to: ROUTES.JOIN_CLASS, replace: true });
     } catch (error) {
@@ -119,10 +112,6 @@ function ClassStudentProfileSetupPage() {
             <option value="reading">Detailed written explanations</option>
           </Select>
         </Field>
-        <label className="flex items-start gap-3 rounded-xl border border-border bg-background/45 p-3 text-sm text-muted-foreground">
-          <input type="checkbox" className="mt-0.5 size-4 accent-plum" {...register("accessibility")} />
-          <span>I would like dyslexia-aware spacing, chunked explanations, focus mode, and clearer step-by-step lessons.</span>
-        </label>
         {errors.root?.message && (
           <div className="flex gap-2 rounded-xl border border-destructive/25 bg-destructive/8 px-3 py-2 text-sm text-destructive">
             <AlertCircle className="mt-0.5 size-4" />
