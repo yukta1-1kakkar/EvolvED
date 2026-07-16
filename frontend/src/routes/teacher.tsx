@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowDown, Check, FileText, GitBranch, Loader2, ShieldCheck, Upload, X } from "lucide-react";
+import { ArrowDown, Check, FileText, GitBranch, Loader2, ShieldAlert, ShieldCheck, Upload, X } from "lucide-react";
 import { useState } from "react";
 
 import { AppShell } from "@/components/app/AppShell";
@@ -94,6 +94,28 @@ function TeacherDashboard() {
         <div className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           {dashboard.error.message}
         </div>
+      )}
+
+      {(dashboard.data?.feedback_flags ?? []).length > 0 && (
+        <section className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-5" role="alert">
+          <div className="flex items-center gap-2 text-destructive">
+            <ShieldAlert className="size-5" />
+            <h2 className="font-display text-xl">Feedback safety alerts</h2>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">Inappropriate language was detected in student feedback. The displayed preview is redacted.</p>
+          <div className="mt-4 grid gap-3">
+            {(dashboard.data?.feedback_flags ?? []).map((flag) => (
+              <div key={flag.feedback_id} className="rounded-xl border border-destructive/20 bg-background/80 p-4 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium">{flag.student_name}</span>
+                  <span className="text-xs uppercase tracking-[0.14em] text-destructive">{flag.categories.join(", ").replaceAll("_", " ")}</span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">Topic: {flag.topic || "Not provided"}</p>
+                <p className="mt-2 leading-6 text-muted-foreground">{flag.preview || "The unsafe text was removed."}</p>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       <section className="mb-6 grid gap-4">

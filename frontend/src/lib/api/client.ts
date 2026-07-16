@@ -3,6 +3,8 @@ import type { ApiJson, ApiPrimitive } from "@/types/api";
 const DEFAULT_TIMEOUT_MS = 45000;
 const API_READY_TTL_MS = 5 * 60 * 1000;
 const API_WAKE_TIMEOUT_MS = 120000;
+const API_WAKE_ATTEMPTS = 20;
+const API_WAKE_RETRY_MS = 4000;
 const TRANSIENT_GATEWAY_STATUSES = new Set([502, 503, 504]);
 
 let apiReadyUntil = 0;
@@ -52,7 +54,7 @@ function buildUrl(path: string, query?: Record<string, ApiPrimitive | undefined>
 
 async function wakeApi() {
   let lastStatus = 0;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < API_WAKE_ATTEMPTS; attempt += 1) {
     const controller = new AbortController();
     const timeout = globalThis.setTimeout(() => controller.abort(), API_WAKE_TIMEOUT_MS);
     try {
@@ -65,13 +67,15 @@ async function wakeApi() {
         return;
       }
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError") && attempt === 2) {
+      if (!(error instanceof DOMException && error.name === "AbortError") && attempt === API_WAKE_ATTEMPTS - 1) {
         throw new ApiError("We could not reach EvolvED services. Please try again shortly.", 0);
       }
     } finally {
       globalThis.clearTimeout(timeout);
     }
-    if (attempt < 2) await new Promise((resolve) => globalThis.setTimeout(resolve, 1000 * (attempt + 1)));
+    if (attempt < API_WAKE_ATTEMPTS - 1) {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, API_WAKE_RETRY_MS));
+    }
   }
   throw new ApiError(
     "EvolvED services are still starting. Please try again shortly.",
@@ -133,6 +137,7 @@ export async function apiRequest<TResponse, TBody extends ApiJson | undefined = 
   try {
     const response = await fetch(buildUrl(path, options.query), {
       method: options.method ?? (options.body === undefined ? "GET" : "POST"),
+      credentials: "include",
       headers: {
         Accept: "application/json",
         ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -178,6 +183,7 @@ export async function apiBlobRequest<TBody extends ApiJson | undefined = undefin
   try {
     const response = await fetch(buildUrl(path, options.query), {
       method: options.method ?? (options.body === undefined ? "GET" : "POST"),
+      credentials: "include",
       headers: {
         Accept: "audio/*",
         ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -219,6 +225,7 @@ export async function apiFormRequest<TResponse>(
   try {
     const response = await fetch(buildUrl(path, options.query), {
       method: "POST",
+      credentials: "include",
       headers: { Accept: "application/json" },
       body: formData,
       signal: controller.signal,

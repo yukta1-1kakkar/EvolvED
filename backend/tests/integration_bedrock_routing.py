@@ -16,10 +16,8 @@ EXPECTED_ROUTES = {
     "planning": "us.anthropic.claude-sonnet-4-6",
     "draft": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     "content": "us.anthropic.claude-sonnet-4-6",
-    "quiz": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     "assessment": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     "adaptation": "us.anthropic.claude-sonnet-4-6",
-    "evolution": "us.anthropic.claude-sonnet-4-6",
     "tutor": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
 EXPECTED_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
@@ -70,7 +68,7 @@ async def main() -> None:
     langgraph_nodes._validate_blueprint(lesson)
 
     session_state = {"lesson": lesson.model_dump()}
-    quiz = await langgraph_nodes.quiz_agent(
+    quiz = await langgraph_nodes.assessment_agent(
         models.GenerateQuizRequest(learner_id=learner_id, session_id=lesson.lesson_id),
         session_state,
     )

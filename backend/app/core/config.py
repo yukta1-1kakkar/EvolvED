@@ -22,10 +22,8 @@ class Settings(BaseSettings):
     pedagogy_model: str = BEDROCK_REASONING_MODEL
     lesson_planning_model: str = BEDROCK_REASONING_MODEL
     content_generation_model: str = BEDROCK_REASONING_MODEL
-    quiz_model: str = BEDROCK_FAST_MODEL
     assessment_model: str = BEDROCK_FAST_MODEL
     adaptation_model: str = BEDROCK_REASONING_MODEL
-    evolution_model: str = BEDROCK_REASONING_MODEL
     fast_interaction_model: str = BEDROCK_FAST_MODEL
     embedding_model: str = BEDROCK_EMBEDDING_MODEL
     aws_region: str = "us-east-1"

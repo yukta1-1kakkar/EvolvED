@@ -199,7 +199,7 @@ function ClassInsightsPage() {
         <div className="overflow-x-auto">
           {lessonFilter && (
             <table className="w-full min-w-[680px] text-left text-sm">
-              <TableHead headings={["Name", "Lesson", "Completion", "Time"]} />
+              <TableHead headings={["Name", "Accessibility", "Lesson", "Completion", "Time"]} />
               <tbody>
                 {lessonRows.map((student) => (
                   <tr key={student.learner_id} className="border-b border-border/60">
@@ -210,6 +210,7 @@ function ClassInsightsPage() {
                         </Link>
                       ) : student.name}
                     </td>
+                    <td className="py-3 pr-4"><AccessibilityBadge settings={student.accessibility_settings} /></td>
                     <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.itemTitle}</td>
                     <td className="py-3 pr-4">{pct(student.completion)}</td>
                     <td className="hidden">
@@ -227,7 +228,7 @@ function ClassInsightsPage() {
           )}
           {assessmentFilter && (
             <table className="w-full min-w-[760px] text-left text-sm">
-              <TableHead headings={["Rank", "Name", "Assessment", "Pass / Fail", "Score", "Time"]} />
+              <TableHead headings={["Rank", "Name", "Accessibility", "Assessment", "Pass / Fail", "Score", "Time"]} />
               <tbody>
                 {assessmentRows.map((student) => (
                   <tr key={student.learner_id} className="border-b border-border/60">
@@ -246,6 +247,7 @@ function ClassInsightsPage() {
                         </Link>
                       ) : student.name}
                     </td>
+                    <td className="py-3 pr-4"><AccessibilityBadge settings={student.accessibility_settings} /></td>
                     <td className="max-w-64 truncate py-3 pr-4 text-muted-foreground">{student.itemTitle}</td>
                     <td className="py-3 pr-4">
                       {student.passed === null ? "â€”" : (
@@ -286,6 +288,21 @@ function InsightCard({ icon: Icon, label, value }: { icon: typeof Users; label: 
       </div>
       <div className="font-display text-2xl">{value}</div>
     </div>
+  );
+}
+
+function AccessibilityBadge({ settings }: { settings: Record<string, unknown> }) {
+  const labels = [
+    settings.dyslexia_support && "Dyslexia support",
+    settings.additional_support && "Additional support",
+    settings.chunked_explanations && "Chunked explanations",
+    settings.readable_spacing && "Readable spacing",
+    settings.focus_mode_available && "Focus mode available",
+  ].filter(Boolean) as string[];
+  return (
+    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs ${labels.length ? "bg-plum/10 text-plum" : "bg-muted text-muted-foreground"}`} title={labels.join(", ") || "No accessibility support selected"}>
+      {labels[0] ?? "Standard"}{labels.length > 1 ? ` +${labels.length - 1}` : ""}
+    </span>
   );
 }
 

@@ -43,6 +43,32 @@ class Learner(Base):
     sessions = relationship("Session", back_populates="learner")
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PeerFeedback(Base):
+    __tablename__ = "peer_feedback"
+    id = Column(Integer, primary_key=True, index=True)
+    feedback_id = Column(String(128), unique=True, index=True, nullable=False)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    lesson_id = Column(String(128), nullable=True)
+    topic = Column(String(256), nullable=False, default="")
+    rating = Column(Integer, nullable=False)
+    clarity = Column(Integer, nullable=False)
+    accessibility = Column(Integer, nullable=False)
+    modality_fit = Column(Integer, nullable=False)
+    comment = Column(Text, nullable=False, default="")
+    inappropriate = Column(Boolean, nullable=False, default=False)
+    moderation_flags = Column(JSON, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class LearningModule(Base):
     __tablename__ = "learning_modules"
     id = Column(Integer, primary_key=True, index=True)

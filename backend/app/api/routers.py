@@ -10,9 +10,10 @@ import io
 import json
 import xml.etree.ElementTree as ET
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from app.core import models, repository, langgraph_nodes
+from app.core.guardrails import moderation_flags, redact_inappropriate_content
 from app.core.audio_generator import generate_lesson_audio, synthesize_lesson_speech
 from app.core.media import MEDIA_ROOT
 from app.langgraph import graph as lg_graph
@@ -21,8 +22,39 @@ from pydantic import BaseModel
 from app.ai.factory import get_provider
 
 provider = get_provider()
-router = APIRouter()
 logger = logging.getLogger(__name__)
+SESSION_COOKIE = "evolved_session"
+
+
+async def _require_session(request: Request) -> None:
+    if request.url.path in {"/auth/signup", "/auth/login"}:
+        return
+    token = request.cookies.get(SESSION_COOKIE, "")
+    actor = await repository.AsyncRepository().authenticate_session(token) if token else None
+    if not actor:
+        raise HTTPException(status_code=401, detail="Your session has expired. Please sign in again.")
+    request.state.auth_user = actor
+
+
+def _require_identity(request: Request, expected_id: str, role: str | None = None) -> None:
+    actor = getattr(request.state, "auth_user", None) or {}
+    if actor.get("id") != expected_id or (role and actor.get("role") != role):
+        raise HTTPException(status_code=403, detail="You do not have permission to access this account data.")
+
+
+def _set_session_cookie(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=7 * 24 * 60 * 60,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        path="/",
+    )
+
+
+router = APIRouter(dependencies=[Depends(_require_session)])
 
 
 def _cleanup_media_assets(lesson: models.LessonBlueprint, assets: list[dict[str, Any]]) -> None:
@@ -99,7 +131,8 @@ async def _retry_database(operation, label: str, attempts: int = 3):
 
 def _normalize_generated_value(value: Any) -> Any:
     if isinstance(value, str):
-        return re.sub(r"\s{2,}", " ", re.sub(r"\s*\u2014\s*", ", ", value)).strip()
+        normalized = re.sub(r"\s{2,}", " ", re.sub(r"\s*\u2014\s*", ", ", value)).strip()
+        return redact_inappropriate_content(normalized)
     if isinstance(value, list):
         return [_normalize_generated_value(item) for item in value]
     if isinstance(value, dict):
@@ -111,6 +144,28 @@ def _normalize_generated_model(model):
     return model.__class__(**_normalize_generated_value(model.model_dump()))
 
 
+def _updated_learner_model(
+    current: dict[str, Any],
+    assessment: models.AssessmentResult,
+    adaptation: models.AdaptationDecision,
+) -> dict[str, Any]:
+    """Apply assessment signals to stored learner state; this is persistence logic, not an agent."""
+    updated = dict(current)
+    mastery = assessment.mastery_estimates
+    history = [*(updated.get("adaptation_history") or []), adaptation.adaptations]
+    scores = list(mastery.values())
+    updated.update({
+        "weak_topics": [key for key, value in mastery.items() if float(value) < 0.7],
+        "strong_topics": [key for key, value in mastery.items() if float(value) >= 0.8],
+        "confidence_score": sum(scores) / len(scores) if scores else updated.get("confidence_score", 0.0),
+        "engagement_score": min(1.0, float(updated.get("engagement_score", 0.0)) + 0.1),
+        "misconception_registry": assessment.misconceptions,
+        "adaptation_history": history[-10:],
+        "latest_adaptation": adaptation.adaptations,
+    })
+    return updated
+
+
 async def _learner_context(repo: repository.AsyncRepository, learner_id: str):
     try:
         return await _retry_database(lambda: repo.get_learner_context(learner_id), "learner context load", attempts=1)
@@ -120,23 +175,38 @@ async def _learner_context(repo: repository.AsyncRepository, learner_id: str):
 
 
 @router.post("/auth/signup", response_model=models.AuthUser)
-async def signup(req: models.SignupRequest):
+async def signup(req: models.SignupRequest, request: Request, response: Response):
     try:
-        return await repository.AsyncRepository().register_learner(req)
+        repo = repository.AsyncRepository()
+        user = await repo.register_learner(req)
+        _set_session_cookie(response, request, await repo.issue_auth_session(user))
+        return user
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/auth/login", response_model=models.AuthUser)
-async def login(req: models.LoginRequest):
+async def login(req: models.LoginRequest, request: Request, response: Response):
     try:
-        return await repository.AsyncRepository().authenticate(req)
+        repo = repository.AsyncRepository()
+        user = await repo.authenticate(req)
+        _set_session_cookie(response, request, await repo.issue_auth_session(user))
+        return user
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+@router.post("/auth/logout", status_code=204)
+async def logout(request: Request, response: Response):
+    token = request.cookies.get(SESSION_COOKIE, "")
+    if token:
+        await repository.AsyncRepository().revoke_auth_session(token)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+
+
 @router.post("/classes", response_model=models.ClassSummary)
-async def create_class(req: models.ClassCreateRequest):
+async def create_class(req: models.ClassCreateRequest, request: Request):
+    _require_identity(request, req.leader_id, "module_leader")
     try:
         return await repository.AsyncRepository().create_class(req)
     except ValueError as exc:
@@ -144,7 +214,8 @@ async def create_class(req: models.ClassCreateRequest):
 
 
 @router.post("/classes/join", response_model=models.ClassSummary)
-async def join_class(req: models.JoinClassRequest):
+async def join_class(req: models.JoinClassRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     try:
         return await repository.AsyncRepository().join_class(req)
     except ValueError as exc:
@@ -152,7 +223,8 @@ async def join_class(req: models.JoinClassRequest):
 
 
 @router.get("/student/classroom", response_model=models.StudentClassroomResponse)
-async def student_classroom(learner_id: str):
+async def student_classroom(request: Request, learner_id: str):
+    _require_identity(request, learner_id, "student")
     try:
         return await repository.AsyncRepository().student_classroom(learner_id)
     except ValueError as exc:
@@ -160,7 +232,8 @@ async def student_classroom(learner_id: str):
 
 
 @router.get("/student/notifications/stream")
-async def student_notification_stream(learner_id: str):
+async def student_notification_stream(request: Request, learner_id: str):
+    _require_identity(request, learner_id, "student")
     async def events():
         repo = repository.AsyncRepository()
         initial = await repo.student_classroom(learner_id)
@@ -188,7 +261,8 @@ async def student_notification_stream(learner_id: str):
 
 
 @router.post("/student/content/complete", response_model=models.PublishedContentCompletionResponse)
-async def complete_published_content(req: models.PublishedContentCompletionRequest):
+async def complete_published_content(req: models.PublishedContentCompletionRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     try:
         return await repository.AsyncRepository().complete_published_content(req)
     except ValueError as exc:
@@ -196,7 +270,8 @@ async def complete_published_content(req: models.PublishedContentCompletionReque
 
 
 @router.post("/student/content/start")
-async def start_published_content(req: models.PublishedContentCompletionRequest):
+async def start_published_content(req: models.PublishedContentCompletionRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     try:
         return await repository.AsyncRepository().start_published_content(req)
     except ValueError as exc:
@@ -204,7 +279,8 @@ async def start_published_content(req: models.PublishedContentCompletionRequest)
 
 
 @router.post("/student/content/page-timing")
-async def record_published_content_page_timing(req: models.PublishedContentPageTimingRequest):
+async def record_published_content_page_timing(req: models.PublishedContentPageTimingRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     try:
         return await repository.AsyncRepository().record_published_content_page_timing(req)
     except ValueError as exc:
@@ -212,7 +288,8 @@ async def record_published_content_page_timing(req: models.PublishedContentPageT
 
 
 @router.post("/student/adaptive/page-timing")
-async def record_adaptive_page_timing(req: models.AdaptivePageTimingRequest):
+async def record_adaptive_page_timing(req: models.AdaptivePageTimingRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     try:
         return await repository.AsyncRepository().record_adaptive_page_timing(req)
     except ValueError as exc:
@@ -220,7 +297,8 @@ async def record_adaptive_page_timing(req: models.AdaptivePageTimingRequest):
 
 
 @router.get("/teacher/dashboard", response_model=models.TeacherDashboardResponse)
-async def teacher_dashboard(leader_id: str):
+async def teacher_dashboard(request: Request, leader_id: str):
+    _require_identity(request, leader_id, "module_leader")
     try:
         return await repository.AsyncRepository().teacher_dashboard(leader_id)
     except ValueError as exc:
@@ -228,7 +306,8 @@ async def teacher_dashboard(leader_id: str):
 
 
 @router.get("/teacher/students/{student_id}/analytics", response_model=models.StudentAnalyticsResponse)
-async def teacher_student_analytics(student_id: str, leader_id: str):
+async def teacher_student_analytics(request: Request, student_id: str, leader_id: str):
+    _require_identity(request, leader_id, "module_leader")
     try:
         return await repository.AsyncRepository().teacher_student_analytics(leader_id, student_id)
     except ValueError as exc:
@@ -236,7 +315,8 @@ async def teacher_student_analytics(student_id: str, leader_id: str):
 
 
 @router.post("/content-drafts", response_model=models.ContentDraftResponse)
-async def create_content_draft(req: models.ContentDraftRequest):
+async def create_content_draft(req: models.ContentDraftRequest, request: Request):
+    _require_identity(request, req.leader_id, "module_leader")
     try:
         return await repository.AsyncRepository().create_content_draft(req)
     except ValueError as exc:
@@ -245,6 +325,7 @@ async def create_content_draft(req: models.ContentDraftRequest):
 
 @router.post("/content-drafts/upload", response_model=models.ContentDraftResponse)
 async def upload_content_draft(
+    request: Request,
     leader_id: str = Form(...),
     kind: str = Form(...),
     title: str = Form(...),
@@ -253,6 +334,7 @@ async def upload_content_draft(
     notes: str = Form(""),
     file: UploadFile | None = File(None),
 ):
+    _require_identity(request, leader_id, "module_leader")
     if kind not in {"lesson", "assessment"}:
         raise HTTPException(status_code=422, detail="Draft kind must be lesson or assessment.")
     source: dict[str, Any] = {"notes": notes.strip()}
@@ -282,7 +364,8 @@ async def upload_content_draft(
 
 
 @router.post("/content-drafts/{draft_id}/approval", response_model=models.ContentDraftResponse)
-async def approve_content_draft(draft_id: str, req: models.ApprovalRequest):
+async def approve_content_draft(draft_id: str, req: models.ApprovalRequest, request: Request):
+    _require_identity(request, req.leader_id, "module_leader")
     try:
         return await repository.AsyncRepository().approve_content_draft(draft_id, req)
     except ValueError as exc:
@@ -524,7 +607,8 @@ def _fallback_source_text(filename: str, suffix: str) -> str:
 
 
 @router.post("/learner-profile", response_model=models.LearnerState)
-async def create_learner(profile: models.LearnerProfile):
+async def create_learner(profile: models.LearnerProfile, request: Request):
+    _require_identity(request, profile.learner_id, "student")
     repo = repository.AsyncRepository()
     learner = await repo.upsert_learner(profile)
     state = await langgraph_nodes.learner_agent(learner)
@@ -532,7 +616,8 @@ async def create_learner(profile: models.LearnerProfile):
 
 
 @router.post("/generate-lesson", response_model=models.LessonBlueprint)
-async def generate_lesson(req: models.GenerateLessonRequest):
+async def generate_lesson(req: models.GenerateLessonRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     repo = repository.AsyncRepository()
     try:
         learner_profile, learner_state = await _learner_context(repo, req.learner_id)
@@ -567,7 +652,8 @@ async def generate_lesson(req: models.GenerateLessonRequest):
 
 
 @router.post("/generate-roadmap", response_model=models.LessonRoadmapResponse)
-async def generate_roadmap(req: models.GenerateLessonRequest):
+async def generate_roadmap(req: models.GenerateLessonRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     repo = repository.AsyncRepository()
     try:
         learner_profile, learner_state = await _learner_context(repo, req.learner_id)
@@ -639,7 +725,8 @@ def _syllabus_stages(topic: str) -> list[tuple[str, str, str]]:
 
 
 @router.post("/teaching-strategy", response_model=models.TeachingStrategy)
-async def get_teaching_strategy(req: models.GenerateLessonRequest):
+async def get_teaching_strategy(req: models.GenerateLessonRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     repo = repository.AsyncRepository()
     learner_profile, learner_state = await _learner_context(repo, req.learner_id)
     topic = req.topic.strip() or learner_profile.topic or learner_profile.learning_goal or "foundational learning"
@@ -665,7 +752,8 @@ async def get_teaching_strategy(req: models.GenerateLessonRequest):
 
 
 @router.post("/submit-assessment", response_model=models.AssessmentResult)
-async def submit_assessment(sub: models.AssessmentSubmission):
+async def submit_assessment(sub: models.AssessmentSubmission, request: Request):
+    _require_identity(request, sub.learner_id, "student")
     repo = repository.AsyncRepository()
     started = perf_counter()
     try:
@@ -679,9 +767,9 @@ async def submit_assessment(sub: models.AssessmentSubmission):
         state = await repo.get_learner_state(sub.learner_id)
         decision = _normalize_generated_model(await langgraph_nodes.adaptation_agent(models.AdaptationRequest(learner_id=sub.learner_id, session_id=sub.session_id, assessment_state=result.model_dump())))
         logger.info("Assessment submit adapted: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
-        evolved = _normalize_generated_value(await langgraph_nodes.evolutionary_agent({"learner_model": state.model_dump(), "assessment": result.model_dump(), "adaptation": decision.adaptations}))
+        updated_learner_model = _updated_learner_model(state.model_dump(), result, decision)
         result.adaptation = decision.adaptations
-        await repo.save_assessment_and_evolve(sub, result, decision, evolved)
+        await repo.save_assessment(sub, result, decision, updated_learner_model)
         if sub.session_id.startswith("published:"):
             await repo.complete_published_content(
                 models.PublishedContentCompletionRequest(
@@ -699,7 +787,8 @@ async def submit_assessment(sub: models.AssessmentSubmission):
 
 
 @router.post("/adapt-learning", response_model=models.AdaptationDecision)
-async def adapt_learning(req: models.AdaptationRequest):
+async def adapt_learning(req: models.AdaptationRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     try:
         return _normalize_generated_model(await langgraph_nodes.adaptation_agent(req))
     except Exception as exc:
@@ -707,13 +796,14 @@ async def adapt_learning(req: models.AdaptationRequest):
 
 
 @router.post("/generate-quiz", response_model=models.QuizResponse)
-async def generate_quiz(req: models.GenerateQuizRequest):
+async def generate_quiz(req: models.GenerateQuizRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     repo = repository.AsyncRepository()
     session_state = await repo.get_session_state(req.learner_id, req.session_id)
     if not session_state:
         raise HTTPException(status_code=404, detail="Lesson session was not found.")
     try:
-        quiz = _normalize_generated_model(await langgraph_nodes.quiz_agent(req, session_state))
+        quiz = _normalize_generated_model(await langgraph_nodes.assessment_agent(req, session_state))
         await repo.save_quiz(req.learner_id, quiz, (session_state.get("lesson") or {}).get("topic"))
         return quiz
     except Exception as exc:
@@ -721,7 +811,8 @@ async def generate_quiz(req: models.GenerateQuizRequest):
 
 
 @router.post("/tutor-interaction", response_model=models.TutorInteractionResponse)
-async def tutor_interaction(req: models.TutorInteractionRequest):
+async def tutor_interaction(req: models.TutorInteractionRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     repo = repository.AsyncRepository()
     session_state = await repo.get_session_state(req.learner_id, req.session_id)
     if not session_state:
@@ -746,7 +837,8 @@ async def tutor_interaction(req: models.TutorInteractionRequest):
 
 
 @router.post("/retrieve-memory")
-async def retrieve_memory(q: models.RetrieveMemoryRequest) -> models.RetrieveMemoryResponse:
+async def retrieve_memory(q: models.RetrieveMemoryRequest, request: Request) -> models.RetrieveMemoryResponse:
+    _require_identity(request, q.learner_id, "student")
     from app.core.chroma_client import ChromaClient
     cc = ChromaClient()
     hits = await cc.semantic_search(langgraph_nodes.lesson_embedding_collection(), q.query, top_k=5, where={"learner_id": q.learner_id})
@@ -795,24 +887,12 @@ def _compact_memory_snippet(value: str, max_words: int = 34) -> str:
 
 
 @router.post("/peer-feedback", response_model=models.PeerFeedbackResponse)
-async def peer_feedback(req: models.PeerFeedbackRequest):
-    record = {
-        "learner_id": req.learner_id,
-        "reviewer_name": req.reviewer_name.strip() or "Peer reviewer",
-        "lesson_id": req.lesson_id,
-        "topic": req.topic.strip(),
-        "rating": req.rating,
-        "clarity": req.clarity,
-        "accessibility": req.accessibility,
-        "modality_fit": req.modality_fit,
-        "comment": req.comment.strip(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    feedback_path = Path(__file__).resolve().parents[2] / "data" / "peer_feedback.jsonl"
-    feedback_path.parent.mkdir(parents=True, exist_ok=True)
+async def peer_feedback(req: models.PeerFeedbackRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     try:
-        with feedback_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        record = await repository.AsyncRepository().save_peer_feedback(req, moderation_flags(req.comment))
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Peer feedback persistence failed")
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -820,7 +900,8 @@ async def peer_feedback(req: models.PeerFeedbackRequest):
 
 
 @router.post("/save-lesson")
-async def save_lesson(req: models.SaveLessonRequest):
+async def save_lesson(req: models.SaveLessonRequest, request: Request):
+    _require_identity(request, req.learner_id, "student")
     """Persist updated lesson structure to the DB (sessions.state JSON).
 
     This will create a learner record if missing and upsert a session by lesson_id.
@@ -847,7 +928,8 @@ async def get_curriculum():
 
 
 @router.get("/progress", response_model=models.ProgressResponse)
-async def get_progress(learner_id: str):
+async def get_progress(request: Request, learner_id: str):
+    _require_identity(request, learner_id, "student")
     repo = repository.AsyncRepository()
     try:
         return await asyncio.wait_for(repo.get_progress(learner_id), timeout=10)
@@ -857,7 +939,8 @@ async def get_progress(learner_id: str):
 
 
 @router.get("/analytics", response_model=models.AnalyticsResponse)
-async def get_analytics(learner_id: str):
+async def get_analytics(request: Request, learner_id: str):
+    _require_identity(request, learner_id, "student")
     repo = repository.AsyncRepository()
     return await repo.get_analytics(learner_id)
 

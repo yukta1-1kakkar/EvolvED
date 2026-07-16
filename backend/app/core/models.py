@@ -157,14 +157,14 @@ class RetrieveMemoryResponse(BaseModel):
 
 class PeerFeedbackRequest(BaseModel):
     learner_id: str
-    reviewer_name: str = "Peer reviewer"
+    reviewer_name: str = Field(default="Peer reviewer", max_length=160)
     lesson_id: Optional[str] = None
-    topic: str = ""
+    topic: str = Field(default="", max_length=256)
     rating: int = Field(ge=1, le=5)
     clarity: int = Field(ge=1, le=5)
     accessibility: int = Field(ge=1, le=5)
     modality_fit: int = Field(ge=1, le=5)
-    comment: str = ""
+    comment: str = Field(default="", max_length=4000)
 
 
 class PeerFeedbackResponse(BaseModel):
@@ -290,6 +290,7 @@ class TeacherDashboardResponse(BaseModel):
     students: List[TeacherStudentSummary] = Field(default_factory=list)
     drafts: List[ContentDraftResponse] = Field(default_factory=list)
     totals: Dict[str, Any] = Field(default_factory=dict)
+    feedback_flags: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class StudentAnalyticsResponse(BaseModel):

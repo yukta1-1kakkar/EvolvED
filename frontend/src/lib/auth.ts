@@ -92,6 +92,7 @@ export function completeStoredProfile(
 }
 
 export function clearStoredUser() {
+  void apiRequest("/auth/logout", { method: "POST" }).catch(() => undefined);
   window.localStorage.removeItem(AUTH_USER_KEY);
   window.sessionStorage.removeItem(AUTH_USER_KEY);
   window.localStorage.removeItem(AUTH_REMEMBER_KEY);

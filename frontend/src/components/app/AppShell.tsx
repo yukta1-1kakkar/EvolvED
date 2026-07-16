@@ -48,6 +48,7 @@ const classStudentNav = [
   { to: ROUTES.LESSON, label: "Lesson", icon: BookOpen },
   { to: ROUTES.ASSESSMENT, label: "Assessment", icon: Target },
   { to: ROUTES.RESULTS, label: "Results", icon: BarChart3 },
+  { to: ROUTES.FEEDBACK, label: "Feedback", icon: MessageSquarePlus },
   { to: ROUTES.JOIN_CLASS, label: "Join Class", icon: UserRoundPlus },
 ] as const;
 const classStudentRoutes = new Set<string>(classStudentNav.map((item) => item.to));

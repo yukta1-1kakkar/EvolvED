@@ -62,7 +62,18 @@ export interface TeacherDashboardResponse {
     lessons_published?: number;
     pending_lesson_approvals?: number;
     pending_assessment_approvals?: number;
+    flagged_feedback_count?: number;
   };
+  feedback_flags: Array<{
+    feedback_id: string;
+    learner_id: string;
+    student_name: string;
+    topic: string;
+    lesson_id?: string | null;
+    categories: string[];
+    preview: string;
+    created_at?: string | null;
+  }>;
 }
 
 export interface ContentDraft {

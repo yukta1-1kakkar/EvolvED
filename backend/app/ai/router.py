@@ -7,12 +7,10 @@ class ModelRouter:
         "learner": "Learner Modeling Layer",
         "pedagogy": "Pedagogical Reasoning Layer",
         "planning": "Lesson Planning Layer",
-        "draft": "Classroom Draft Generation Layer",
+        "draft": "Quality Check Agent",
         "content": "Content Generation Layer",
-        "quiz": "Quiz Generation Layer",
-        "assessment": "Assessment Layer",
+        "assessment": "Quiz and Assessment Agent",
         "adaptation": "Adaptation Layer",
-        "evolution": "Evolutionary Strategy Layer",
         "tutor": "AI Tutor Chat",
     }
 
@@ -24,10 +22,8 @@ class ModelRouter:
             "planning": settings.lesson_planning_model,
             "draft": settings.fast_model,
             "content": settings.content_generation_model,
-            "quiz": settings.quiz_model,
             "assessment": settings.assessment_model,
             "adaptation": settings.adaptation_model,
-            "evolution": settings.evolution_model,
             "tutor": settings.fast_interaction_model,
         }
         return mapping.get(layer, settings.fast_interaction_model)

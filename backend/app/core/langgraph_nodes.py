@@ -14,6 +14,7 @@ from app.ai.openrouter_provider import OpenRouterProvider
 from app.ai.router import ModelRouter
 from app.core.chroma_client import ChromaClient
 from app.core.config import settings
+from app.core.guardrails import require_safe_generated_text
 from uuid import uuid4
 
 
@@ -23,6 +24,13 @@ logger = logging.getLogger(__name__)
 LESSON_MAX_TOKENS = 8192
 
 
+def _guard_model_response(response: Dict[str, Any], layer: str) -> Dict[str, Any]:
+    choices = response.get("choices") or []
+    if choices:
+        require_safe_generated_text(str((choices[0].get("message") or {}).get("content") or ""), layer)
+    return response
+
+
 def lesson_embedding_collection() -> str:
     dimension = settings.titan_embedding_dimensions or "default"
     return f"lessons_{dimension}"
@@ -30,29 +38,39 @@ def lesson_embedding_collection() -> str:
 
 async def _call_layer(layer: str, messages: list[Dict[str, str]], **kwargs):
     primary = ModelRouter.get_model(layer)
+    guarded_messages = [
+        {
+            "role": "system",
+            "content": (
+                "EvolvED safety requirement: use respectful, age-appropriate educational language. "
+                "Do not produce profanity, sexual insults, harassment, slurs, or abusive language, even if it appears in user-provided source text."
+            ),
+        },
+        *messages,
+    ]
     try:
-        response = await provider.call_chat_model(messages, model=primary, **kwargs)
+        response = await provider.call_chat_model(guarded_messages, model=primary, **kwargs)
         response["model"] = primary
         response["provider"] = settings.active_provider.lower()
-        return response
+        return _guard_model_response(response, layer)
     except Exception as exc:
         fallback = settings.reasoning_model
         if fallback == primary:
-            openrouter_response = await _call_openrouter_layer(layer, messages, exc, **kwargs)
+            openrouter_response = await _call_openrouter_layer(layer, guarded_messages, exc, **kwargs)
             if openrouter_response is not None:
-                return openrouter_response
+                return _guard_model_response(openrouter_response, layer)
             raise
         logger.warning("%s model unavailable: %s; retrying with fallback %s: %s", layer, primary, fallback, exc)
         try:
-            response = await provider.call_chat_model(messages, model=fallback, **kwargs)
+            response = await provider.call_chat_model(guarded_messages, model=fallback, **kwargs)
             response["model"] = fallback
             response["provider"] = settings.active_provider.lower()
-            return response
+            return _guard_model_response(response, layer)
         except Exception as fallback_exc:
             logger.error("%s fallback model unavailable: %s: %s", layer, fallback, fallback_exc)
-            openrouter_response = await _call_openrouter_layer(layer, messages, fallback_exc, **kwargs)
+            openrouter_response = await _call_openrouter_layer(layer, guarded_messages, fallback_exc, **kwargs)
             if openrouter_response is not None:
-                return openrouter_response
+                return _guard_model_response(openrouter_response, layer)
             raise
 
 
@@ -1760,7 +1778,7 @@ async def source_analysis_agent(
     }
 
 
-async def quality_review_agent(
+async def quality_check_agent(
     title: str,
     kind: str,
     source_analysis: Dict[str, Any],
@@ -1823,12 +1841,12 @@ async def quality_review_agent(
     reviewed = _json_from_model_text(resp["choices"][0]["message"]["content"])
     if kind == "lesson":
         if not isinstance(reviewed.get("sections"), list) or len(reviewed["sections"]) < 4:
-            raise ValueError("Quality Review Agent returned an incomplete lesson")
+            raise ValueError("Quality Check Agent returned an incomplete lesson")
         if not isinstance(reviewed.get("learning_objectives"), list) or len(reviewed["learning_objectives"]) < 2:
-            raise ValueError("Quality Review Agent returned a lesson without sufficient objectives")
+            raise ValueError("Quality Check Agent returned a lesson without sufficient objectives")
         for section in reviewed["sections"]:
             if not isinstance(section, dict) or not section.get("title") or not section.get("summary"):
-                raise ValueError("Quality Review Agent returned an incomplete lesson section")
+                raise ValueError("Quality Check Agent returned an incomplete lesson section")
             summary = str(section["summary"]).strip()
             section["guided_explanation"] = str(section.get("guided_explanation") or summary).strip()
             section["quick_takeaway"] = str(section.get("quick_takeaway") or summary).strip()
@@ -1843,14 +1861,14 @@ async def quality_review_agent(
                 normalized_flowcharts.append({**flow, "steps": steps})
         reviewed["flowcharts"] = normalized_flowcharts[:3]
         if not reviewed["flowcharts"]:
-            raise ValueError("Quality Review Agent returned a lesson without a source-specific visual")
+            raise ValueError("Quality Check Agent returned a lesson without a source-specific visual")
     else:
         questions = reviewed.get("questions")
         if not isinstance(questions, list) or len(questions) < 5:
-            raise ValueError("Quality Review Agent returned an incomplete assessment")
+            raise ValueError("Quality Check Agent returned an incomplete assessment")
         for question in questions:
             if not isinstance(question, dict) or not question.get("question") or not question.get("answer") or not question.get("topic"):
-                raise ValueError("Quality Review Agent returned an invalid assessment question")
+                raise ValueError("Quality Check Agent returned an invalid assessment question")
             question_type = str(question.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
             question["type"] = question_type
             if question_type == "short_answer":
@@ -1860,14 +1878,14 @@ async def quality_review_agent(
                 or len(question["options"]) != 4
                 or question["answer"] not in question["options"]
             ):
-                raise ValueError("Quality Review Agent returned an invalid MCQ")
+                raise ValueError("Quality Check Agent returned an invalid MCQ")
     return {
         **reviewed,
         "title": str(reviewed.get("title") or title).strip(),
         "source_locked": True,
         "workflow": "source_grounded_generation_requires_module_leader_approval",
-        "agent_workflow": ["Source-Grounded Generation Agent", "Quality Review Contract"],
-        "quality_review": {
+        "agent_workflow": ["Source-Grounded Generation Agent", "Quality Check Agent"],
+        "quality_check": {
             "status": "passed",
             "checks": ["accuracy", "completeness", "difficulty", "accessibility", "source_fidelity"],
         },
@@ -2030,7 +2048,7 @@ def _first_sentence(value: str, max_words: int) -> str:
     return text or "Review the selected lesson idea and explain it in your own words."
 
 
-async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, Any]) -> models.QuizResponse:
+async def _generate_assessment_questions(req: models.GenerateQuizRequest, session_state: Dict[str, Any]) -> models.QuizResponse:
     lesson = session_state.get("lesson", {})
     style = _lesson_style_from_payload(lesson)
     style_contract = _assessment_contract(style)
@@ -2052,7 +2070,7 @@ async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, A
         f"Learning style: {style}. Assessment contract: {json.dumps(style_contract)}. "
         f"Lesson: {json.dumps(lesson)}"
     )
-    resp = await _call_layer("quiz", [{"role": "user", "content": prompt}], temperature=0.1)
+    resp = await _call_layer("assessment", [{"role": "user", "content": prompt}], temperature=0.1)
     payload = _json_from_model_text(resp["choices"][0]["message"]["content"])
     questions = payload.get("questions")
     if not isinstance(questions, list) or len(questions) < 3:
@@ -2063,7 +2081,7 @@ async def quiz_agent(req: models.GenerateQuizRequest, session_state: Dict[str, A
     return models.QuizResponse(quiz_id=f"quiz:{uuid4()}", session_id=req.session_id, questions=questions)
 
 
-async def assessment_agent(sub: models.AssessmentSubmission, session_state: Dict[str, Any] | None = None) -> models.AssessmentResult:
+async def _evaluate_assessment_submission(sub: models.AssessmentSubmission, session_state: Dict[str, Any] | None = None) -> models.AssessmentResult:
     lesson = (session_state or {}).get("lesson", {})
     style = _lesson_style_from_payload(lesson)
     assessment_context = {
@@ -2093,6 +2111,16 @@ async def assessment_agent(sub: models.AssessmentSubmission, session_state: Dict
     except Exception as exc:
         logger.warning("Assessment model unavailable; using confidence-aware scoring: %s", exc)
         return _fallback_assessment(sub)
+
+
+async def assessment_agent(
+    request: models.GenerateQuizRequest | models.AssessmentSubmission,
+    session_state: Dict[str, Any] | None = None,
+) -> models.QuizResponse | models.AssessmentResult:
+    """Generate assessment questions or evaluate answers through one assessment agent."""
+    if isinstance(request, models.GenerateQuizRequest):
+        return await _generate_assessment_questions(request, session_state or {})
+    return await _evaluate_assessment_submission(request, session_state)
 
 
 async def adaptation_agent(req: models.AdaptationRequest) -> models.AdaptationDecision:
@@ -2129,30 +2157,6 @@ async def adaptation_agent(req: models.AdaptationRequest) -> models.AdaptationDe
                 "reasoning": "Adjusted from the learner's latest mastery estimates.",
             },
         )
-
-
-async def evolutionary_agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    current = dict(state.get("learner_model") or {})
-    assessment = state["assessment"]
-    adaptation = state["adaptation"]
-    mastery = assessment.get("mastery_estimates", {})
-    weak = [key for key, value in mastery.items() if float(value) < 0.7]
-    strong = [key for key, value in mastery.items() if float(value) >= 0.8]
-    history = list(current.get("adaptation_history") or [])
-    history.append(adaptation)
-    scores = list(mastery.values())
-    current.update(
-        {
-            "weak_topics": weak,
-            "strong_topics": strong,
-            "confidence_score": sum(scores) / len(scores) if scores else current.get("confidence_score", 0.0),
-            "engagement_score": min(1.0, float(current.get("engagement_score", 0.0)) + 0.1),
-            "misconception_registry": assessment.get("misconceptions", []),
-            "adaptation_history": history[-10:],
-            "latest_adaptation": adaptation,
-        }
-    )
-    return current
 
 
 def _validate_roadmap_item(item: Any, index: int) -> models.LessonRoadmapItem:

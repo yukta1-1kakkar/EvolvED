@@ -19,6 +19,7 @@ import sqlalchemy as sa
 from app.core import langgraph_nodes, models
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
+from app.core.guardrails import redact_inappropriate_content, redact_inappropriate_text
 from app.db import models as db_models
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,8 @@ _LOCAL_CLASSES: dict[str, Dict[str, Any]] = {}
 _LOCAL_ENROLLMENTS: list[Dict[str, str]] = []
 _LOCAL_DRAFTS: dict[str, Dict[str, Any]] = {}
 _LOCAL_COMPLETIONS: list[Dict[str, Any]] = []
+_LOCAL_AUTH_SESSIONS: dict[str, Dict[str, Any]] = {}
+_LOCAL_FEEDBACK: list[Dict[str, Any]] = []
 _LOCAL_CLASSROOM_STORE = Path(__file__).resolve().parents[2] / "data" / "local_classroom_store.json"
 
 
@@ -110,6 +113,108 @@ class AsyncRepository:
         if not learner or not learner.password_hash or not _verify_password(req.password, learner.password_hash):
             raise ValueError("We could not verify those credentials.")
         return _auth_user(learner)
+
+    async def issue_auth_session(self, user: models.AuthUser) -> str:
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+        try:
+            async with AsyncSessionLocal() as session:
+                learner = await self._learner(session, user.id)
+                if not learner:
+                    raise ValueError("Account was not found.")
+                session.add(db_models.AuthSession(token_hash=token_hash, learner_id=learner.id, expires_at=expires_at))
+                await session.commit()
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Database auth session unavailable; using process-local session: %s: %r", type(exc).__name__, exc)
+        _LOCAL_AUTH_SESSIONS[token_hash] = {
+            "id": user.id,
+            "role": user.role,
+            "name": user.full_name,
+            "expires_at": expires_at,
+        }
+        return token
+
+    async def authenticate_session(self, token: str) -> Dict[str, Any] | None:
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        local = _LOCAL_AUTH_SESSIONS.get(token_hash)
+        if local and local["expires_at"] > now:
+            return {key: local[key] for key in ("id", "role", "name")}
+        try:
+            async with AsyncSessionLocal() as session:
+                auth_session = await session.scalar(
+                    sa.select(db_models.AuthSession).where(
+                        db_models.AuthSession.token_hash == token_hash,
+                        db_models.AuthSession.expires_at > now,
+                    )
+                )
+                learner = await session.get(db_models.Learner, auth_session.learner_id) if auth_session else None
+                if learner:
+                    actor = {"id": learner.learner_id, "role": learner.role or "student", "name": learner.full_name or "Learner"}
+                    session_expiry = auth_session.expires_at
+                    if session_expiry.tzinfo is None:
+                        session_expiry = session_expiry.replace(tzinfo=timezone.utc)
+                    _LOCAL_AUTH_SESSIONS[token_hash] = {**actor, "expires_at": session_expiry}
+                    return actor
+        except Exception as exc:
+            logger.warning("Database auth verification unavailable: %s: %r", type(exc).__name__, exc)
+        return None
+
+    async def revoke_auth_session(self, token: str) -> None:
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        _LOCAL_AUTH_SESSIONS.pop(token_hash, None)
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(sa.delete(db_models.AuthSession).where(db_models.AuthSession.token_hash == token_hash))
+                await session.commit()
+        except Exception as exc:
+            logger.warning("Database auth session revocation unavailable: %s: %r", type(exc).__name__, exc)
+
+    async def save_peer_feedback(self, req: models.PeerFeedbackRequest, flags: list[str]) -> Dict[str, Any]:
+        feedback_id = f"feedback:{uuid4()}"
+        created_at = datetime.now(timezone.utc)
+        safe_comment = redact_inappropriate_text(req.comment.strip())
+        try:
+            async with AsyncSessionLocal() as session:
+                learner = await self._require_role(session, req.learner_id, "student")
+                session.add(db_models.PeerFeedback(
+                    feedback_id=feedback_id,
+                    learner_id=learner.id,
+                    lesson_id=req.lesson_id,
+                    topic=req.topic.strip(),
+                    rating=req.rating,
+                    clarity=req.clarity,
+                    accessibility=req.accessibility,
+                    modality_fit=req.modality_fit,
+                    comment=safe_comment,
+                    inappropriate=bool(flags),
+                    moderation_flags=flags,
+                    created_at=created_at,
+                ))
+                await session.commit()
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Database feedback persistence unavailable; storing process-local feedback: %s: %r", type(exc).__name__, exc)
+            _LOCAL_FEEDBACK.append({
+                "feedback_id": feedback_id,
+                "learner_id": req.learner_id,
+                "lesson_id": req.lesson_id,
+                "topic": req.topic.strip(),
+                "comment": safe_comment,
+                "moderation_flags": flags,
+                "inappropriate": bool(flags),
+                "created_at": created_at,
+            })
+        return {
+            "feedback_id": feedback_id,
+            "topic": req.topic.strip(),
+            "status": "submitted",
+            "created_at": created_at.isoformat(),
+        }
 
     async def upsert_learner(self, profile: models.LearnerProfile) -> models.LearnerState:
         try:
@@ -331,19 +436,19 @@ class AsyncRepository:
             logger.warning("Database quiz persistence unavailable; storing local quiz: %s: %r", type(exc).__name__, exc)
             _LOCAL_QUIZZES.append({"learner_id": learner_id, "quiz": quiz.model_dump(), "topic": topic})
 
-    async def save_assessment_and_evolve(
+    async def save_assessment(
         self,
         submission: models.AssessmentSubmission,
         result: models.AssessmentResult,
         decision: models.AdaptationDecision,
-        evolved_model: Dict[str, Any],
+        updated_learner_model: Dict[str, Any],
     ) -> None:
         try:
             async with AsyncSessionLocal() as session:
                 learner = await self._learner(session, submission.learner_id, create=True)
                 session.add(db_models.Assessment(learner_id=learner.id, session_id=submission.session_id, submission=submission.model_dump(), result=result.model_dump()))
                 session.add(db_models.Adaptation(learner_id=learner.id, session_id=submission.session_id, decision=decision.model_dump(), applied=True))
-                learner.learner_model = evolved_model
+                learner.learner_model = updated_learner_model
                 record = await session.scalar(sa.select(db_models.Session).where(db_models.Session.session_id == submission.session_id))
                 if record:
                     record.state = {**(record.state or {}), "status": "assessed", "latest_assessment": result.model_dump(), "latest_adaptation": decision.model_dump()}
@@ -611,6 +716,27 @@ class AsyncRepository:
                             summary.class_ids.append(class_row.class_id)
                         student_summaries[student.id] = summary
                 students = list(student_summaries.values())
+                feedback_rows = []
+                if student_summaries:
+                    feedback_rows = (await session.scalars(
+                        sa.select(db_models.PeerFeedback)
+                        .where(db_models.PeerFeedback.learner_id.in_(student_summaries), db_models.PeerFeedback.inappropriate.is_(True))
+                        .order_by(db_models.PeerFeedback.created_at.desc())
+                        .limit(50)
+                    )).all()
+                feedback_flags = [
+                    {
+                        "feedback_id": row.feedback_id,
+                        "learner_id": student_summaries[row.learner_id].learner_id,
+                        "student_name": student_summaries[row.learner_id].name,
+                        "topic": row.topic,
+                        "lesson_id": row.lesson_id,
+                        "categories": row.moderation_flags or [],
+                        "preview": redact_inappropriate_text(row.comment)[:240],
+                        "created_at": _iso(row.created_at),
+                    }
+                    for row in feedback_rows
+                ]
                 draft_rows = (await session.scalars(sa.select(db_models.ContentDraft).where(db_models.ContentDraft.leader_id == leader.id).order_by(db_models.ContentDraft.updated_at.desc()))).all()
                 for draft in draft_rows:
                     healed = _healed_draft_preview(draft.kind, draft.title, draft.source_material or {}, draft.generated_content or {})
@@ -631,6 +757,20 @@ class AsyncRepository:
                 summary = self._local_student_summary(student_id)
                 summary.class_ids = [enrollment["class_id"] for enrollment in _LOCAL_ENROLLMENTS if enrollment["student_id"] == student_id and enrollment["class_id"] in {item["class_id"] for item in classes}]
                 students.append(summary)
+            feedback_flags = [
+                {
+                    "feedback_id": item["feedback_id"],
+                    "learner_id": item["learner_id"],
+                    "student_name": self._local_learner(item["learner_id"]).full_name or "Learner",
+                    "topic": item.get("topic") or "",
+                    "lesson_id": item.get("lesson_id"),
+                    "categories": item.get("moderation_flags") or [],
+                    "preview": redact_inappropriate_text(item.get("comment") or "")[:240],
+                    "created_at": _iso(item.get("created_at")),
+                }
+                for item in _LOCAL_FEEDBACK
+                if item.get("inappropriate") and item.get("learner_id") in student_ids
+            ][-50:][::-1]
             draft_rows = [item for item in _LOCAL_DRAFTS.values() if item["leader_id"] == leader_id]
             for draft in draft_rows:
                 draft["generated_content"] = _healed_draft_preview(draft["kind"], draft["title"], draft.get("source_material") or {}, draft.get("generated_content") or {})
@@ -642,6 +782,7 @@ class AsyncRepository:
             "lessons_published": sum(1 for item in draft_rows if _draft_kind(item) == "lesson" and _draft_status(item) == "accepted"),
             "pending_lesson_approvals": sum(1 for item in draft_rows if _draft_kind(item) == "lesson" and _draft_status(item) in {"draft", "changes_requested"}),
             "pending_assessment_approvals": sum(1 for item in draft_rows if _draft_kind(item) == "assessment" and _draft_status(item) in {"draft", "changes_requested"}),
+            "flagged_feedback_count": len(feedback_flags),
         }
         return models.TeacherDashboardResponse(
             leader_id=leader_id,
@@ -654,6 +795,7 @@ class AsyncRepository:
                 for item in draft_rows
             ],
             totals=totals,
+            feedback_flags=feedback_flags,
         )
 
     async def teacher_student_analytics(self, leader_id: str, student_id: str) -> models.StudentAnalyticsResponse:
@@ -1771,12 +1913,12 @@ async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, 
     """Generate once from the full source, with a dependable local fallback."""
     fallback = _draft_preview(req)
     if fallback.get("needs_readable_source"):
-        return fallback
+        return redact_inappropriate_content(fallback)
     try:
         analysis = _local_source_analysis(req.title, req.kind, req.source_material or {}, fallback)
         reviewed = _ensure_delivery_support(
             await asyncio.wait_for(
-                langgraph_nodes.quality_review_agent(req.title, req.kind, analysis, fallback, req.source_material or {}),
+                langgraph_nodes.quality_check_agent(req.title, req.kind, analysis, fallback, req.source_material or {}),
                 timeout=70,
             ),
             req.kind,
@@ -1788,17 +1930,17 @@ async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, 
             key: analysis.get(key)
             for key in ("source_summary", "concepts", "learning_objectives", "difficulty", "warnings")
         }
-        return reviewed
+        return redact_inappropriate_content(reviewed)
     except Exception as exc:
         logger.warning("Module Leader agent workflow unavailable; using source-grounded fallback: %s: %r", type(exc).__name__, exc)
-        return {
+        return redact_inappropriate_content({
             **fallback,
-            "agent_workflow": ["Source-Grounded Generation Agent", "Quality Review Contract"],
-            "quality_review": {
+            "agent_workflow": ["Source-Grounded Generation Agent", "Quality Check Agent"],
+            "quality_check": {
                 "status": "fallback",
                 "reason": "AI review was unavailable, so EvolvED used its source-grounded generator.",
             },
-        }
+        })
 
 
 async def _generate_regenerated_draft_preview(
@@ -1837,14 +1979,14 @@ def _regenerated_draft_preview(leader_id: str, kind: str, title: str, source_mat
 
 def _healed_draft_preview(kind: str, title: str, source_material: Dict[str, Any], generated_content: Dict[str, Any]) -> Dict[str, Any]:
     if not _draft_needs_healing(generated_content):
-        return generated_content
+        return redact_inappropriate_content(generated_content)
     healed = _draft_preview(models.ContentDraftRequest(leader_id="preview-healer", kind=kind, title=title, source_material=source_material))
     if _draft_needs_healing(healed):
-        return generated_content
-    return {
+        return redact_inappropriate_content(generated_content)
+    return redact_inappropriate_content({
         **healed,
         "healed_from_source": True,
-    }
+    })
 
 
 def _draft_needs_healing(generated_content: Dict[str, Any]) -> bool:

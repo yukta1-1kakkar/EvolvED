@@ -338,11 +338,11 @@ def test_module_leader_generation_uses_one_bounded_source_grounded_call(monkeypa
         assert "Vectors have magnitude and direction" in source_material["text"]
         return {
             **draft,
-            "agent_workflow": ["Source-Grounded Generation Agent", "Quality Review Contract"],
-            "quality_review": {"status": "passed"},
+            "agent_workflow": ["Source-Grounded Generation Agent", "Quality Check Agent"],
+            "quality_check": {"status": "passed"},
         }
 
-    monkeypatch.setattr("app.core.repository.langgraph_nodes.quality_review_agent", review)
+    monkeypatch.setattr("app.core.repository.langgraph_nodes.quality_check_agent", review)
     result = asyncio.run(
         _generate_draft_preview(
             models.ContentDraftRequest(
@@ -355,7 +355,7 @@ def test_module_leader_generation_uses_one_bounded_source_grounded_call(monkeypa
     )
 
     assert calls == ["quality"]
-    assert result["quality_review"]["status"] == "passed"
+    assert result["quality_check"]["status"] == "passed"
     assert result["source_analysis"]["learning_objectives"]
 
 
