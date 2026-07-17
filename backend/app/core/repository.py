@@ -216,6 +216,37 @@ class AsyncRepository:
             "created_at": created_at.isoformat(),
         }
 
+    async def dismiss_feedback_flag(self, leader_id: str, feedback_id: str) -> None:
+        try:
+            async with AsyncSessionLocal() as session:
+                leader = await self._require_role(session, leader_id, "module_leader")
+                feedback = await session.scalar(sa.select(db_models.PeerFeedback).where(db_models.PeerFeedback.feedback_id == feedback_id))
+                authorized = feedback and await session.scalar(
+                    sa.select(db_models.Enrollment.id)
+                    .join(db_models.ClassGroup, db_models.ClassGroup.id == db_models.Enrollment.class_id)
+                    .where(
+                        db_models.Enrollment.student_id == feedback.learner_id,
+                        db_models.ClassGroup.leader_id == leader.id,
+                    )
+                    .limit(1)
+                )
+                if not feedback or not authorized:
+                    raise ValueError("Feedback alert was not found for this module leader.")
+                feedback.dismissed_at = datetime.now(timezone.utc)
+                await session.commit()
+                return
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Database feedback dismissal unavailable; updating process-local feedback: %s: %r", type(exc).__name__, exc)
+
+        class_ids = {item["class_id"] for item in _LOCAL_CLASSES.values() if item["leader_id"] == leader_id}
+        student_ids = {item["student_id"] for item in _LOCAL_ENROLLMENTS if item["class_id"] in class_ids}
+        feedback = next((item for item in _LOCAL_FEEDBACK if item["feedback_id"] == feedback_id and item["learner_id"] in student_ids), None)
+        if not feedback:
+            raise ValueError("Feedback alert was not found for this module leader.")
+        feedback["dismissed_at"] = datetime.now(timezone.utc)
+
     async def upsert_learner(self, profile: models.LearnerProfile) -> models.LearnerState:
         try:
             async with AsyncSessionLocal() as session:
@@ -720,7 +751,11 @@ class AsyncRepository:
                 if student_summaries:
                     feedback_rows = (await session.scalars(
                         sa.select(db_models.PeerFeedback)
-                        .where(db_models.PeerFeedback.learner_id.in_(student_summaries), db_models.PeerFeedback.inappropriate.is_(True))
+                        .where(
+                            db_models.PeerFeedback.learner_id.in_(student_summaries),
+                            db_models.PeerFeedback.inappropriate.is_(True),
+                            db_models.PeerFeedback.dismissed_at.is_(None),
+                        )
                         .order_by(db_models.PeerFeedback.created_at.desc())
                         .limit(50)
                     )).all()
@@ -769,7 +804,7 @@ class AsyncRepository:
                     "created_at": _iso(item.get("created_at")),
                 }
                 for item in _LOCAL_FEEDBACK
-                if item.get("inappropriate") and item.get("learner_id") in student_ids
+                if item.get("inappropriate") and not item.get("dismissed_at") and item.get("learner_id") in student_ids
             ][-50:][::-1]
             draft_rows = [item for item in _LOCAL_DRAFTS.values() if item["leader_id"] == leader_id]
             for draft in draft_rows:

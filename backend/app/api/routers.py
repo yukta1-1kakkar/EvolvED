@@ -899,6 +899,18 @@ async def peer_feedback(req: models.PeerFeedbackRequest, request: Request):
     return models.PeerFeedbackResponse(saved=record)
 
 
+@router.post("/teacher/feedback/{feedback_id}/dismiss", status_code=204)
+async def dismiss_feedback_flag(feedback_id: str, req: models.FeedbackDismissRequest, request: Request):
+    _require_identity(request, req.leader_id, "module_leader")
+    try:
+        await repository.AsyncRepository().dismiss_feedback_flag(req.leader_id, feedback_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Feedback alert dismissal failed")
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/save-lesson")
 async def save_lesson(req: models.SaveLessonRequest, request: Request):
     _require_identity(request, req.learner_id, "student")

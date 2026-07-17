@@ -167,6 +167,10 @@ class PeerFeedbackRequest(BaseModel):
     comment: str = Field(default="", max_length=4000)
 
 
+class FeedbackDismissRequest(BaseModel):
+    leader_id: str
+
+
 class PeerFeedbackResponse(BaseModel):
     status: str = "ok"
     saved: Dict[str, Any] = Field(default_factory=dict)

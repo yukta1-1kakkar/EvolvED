@@ -6,7 +6,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { decideContentDraft, getTeacherDashboard, uploadContentDraft, type ContentDraft } from "@/lib/api/classroom";
+import { decideContentDraft, dismissFeedbackFlag, getTeacherDashboard, uploadContentDraft, type ContentDraft } from "@/lib/api/classroom";
 import { useAuth } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/teacher")({
@@ -39,6 +39,13 @@ function TeacherDashboard() {
     refetchInterval: 3000,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
+  });
+  const dismissFeedback = useMutation({
+    mutationFn: (feedbackIds: string[]) => Promise.all(feedbackIds.map((feedbackId) => dismissFeedbackFlag(currentUser?.id ?? "", feedbackId))),
+    onSuccess: async (_, feedbackIds) => {
+      setDismissedFeedbackFlagIds((current) => new Set([...current, ...feedbackIds]));
+      await queryClient.invalidateQueries({ queryKey: ["teacher-dashboard", currentUser?.id] });
+    },
   });
   const uploadDraft = useMutation({
     mutationFn: () => uploadContentDraft({
@@ -102,7 +109,8 @@ function TeacherDashboard() {
         <section className="relative mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-5" role="alert">
           <button
             type="button"
-            onClick={() => setDismissedFeedbackFlagIds((current) => new Set([...current, ...feedbackFlags.map((flag) => flag.feedback_id)]))}
+            onClick={() => dismissFeedback.mutate(feedbackFlags.map((flag) => flag.feedback_id))}
+            disabled={dismissFeedback.isPending}
             className="absolute right-4 top-4 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
             aria-label="Dismiss feedback safety alerts"
           >

@@ -66,6 +66,7 @@ class PeerFeedback(Base):
     comment = Column(Text, nullable=False, default="")
     inappropriate = Column(Boolean, nullable=False, default=False)
     moderation_flags = Column(JSON, default=list)
+    dismissed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

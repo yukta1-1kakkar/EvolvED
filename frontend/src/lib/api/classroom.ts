@@ -223,3 +223,10 @@ export function decideContentDraft(draftId: string, leaderId: string, decision: 
     timeoutMs: DRAFT_GENERATION_TIMEOUT_MS,
   });
 }
+
+export function dismissFeedbackFlag(leaderId: string, feedbackId: string) {
+  return apiRequest<void, { leader_id: string }>(`/teacher/feedback/${feedbackId}/dismiss`, {
+    method: "POST",
+    body: { leader_id: leaderId },
+  });
+}
