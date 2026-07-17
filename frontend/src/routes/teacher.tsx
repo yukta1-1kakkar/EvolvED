@@ -31,6 +31,7 @@ function TeacherDashboard() {
   const [selectedDraftId, setSelectedDraftId] = useState("");
   const [instructions, setInstructions] = useState("");
   const [publicationNotice, setPublicationNotice] = useState("");
+  const [dismissedFeedbackFlagIds, setDismissedFeedbackFlagIds] = useState<Set<string>>(() => new Set());
   const dashboard = useQuery({
     queryKey: ["teacher-dashboard", currentUser?.id],
     queryFn: () => getTeacherDashboard(currentUser?.id ?? ""),
@@ -77,6 +78,7 @@ function TeacherDashboard() {
   const drafts = dashboard.data?.drafts ?? [];
   const activeDrafts = drafts.filter((draft) => draft.status !== "rejected");
   const selectedDraft = activeDrafts.find((draft) => draft.draft_id === selectedDraftId) ?? activeDrafts[0];
+  const feedbackFlags = (dashboard.data?.feedback_flags ?? []).filter((flag) => !dismissedFeedbackFlagIds.has(flag.feedback_id));
 
   if (currentUser?.role !== "module_leader") {
     return (
@@ -96,15 +98,23 @@ function TeacherDashboard() {
         </div>
       )}
 
-      {(dashboard.data?.feedback_flags ?? []).length > 0 && (
-        <section className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-5" role="alert">
-          <div className="flex items-center gap-2 text-destructive">
+      {feedbackFlags.length > 0 && (
+        <section className="relative mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-5" role="alert">
+          <button
+            type="button"
+            onClick={() => setDismissedFeedbackFlagIds((current) => new Set([...current, ...feedbackFlags.map((flag) => flag.feedback_id)]))}
+            className="absolute right-4 top-4 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+            aria-label="Dismiss feedback safety alerts"
+          >
+            <X className="size-4" />
+          </button>
+          <div className="flex items-center gap-2 pr-9 text-destructive">
             <ShieldAlert className="size-5" />
             <h2 className="font-display text-xl">Feedback safety alerts</h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Inappropriate language was detected in student feedback. The displayed preview is redacted.</p>
           <div className="mt-4 grid gap-3">
-            {(dashboard.data?.feedback_flags ?? []).map((flag) => (
+            {feedbackFlags.map((flag) => (
               <div key={flag.feedback_id} className="rounded-xl border border-destructive/20 bg-background/80 p-4 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium">{flag.student_name}</span>
