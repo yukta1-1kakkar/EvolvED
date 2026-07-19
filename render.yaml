@@ -68,7 +68,9 @@ services:
     plan: free
     rootDir: frontend
     autoDeploy: true
-    buildCommand: npm ci && npm run build
+    # Vite and the TanStack config are build-time devDependencies. Explicitly
+    # include them even if an existing Render service retains NODE_ENV=production.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start
     healthCheckPath: /
     envVars:
