@@ -1345,7 +1345,6 @@ function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?
   const [status, setStatus] = useState(storedAudioUrl ? "Ready" : narration ? "Preparing audio..." : "");
   const [useBrowserNarration, setUseBrowserNarration] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const [audioPlaying, setAudioPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -1354,7 +1353,7 @@ function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?
     let cancelled = false;
     let objectUrl = "";
     const browserSpeechAvailable = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
-    setUseBrowserNarration(browserSpeechAvailable);
+    setUseBrowserNarration(false);
 
     synthesizeLessonAudio(narration)
       .then((blob) => {
@@ -1401,21 +1400,15 @@ function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?
     window.speechSynthesis.speak(utterance);
   }
 
-  function toggleAudioPlayback() {
-    const player = audioRef.current;
-    if (!player) return;
-    if (player.paused) {
-      void player.play();
-    } else {
-      player.pause();
-    }
-  }
-
-  function pauseBrowserNarration() {
+  function toggleBrowserNarration() {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    setSpeaking(false);
-    setStatus("Ready");
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      setStatus("Ready");
+      return;
+    }
+    playBrowserNarration();
   }
 
   return (
@@ -1425,15 +1418,7 @@ function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?
       </div>
       <div className="mt-4 rounded-2xl bg-muted/35 p-4">
         {audioUrl ? (
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={toggleAudioPlayback}
-              className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm text-background"
-            >
-              {audioPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
-              {audioPlaying ? "Pause" : "Play"}
-            </button>
+          <div>
             <audio
               ref={audioRef}
               controls
@@ -1442,24 +1427,17 @@ function AudioLesson({ narration, audioAsset }: { narration: string; audioAsset?
               preload="metadata"
               onRateChange={(event) => setPlaybackRate(event.currentTarget.playbackRate)}
               onCanPlay={() => console.info("Lesson audio URL verified and ready", { audioUrl })}
-              onPlay={() => {
-                setAudioPlaying(true);
-                console.info("Lesson audio playback started", { audioUrl });
-              }}
-              onPause={() => setAudioPlaying(false)}
-              onEnded={() => setAudioPlaying(false)}
+              onPlay={() => console.info("Lesson audio playback started", { audioUrl })}
               onError={(event) => console.error("Lesson audio player failed", event.currentTarget.error)}
             />
           </div>
         ) : useBrowserNarration ? (
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={playBrowserNarration} disabled={speaking} className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm text-background disabled:opacity-60">
-              <Play className="size-4" /> Listen now
+            <button type="button" onClick={toggleBrowserNarration} className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm text-background">
+              {speaking ? <Pause className="size-4" /> : <Play className="size-4" />}
+              {speaking ? "Stop" : "Listen now"}
             </button>
-            <button type="button" onClick={pauseBrowserNarration} disabled={!speaking} className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm text-muted-foreground disabled:opacity-60">
-              <Pause className="size-4" /> Pause
-            </button>
-            {status && <span className="self-center text-sm text-muted-foreground">{speaking ? status : "Browser narration ready while server audio prepares."}</span>}
+            {status && <span className="self-center text-sm text-muted-foreground">{speaking ? status : "Browser narration ready."}</span>}
           </div>
         ) : (
           status ? (

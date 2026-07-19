@@ -73,7 +73,11 @@ async def _finalize_lesson_media(lesson: models.LessonBlueprint) -> None:
 
     generated_assets: list[dict[str, Any]] = []
     try:
-        if style == "auditory":
+        existing_audio = next(
+            (item for item in lesson.visualElements if item.get("type") == "audio" and item.get("audioUrl")),
+            None,
+        )
+        if style == "auditory" and not existing_audio:
             try:
                 audio_asset = await generate_lesson_audio(lesson, provider)
                 generated_assets.append(audio_asset)

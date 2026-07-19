@@ -12,6 +12,9 @@ import type {
   TutorInteractionResponse,
 } from "@/types/api";
 
+const lessonAudioRequests = new Map<string, Promise<Blob>>();
+const MAX_CACHED_AUDIO_REQUESTS = 12;
+
 export function generateLesson(request: GenerateLessonRequest) {
   return apiRequest<LessonBlueprint, ApiJson>("/generate-lesson", {
     method: "POST",
@@ -52,9 +55,21 @@ export function saveLesson(request: SaveLessonRequest) {
 }
 
 export function synthesizeLessonAudio(text: string) {
-  return apiBlobRequest<ApiRecord>("/tts", {
+  const narration = text.trim();
+  const cached = lessonAudioRequests.get(narration);
+  if (cached) return cached;
+
+  const request = apiBlobRequest<ApiRecord>("/tts", {
     method: "POST",
-    body: { text },
+    body: { text: narration },
     timeoutMs: 120000,
   });
+
+  lessonAudioRequests.set(narration, request);
+  void request.catch(() => lessonAudioRequests.delete(narration));
+  if (lessonAudioRequests.size > MAX_CACHED_AUDIO_REQUESTS) {
+    const oldest = lessonAudioRequests.keys().next().value;
+    if (oldest && oldest !== narration) lessonAudioRequests.delete(oldest);
+  }
+  return request;
 }
