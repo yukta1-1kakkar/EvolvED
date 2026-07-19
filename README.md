@@ -1,18 +1,76 @@
 # EvolvED - Agentic Adaptive Learning Platform
 
-EvolvED is a full-stack adaptive learning system for Linear Algebra and Calculus foundations. It generates personalized roadmaps, multimodal lessons, quizzes, assessments, and follow-up adaptations from a learner profile and assessment history.
+EvolvED is a full-stack adaptive learning system for Linear Algebra and Calculus foundations. It uses a consolidated three-agent architecture to generate personalized roadmaps, multimodal lessons, assessments, and follow-up adaptations from learner profiles, module-leader sources, and assessment history.
 
 ## What It Covers
 
-- Agentic workflow: learner modeling, pedagogical strategy, lesson planning, content generation, quiz generation, assessment, adaptation, and memory retrieval.
+- Three-agent workflow: personalized instruction, assessment and adaptation, and quality governance.
 - Personalization: learning style, education level, familiarity, pace, availability, accessibility support, and persisted roadmap progress.
 - Multimodal learning: readable symbolic math, visual diagrams, vector plots, audio narration, guided practice, tutor chat, and interactive assessment.
 - Human feedback loop: feedback route, assessment history, progress analytics, learner memory, and evolved next-lesson generation.
 - Math scope: Linear Algebra foundations and Calculus topics selected during onboarding.
 
+## Three-Agent Architecture
+
+EvolvED deliberately groups related responsibilities into three model-backed agents instead of treating every processing step as an independent agent. Learner-state construction, content indexing, persistence, media rendering, guardrail functions, and API routing are supporting services or internal tasks, not additional agents.
+
+### 1. Personalised Instruction Agent
+
+Creates and delivers the learner-specific teaching experience.
+
+- Builds learner state from profile and progress data.
+- Derives pedagogy, pace, difficulty, modality, and interaction density internally.
+- Generates lesson roadmaps and lesson blueprints.
+- Produces modality-specific lesson delivery and lesson-grounded tutor responses.
+- Indexes lesson content for learner memory.
+
+Pedagogical strategy is derived inside this agent without a separate model request. Normal lesson generation therefore requires one instruction-model request rather than a chain of learner, pedagogy, planning, and content agents.
+
+### 2. Assessment and Adaptation Agent
+
+Measures learning and determines the appropriate next step.
+
+- Generates lesson-grounded quizzes and assessments.
+- Evaluates learner answers and confidence evidence.
+- Produces scores, strengths, weaknesses, misconceptions, and feedback.
+- Returns the next-lesson adaptation with the evaluation.
+
+Evaluation and adaptation share one model response during assessment submission, avoiding a second sequential adaptation request.
+
+### 3. Quality and Governance Agent
+
+Creates safe, accurate, source-grounded material for module-leader approval.
+
+- Uses extracted source material supplied by the module leader.
+- Generates and validates lesson or assessment drafts.
+- Checks completeness, difficulty, clarity, answer correctness, safety, and source fidelity.
+- Produces review-ready content while leaving approval and publication under human control.
+
+### Runtime Flow
+
+```text
+Module leader source
+        |
+        v
+Quality and Governance Agent
+        |
+        v
+Module leader approval and publication
+        |
+        v
+Personalised Instruction Agent
+        |
+        v
+Assessment and Adaptation Agent
+        |
+        +---- adaptation evidence ----> next instruction cycle
+```
+
+The longer research-oriented description is available in [`docs/three-agent-architecture.md`](docs/three-agent-architecture.md).
+
 ## Services
 
-- `backend/`: FastAPI, LangGraph-style orchestration, SQLAlchemy/Alembic, AWS Bedrock routing, Chroma memory, TTS support.
+- `backend/`: FastAPI, thin three-agent coordination, SQLAlchemy/Alembic, AWS Bedrock routing, Chroma memory, and TTS support.
 - `frontend/`: TanStack Start, React, TypeScript, Tailwind CSS, adaptive learning UI.
 
 ## Managed Persistence
@@ -20,6 +78,7 @@ EvolvED is a full-stack adaptive learning system for Linear Algebra and Calculus
 - Structured data: PostgreSQL via `DATABASE_URL`.
 - Vector memory: Chroma via `CHROMA_TENANT`, `CHROMA_DATABASE`, and `CHROMA_API_KEY`.
 - AI inference: AWS Bedrock models configured in `backend/app/core/config.py`.
+- Agent model routes: `INSTRUCTION_MODEL`, `ASSESSMENT_ADAPTATION_MODEL`, and `QUALITY_GOVERNANCE_MODEL`.
 
 ## Quick Start
 

@@ -108,12 +108,11 @@ app.add_middleware(
 async def startup_event():
     summary = ModelRouter.startup_summary()
     logger.info(
-        "AI model routing selected: provider=%s pedagogy=%s lesson_planning=%s content_generation=%s assessment=%s embedding=%s",
+        "Three-agent model routing selected: provider=%s instruction=%s assessment_adaptation=%s quality_governance=%s embedding=%s",
         summary["selected_provider"],
-        summary["selected_pedagogy_model"],
-        summary["selected_lesson_planning_model"],
-        summary["selected_content_generation_model"],
-        summary["selected_assessment_model"],
+        summary["selected_instruction_model"],
+        summary["selected_assessment_adaptation_model"],
+        summary["selected_quality_governance_model"],
         summary["selected_embedding_model"],
     )
     await init_db()

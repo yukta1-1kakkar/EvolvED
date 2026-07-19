@@ -11,14 +11,9 @@ from app.core.config import settings
 
 
 EXPECTED_ROUTES = {
-    "learner": "us.anthropic.claude-sonnet-4-6",
-    "pedagogy": "us.anthropic.claude-sonnet-4-6",
-    "planning": "us.anthropic.claude-sonnet-4-6",
-    "draft": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "content": "us.anthropic.claude-sonnet-4-6",
+    "instruction": "us.anthropic.claude-sonnet-4-6",
     "assessment": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "adaptation": "us.anthropic.claude-sonnet-4-6",
-    "tutor": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "governance": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
 EXPECTED_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
 
@@ -30,8 +25,9 @@ async def main() -> None:
         assert ModelRouter.get_model(layer) == expected_model, (layer, ModelRouter.validation_report())
 
     provider = BedrockProvider()
-    await assert_chat_call(provider, "planning", ModelRouter.get_model("planning"))
-    await assert_chat_call(provider, "quiz", ModelRouter.get_model("quiz"))
+    await assert_chat_call(provider, "instruction", ModelRouter.get_model("instruction"))
+    await assert_chat_call(provider, "assessment", ModelRouter.get_model("assessment"))
+    await assert_chat_call(provider, "governance", ModelRouter.get_model("governance"))
     embeddings = await provider.create_embedding(["EvolvED Bedrock Titan embedding integration check."], model=ModelRouter.get_embedding_model())
     assert len(embeddings) == 1 and len(embeddings[0]) == 1024
 
@@ -64,18 +60,20 @@ async def main() -> None:
             ],
         },
     )
-    lesson = await langgraph_nodes.lesson_planning_agent(lesson_req, learner_state, teaching_strategy)
+    lesson = await langgraph_nodes.personalized_instruction_agent.generate_lesson(
+        lesson_req, learner_state, teaching_strategy
+    )
     langgraph_nodes._validate_blueprint(lesson)
 
     session_state = {"lesson": lesson.model_dump()}
-    quiz = await langgraph_nodes.assessment_agent(
+    quiz = await langgraph_nodes.assessment_adaptation_agent.run(
         models.GenerateQuizRequest(learner_id=learner_id, session_id=lesson.lesson_id),
         session_state,
     )
     assert len(quiz.questions) >= 3
 
     answers = {question["id"]: question.get("expected_answer", "Explained with the lesson method.") for question in quiz.questions}
-    assessment = await langgraph_nodes.assessment_agent(
+    assessment = await langgraph_nodes.assessment_adaptation_agent.run(
         models.AssessmentSubmission(
             learner_id=learner_id,
             session_id=lesson.lesson_id,
@@ -86,7 +84,7 @@ async def main() -> None:
     )
     assert 0 <= assessment.score <= 1
 
-    adaptation = await langgraph_nodes.adaptation_agent(
+    adaptation = await langgraph_nodes.assessment_adaptation_agent.adapt(
         models.AdaptationRequest(
             learner_id=learner_id,
             session_id=lesson.lesson_id,

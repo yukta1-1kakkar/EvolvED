@@ -154,7 +154,7 @@ class BedrockProvider(LLMProvider):
             }]
             payload["tool_choice"] = {"type": "tool", "name": "return_structured_result"}
 
-        model_id = model or settings.lesson_planning_model
+        model_id = model or settings.instruction_model
 
         def _invoke() -> Dict[str, Any]:
             client = self._bedrock_runtime_client()

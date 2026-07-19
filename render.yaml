@@ -10,12 +10,15 @@ services:
     runtime: python
     plan: free
     rootDir: backend
+    autoDeploy: true
     buildCommand: pip install -r requirements.txt
     startCommand: python -m alembic -c alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /docs
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
+      - key: PYTHONUNBUFFERED
+        value: "1"
       - key: DATABASE_URL
         fromDatabase:
           name: evolved-staging-db
@@ -24,6 +27,24 @@ services:
         value: "false"
       - key: ACTIVE_PROVIDER
         value: bedrock
+      # EvolvED exposes exactly three model-backed agent routes. These replace
+      # LEARNER_MODEL, PEDAGOGY_MODEL, LESSON_PLANNING_MODEL,
+      # CONTENT_GENERATION_MODEL, ASSESSMENT_MODEL, ADAPTATION_MODEL, and
+      # FAST_INTERACTION_MODEL from older deployments.
+      - key: INSTRUCTION_MODEL
+        value: us.anthropic.claude-sonnet-4-6
+      - key: ASSESSMENT_ADAPTATION_MODEL
+        value: us.anthropic.claude-haiku-4-5-20251001-v1:0
+      - key: QUALITY_GOVERNANCE_MODEL
+        value: us.anthropic.claude-haiku-4-5-20251001-v1:0
+      - key: EMBEDDING_MODEL
+        value: amazon.titan-embed-text-v2:0
+      - key: BEDROCK_CONNECT_TIMEOUT_SECONDS
+        value: "10"
+      - key: BEDROCK_READ_TIMEOUT_SECONDS
+        value: "120"
+      - key: BEDROCK_MAX_ATTEMPTS
+        value: "4"
       - key: AWS_REGION
         value: us-east-1
       - key: AWS_ACCESS_KEY_ID
@@ -46,12 +67,15 @@ services:
     runtime: node
     plan: free
     rootDir: frontend
+    autoDeploy: true
     buildCommand: npm ci && npm run build
     startCommand: npm run start
     healthCheckPath: /
     envVars:
       - key: NODE_VERSION
         value: 22.16.0
+      - key: NODE_ENV
+        value: production
       # Free Render web services cannot receive private-network traffic, so the
       # frontend proxy must use the API's public URL.
       - key: BACKEND_URL

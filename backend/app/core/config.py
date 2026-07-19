@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,13 +19,15 @@ class Settings(BaseSettings):
     openrouter_fast_model: str = "anthropic/claude-3.5-haiku"
     reasoning_model: str = BEDROCK_REASONING_MODEL
     fast_model: str = BEDROCK_FAST_MODEL
-    learner_model: str = BEDROCK_REASONING_MODEL
-    pedagogy_model: str = BEDROCK_REASONING_MODEL
-    lesson_planning_model: str = BEDROCK_REASONING_MODEL
-    content_generation_model: str = BEDROCK_REASONING_MODEL
-    assessment_model: str = BEDROCK_FAST_MODEL
-    adaptation_model: str = BEDROCK_REASONING_MODEL
-    fast_interaction_model: str = BEDROCK_FAST_MODEL
+    instruction_model: str = Field(
+        default=BEDROCK_REASONING_MODEL,
+        validation_alias=AliasChoices("INSTRUCTION_MODEL", "LESSON_PLANNING_MODEL"),
+    )
+    assessment_adaptation_model: str = Field(
+        default=BEDROCK_FAST_MODEL,
+        validation_alias=AliasChoices("ASSESSMENT_ADAPTATION_MODEL", "ASSESSMENT_MODEL"),
+    )
+    quality_governance_model: str = BEDROCK_FAST_MODEL
     embedding_model: str = BEDROCK_EMBEDDING_MODEL
     aws_region: str = "us-east-1"
     aws_access_key_id: str | None = None

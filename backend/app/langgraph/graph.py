@@ -1,78 +1,17 @@
 import asyncio
 import logging
 from typing import Any, Dict
-from app.core import langgraph_nodes
-from app.core import models
 
-try:
-    import langgraph as lg
-except Exception:
-    lg = None
+from app.core import langgraph_nodes, models
 
 
-class Orchestrator:
-    """Builds a LangGraph orchestration pipeline connecting agents.
+class ThreeAgentCoordinator:
+    """Thin coordinator for EvolvED's three-agent architecture.
 
-    If LangGraph SDK is not available, falls back to a sequential async runner.
+    Learner modelling and pedagogy are internal tasks of the Personalised
+    Instruction Agent. This coordinator passes typed artifacts between agents;
+    it does not create a model-backed agent for every processing step.
     """
-
-    def __init__(self):
-        self.graph = None
-        graph_cls = getattr(lg, "Graph", None) if lg else None
-        if graph_cls:
-            self.graph = graph_cls(name="evolved_pipeline")
-            # register nodes using functions in `langgraph_nodes`
-            # Keep orchestration minimal here; implement conditional routing in runtime code.
-
-    async def run(self, learner_profile: models.LearnerProfile, topic: str) -> Dict[str, Any]:
-        # Run learner agent
-        learner_state = await langgraph_nodes.learner_agent(learner_profile)
-
-        # Pedagogy reasoning
-        pedagogy_input = {
-            "state": {
-                "learner_state": learner_state.dict(),
-                "topic_context": {"current_topic": topic},
-            }
-        }
-        teaching_strategy = await langgraph_nodes.pedagogy_agent(pedagogy_input)
-
-        # Lesson planning
-        gen_req = models.GenerateLessonRequest(learner_id=learner_profile.learner_id, topic=topic)
-        lesson_blueprint = await langgraph_nodes.lesson_planning_agent(gen_req, learner_state, teaching_strategy)
-
-        # Content generation
-        content = await langgraph_nodes.content_generation_agent(lesson_blueprint)
-
-        # Return a combined package
-        return {
-            "learner_state": learner_state.dict(),
-            "teaching_strategy": teaching_strategy.dict(),
-            "lesson_blueprint": lesson_blueprint.dict(),
-            "generated_content": content.dict(),
-        }
-
-    async def generate_blueprint(
-        self,
-        learner_profile: models.LearnerProfile,
-        topic: str,
-        constraints: Dict[str, Any] | None = None,
-    ) -> models.LessonBlueprint:
-        learner_state = await langgraph_nodes.learner_agent(learner_profile)
-        teaching_strategy = await langgraph_nodes.pedagogy_agent(
-            {
-                "state": {
-                    "learner_state": learner_state.model_dump(),
-                    "topic_context": {"current_topic": topic},
-                }
-            }
-        )
-        request = models.GenerateLessonRequest(
-            learner_id=learner_profile.learner_id,
-            topic=topic,
-            constraints=constraints or {},
-        )
-        return await langgraph_nodes.lesson_planning_agent(request, learner_state, teaching_strategy)
 
     async def generate_lesson_package(
         self,
@@ -81,23 +20,28 @@ class Orchestrator:
         topic: str,
         constraints: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        teaching_strategy = await langgraph_nodes.pedagogy_agent(
+        context = constraints or {}
+        teaching_strategy = await langgraph_nodes.personalized_instruction_agent.design_strategy(
             {
-                "state": {
-                    "learner_state": learner_state.model_dump(),
-                    "topic_context": {"current_topic": topic},
-                    "adaptation_context": (constraints or {}).get("adaptation_context", {}),
-                }
+                "learner_profile": learner_profile.model_dump(),
+                "learner_state": learner_state.model_dump(),
+                "topic_context": {
+                    "current_topic": topic,
+                    "constraints": context,
+                    "adaptation_context": context.get("adaptation_context", {}),
+                },
             }
         )
         request = models.GenerateLessonRequest(
             learner_id=learner_profile.learner_id,
             topic=topic,
-            selected_lesson=(constraints or {}).get("selected_lesson"),
-            constraints={**(constraints or {}), "learner_profile": learner_profile.model_dump()},
+            selected_lesson=context.get("selected_lesson"),
+            constraints={**context, "learner_profile": learner_profile.model_dump()},
         )
-        lesson = await langgraph_nodes.lesson_planning_agent(request, learner_state, teaching_strategy)
-        asyncio.create_task(_enrich_lesson_content(lesson))
+        lesson = await langgraph_nodes.personalized_instruction_agent.generate_lesson(
+            request, learner_state, teaching_strategy
+        )
+        asyncio.create_task(_index_lesson_content(lesson))
         assets = models.GeneratedContent(
             lesson_assets=[
                 {
@@ -119,13 +63,12 @@ class Orchestrator:
         learner_profile: models.LearnerProfile,
         topic: str,
     ) -> models.TeachingStrategy:
-        learner_state = await langgraph_nodes.learner_agent(learner_profile)
-        return await langgraph_nodes.pedagogy_agent(
+        learner_state = await langgraph_nodes.personalized_instruction_agent.build_learner_state(learner_profile)
+        return await langgraph_nodes.personalized_instruction_agent.design_strategy(
             {
-                "state": {
-                    "learner_state": learner_state.model_dump(),
-                    "topic_context": {"current_topic": topic},
-                }
+                "learner_profile": learner_profile.model_dump(),
+                "learner_state": learner_state.model_dump(),
+                "topic_context": {"current_topic": topic},
             }
         )
 
@@ -136,39 +79,33 @@ class Orchestrator:
         topic: str,
         constraints: Dict[str, Any] | None = None,
     ) -> models.LessonRoadmapResponse:
-        teaching_strategy = await langgraph_nodes.pedagogy_agent(
+        context = constraints or {}
+        teaching_strategy = await langgraph_nodes.personalized_instruction_agent.design_strategy(
             {
-                "state": {
-                    "learner_state": learner_state.model_dump(),
-                    "topic_context": {"current_topic": topic},
-                    "adaptation_context": (constraints or {}).get("adaptation_context", {}),
-                }
+                "learner_profile": learner_profile.model_dump(),
+                "learner_state": learner_state.model_dump(),
+                "topic_context": {
+                    "current_topic": topic,
+                    "constraints": context,
+                    "adaptation_context": context.get("adaptation_context", {}),
+                },
             }
         )
         request = models.GenerateLessonRequest(
             learner_id=learner_profile.learner_id,
             topic=topic,
-            constraints=constraints or {},
+            constraints=context,
         )
-        return await langgraph_nodes.lesson_roadmap_agent(request, learner_profile, learner_state, teaching_strategy)
+        return await langgraph_nodes.personalized_instruction_agent.generate_roadmap(
+            request, learner_profile, learner_state, teaching_strategy
+        )
 
 
-orchestrator = Orchestrator()
-
-async def generate_for_learner(profile: models.LearnerProfile, topic: str) -> Dict[str, Any]:
-    return await orchestrator.run(profile, topic)
-
-
-async def generate_blueprint(
-    profile: models.LearnerProfile,
-    topic: str,
-    constraints: Dict[str, Any] | None = None,
-) -> models.LessonBlueprint:
-    return await orchestrator.generate_blueprint(profile, topic, constraints)
+coordinator = ThreeAgentCoordinator()
 
 
 async def generate_strategy(profile: models.LearnerProfile, topic: str) -> models.TeachingStrategy:
-    return await orchestrator.generate_strategy(profile, topic)
+    return await coordinator.generate_strategy(profile, topic)
 
 
 async def generate_lesson_package(
@@ -177,7 +114,7 @@ async def generate_lesson_package(
     topic: str,
     constraints: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    return await orchestrator.generate_lesson_package(profile, learner_state, topic, constraints)
+    return await coordinator.generate_lesson_package(profile, learner_state, topic, constraints)
 
 
 async def generate_roadmap(
@@ -186,11 +123,11 @@ async def generate_roadmap(
     topic: str,
     constraints: Dict[str, Any] | None = None,
 ) -> models.LessonRoadmapResponse:
-    return await orchestrator.generate_roadmap(profile, learner_state, topic, constraints)
+    return await coordinator.generate_roadmap(profile, learner_state, topic, constraints)
 
 
-async def _enrich_lesson_content(lesson: models.LessonBlueprint) -> None:
+async def _index_lesson_content(lesson: models.LessonBlueprint) -> None:
     try:
-        await langgraph_nodes.content_generation_agent(lesson)
+        await langgraph_nodes.personalized_instruction_agent.index_content(lesson)
     except Exception as exc:
-        logging.getLogger(__name__).warning("Background content enrichment failed: %s", exc)
+        logging.getLogger(__name__).warning("Background content indexing failed: %s", exc)

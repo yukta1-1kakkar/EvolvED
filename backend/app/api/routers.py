@@ -611,7 +611,7 @@ async def create_learner(profile: models.LearnerProfile, request: Request):
     _require_identity(request, profile.learner_id, "student")
     repo = repository.AsyncRepository()
     learner = await repo.upsert_learner(profile)
-    state = await langgraph_nodes.learner_agent(learner)
+    state = await langgraph_nodes.personalized_instruction_agent.build_learner_state(learner)
     return state
 
 
@@ -732,7 +732,7 @@ async def get_teaching_strategy(req: models.GenerateLessonRequest, request: Requ
     topic = req.topic.strip() or learner_profile.topic or learner_profile.learning_goal or "foundational learning"
     constraints = req.constraints or {}
     try:
-        return await langgraph_nodes.pedagogy_agent(
+        return await langgraph_nodes.personalized_instruction_agent.design_strategy(
             {
                 "learner_profile": learner_profile.model_dump(),
                 "learner_state": learner_state.model_dump(),
@@ -762,10 +762,18 @@ async def submit_assessment(sub: models.AssessmentSubmission, request: Request):
         if sub.session_id.startswith("published:") and not session_state.get("published_assessment"):
             raise ValueError("This published assessment is unavailable or you are not enrolled in its class.")
         logger.info("Assessment submit session loaded: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
-        result = _normalize_generated_model(await langgraph_nodes.assessment_agent(sub, session_state))
+        result = _normalize_generated_model(await langgraph_nodes.assessment_adaptation_agent.run(sub, session_state))
         logger.info("Assessment submit graded: session_id=%s score=%.3f elapsed=%.2fs", sub.session_id, result.score, perf_counter() - started)
         state = await repo.get_learner_state(sub.learner_id)
-        decision = _normalize_generated_model(await langgraph_nodes.adaptation_agent(models.AdaptationRequest(learner_id=sub.learner_id, session_id=sub.session_id, assessment_state=result.model_dump())))
+        decision = _normalize_generated_model(
+            await langgraph_nodes.assessment_adaptation_agent.adapt(
+                models.AdaptationRequest(
+                    learner_id=sub.learner_id,
+                    session_id=sub.session_id,
+                    assessment_state=result.model_dump(),
+                )
+            )
+        )
         logger.info("Assessment submit adapted: session_id=%s elapsed=%.2fs", sub.session_id, perf_counter() - started)
         updated_learner_model = _updated_learner_model(state.model_dump(), result, decision)
         result.adaptation = decision.adaptations
@@ -790,7 +798,7 @@ async def submit_assessment(sub: models.AssessmentSubmission, request: Request):
 async def adapt_learning(req: models.AdaptationRequest, request: Request):
     _require_identity(request, req.learner_id, "student")
     try:
-        return _normalize_generated_model(await langgraph_nodes.adaptation_agent(req))
+        return _normalize_generated_model(await langgraph_nodes.assessment_adaptation_agent.adapt(req))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -803,7 +811,7 @@ async def generate_quiz(req: models.GenerateQuizRequest, request: Request):
     if not session_state:
         raise HTTPException(status_code=404, detail="Lesson session was not found.")
     try:
-        quiz = _normalize_generated_model(await langgraph_nodes.assessment_agent(req, session_state))
+        quiz = _normalize_generated_model(await langgraph_nodes.assessment_adaptation_agent.run(req, session_state))
         await repo.save_quiz(req.learner_id, quiz, (session_state.get("lesson") or {}).get("topic"))
         return quiz
     except Exception as exc:
@@ -818,7 +826,7 @@ async def tutor_interaction(req: models.TutorInteractionRequest, request: Reques
     if not session_state:
         raise HTTPException(status_code=404, detail="Lesson session was not found.")
     try:
-        answer = _normalize_generated_model(await langgraph_nodes.interactive_agent(req, session_state))
+        answer = _normalize_generated_model(await langgraph_nodes.personalized_instruction_agent.tutor(req, session_state))
         try:
             await repo.save_interaction(req, answer)
         except Exception as exc:

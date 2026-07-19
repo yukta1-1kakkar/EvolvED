@@ -1953,7 +1953,13 @@ async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, 
         analysis = _local_source_analysis(req.title, req.kind, req.source_material or {}, fallback)
         reviewed = _ensure_delivery_support(
             await asyncio.wait_for(
-                langgraph_nodes.quality_check_agent(req.title, req.kind, analysis, fallback, req.source_material or {}),
+                langgraph_nodes.quality_governance_agent.generate_draft(
+                    req.title,
+                    req.kind,
+                    analysis,
+                    fallback,
+                    req.source_material or {},
+                ),
                 timeout=70,
             ),
             req.kind,
@@ -1970,7 +1976,7 @@ async def _generate_draft_preview(req: models.ContentDraftRequest) -> Dict[str, 
         logger.warning("Module Leader agent workflow unavailable; using source-grounded fallback: %s: %r", type(exc).__name__, exc)
         return redact_inappropriate_content({
             **fallback,
-            "agent_workflow": ["Source-Grounded Generation Agent", "Quality Check Agent"],
+            "agent_workflow": ["Quality and Governance Agent"],
             "quality_check": {
                 "status": "fallback",
                 "reason": "AI review was unavailable, so EvolvED used its source-grounded generator.",

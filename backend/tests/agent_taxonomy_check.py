@@ -8,14 +8,18 @@ from app.core import langgraph_nodes
 
 
 def main() -> None:
-    assert ModelRouter.LAYER_DESCRIPTIONS["draft"] == "Quality Check Agent"
-    assert ModelRouter.LAYER_DESCRIPTIONS["assessment"] == "Quiz and Assessment Agent"
-    assert "quiz" not in ModelRouter.LAYER_DESCRIPTIONS
-    assert "evolution" not in ModelRouter.LAYER_DESCRIPTIONS
-    assert hasattr(langgraph_nodes, "quality_check_agent")
-    assert hasattr(langgraph_nodes, "assessment_agent")
-    assert not hasattr(langgraph_nodes, "quiz_agent")
-    assert not hasattr(langgraph_nodes, "evolutionary_agent")
+    assert ModelRouter.LAYER_DESCRIPTIONS == {
+        "instruction": "Personalised Instruction Agent",
+        "assessment": "Assessment and Adaptation Agent",
+        "governance": "Quality and Governance Agent",
+    }
+    assert hasattr(langgraph_nodes, "personalized_instruction_agent")
+    assert hasattr(langgraph_nodes, "assessment_adaptation_agent")
+    assert hasattr(langgraph_nodes, "quality_governance_agent")
+    assert not hasattr(langgraph_nodes, "pedagogy_agent")
+    assert not hasattr(langgraph_nodes, "lesson_planning_agent")
+    assert not hasattr(langgraph_nodes, "quality_check_agent")
+    assert not hasattr(langgraph_nodes, "adaptation_agent")
     print("Agent taxonomy check passed.")
 
 

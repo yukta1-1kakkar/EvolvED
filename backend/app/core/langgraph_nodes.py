@@ -6,8 +6,6 @@ import json
 import re
 import asyncio
 
-from pydantic import ValidationError
-
 from app.core import models
 from app.ai.factory import get_provider
 from app.ai.openrouter_provider import OpenRouterProvider
@@ -250,73 +248,57 @@ def _json_from_model_text(text: str) -> Dict[str, Any]:
         raise
 
 
-async def learner_agent(profile_or_state: Any) -> models.LearnerState:
+async def _build_learner_state(profile_or_state: Any) -> models.LearnerState:
     if isinstance(profile_or_state, models.LearnerState):
         return profile_or_state
     profile = profile_or_state
     state = models.LearnerState(
         learner_id=profile.learner_id,
         knowledge_level=profile.topic_familiarity or "novice",
+        pace_preference=profile.pace_preference,
         preferred_modalities=profile.preferred_modality,
     )
     return state
 
 
-async def pedagogy_agent(state: Dict[str, Any]) -> models.TeachingStrategy:
-    system = (
-        "You are an expert pedagogical reasoning agent. Given the learner state and topic context,"
-        " decide teaching strategy: select strategy_type, recommended_modalities, difficulty_level, pacing_strategy, and interaction_density."
-        " Output JSON only with keys matching the TeachingStrategy model."
+async def _design_teaching_strategy(context: Dict[str, Any]) -> models.TeachingStrategy:
+    """Derive pedagogy inside the instruction agent without another model hop."""
+    wrapped = context.get("state") if isinstance(context.get("state"), dict) else context
+    profile = wrapped.get("learner_profile") if isinstance(wrapped.get("learner_profile"), dict) else {}
+    learner = wrapped.get("learner_state") if isinstance(wrapped.get("learner_state"), dict) else {}
+    topic_context = wrapped.get("topic_context") if isinstance(wrapped.get("topic_context"), dict) else {}
+    modalities = (
+        profile.get("preferred_modality")
+        or learner.get("preferred_modalities")
+        or ["Detailed Written Explanations"]
     )
-
-    user_msg = f"State: {state}"
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_msg},
-    ]
-
-    try:
-        resp = await _call_layer("pedagogy", messages, temperature=0.0)
-        text = resp["choices"][0]["message"]["content"]
-    except Exception as exc:
-        logger.warning("Pedagogy model unavailable: %s", exc)
-        raise RuntimeError(f"Pedagogy model unavailable: {exc}") from exc
-
-    try:
-        payload = _json_from_model_text(text)
-        normalized = {
-            "strategy_type": _strategy_text(payload.get("strategy_type") or payload.get("strategyType")) or "adaptive",
-            "recommended_modalities": _strategy_list(payload.get("recommended_modalities") or payload.get("recommendedModalities")),
-            "difficulty_level": _strategy_text(payload.get("difficulty_level") or payload.get("difficultyLevel")),
-            "pacing_strategy": _strategy_text(payload.get("pacing_strategy") or payload.get("pacingStrategy")),
-            "interaction_density": _strategy_text(payload.get("interaction_density") or payload.get("interactionDensity")),
-        }
-
-        return models.TeachingStrategy(**normalized)
-    except (ValueError, TypeError, ValidationError) as exc:
-        raise RuntimeError(f"Pedagogy agent returned invalid JSON: {exc}") from exc
-
-
-def _strategy_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value.strip() or None
-    if isinstance(value, list):
-        return ", ".join(filter(None, (_strategy_text(item) for item in value))) or None
-    if isinstance(value, dict):
-        parts = [f"{key}: {_strategy_text(item)}" for key, item in value.items() if _strategy_text(item)]
-        return "; ".join(parts) or None
-    return str(value)
-
-
-def _strategy_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [text for item in value if (text := _strategy_text(item))]
-    text = _strategy_text(value)
-    return [text] if text else []
+    if isinstance(modalities, str):
+        modalities = [modalities]
+    pace = str(
+        profile.get("pace_preference")
+        or learner.get("pace_preference")
+        or topic_context.get("constraints", {}).get("pace")
+        or "Balanced"
+    )
+    level = str(
+        profile.get("topic_familiarity")
+        or learner.get("knowledge_level")
+        or topic_context.get("constraints", {}).get("familiarity_level")
+        or "Beginner"
+    )
+    weak_topics = learner.get("weak_topics") or topic_context.get("weak_topics") or []
+    confidence = float(learner.get("confidence_score") or topic_context.get("confidence_score") or 0.0)
+    pace_lower = pace.lower()
+    level_lower = level.lower()
+    strategy_type = "reinforcement" if weak_topics or (confidence and confidence < 0.55) else "adaptive_scaffolding"
+    interaction_density = "high" if "gentle" in pace_lower or "beginner" in level_lower else "low" if "fast" in pace_lower else "medium"
+    return models.TeachingStrategy(
+        strategy_type=strategy_type,
+        recommended_modalities=[str(item) for item in modalities if str(item).strip()],
+        difficulty_level=level,
+        pacing_strategy=pace,
+        interaction_density=interaction_density,
+    )
 
 
 def _lesson_style_key(learning_style: str) -> str:
@@ -1419,7 +1401,7 @@ def _lesson_payload_to_blueprint(
     return blueprint
 
 
-async def lesson_planning_agent(
+async def _plan_lesson(
     req: models.GenerateLessonRequest,
     learner_state: models.LearnerState,
     teaching_strategy: models.TeachingStrategy,
@@ -1475,7 +1457,7 @@ async def lesson_planning_agent(
         try:
             if attempt:
                 logger.info("Lesson correction retry: lesson_request_id=%s attempt=%s", lesson_request_id, attempt + 1)
-            resp = await _call_layer("planning", messages, temperature=0.2, max_tokens=LESSON_MAX_TOKENS)
+            resp = await _call_layer("instruction", messages, temperature=0.2, max_tokens=LESSON_MAX_TOKENS)
             text = resp["choices"][0]["message"]["content"]
             stop_reason = (resp.get("raw") or {}).get("stop_reason")
             logger.info(
@@ -1544,7 +1526,7 @@ async def lesson_planning_agent(
     raise RuntimeError("Lesson generation failed without a response")
 
 
-async def lesson_roadmap_agent(
+async def _plan_roadmap(
     req: models.GenerateLessonRequest,
     learner_profile: models.LearnerProfile,
     learner_state: models.LearnerState,
@@ -1602,7 +1584,7 @@ async def lesson_roadmap_agent(
         try:
             if attempt:
                 logger.info("Roadmap generation retry attempt=%s learner_id=%s topic=%s", attempt + 1, req.learner_id, req.topic)
-            resp = await _call_layer("planning", messages, temperature=0.7)
+            resp = await _call_layer("instruction", messages, temperature=0.7)
             text = resp["choices"][0]["message"]["content"]
             logger.info("Roadmap generation response: learner_id=%s attempt=%s response=%s", req.learner_id, attempt + 1, text)
             payload = _json_from_model_text(text)
@@ -1715,7 +1697,7 @@ def _modality_contract(learning_style: str) -> Dict[str, Any]:
     return contracts[key]
 
 
-async def content_generation_agent(blueprint: models.LessonBlueprint) -> models.GeneratedContent:
+async def _index_lesson_content(blueprint: models.LessonBlueprint) -> models.GeneratedContent:
     assets = []
     for index, step in enumerate(blueprint.lesson_structure):
         step_id = step.get('step') or str(index)
@@ -1734,7 +1716,7 @@ async def content_generation_agent(blueprint: models.LessonBlueprint) -> models.
     return models.GeneratedContent(lesson_assets=assets)
 
 
-async def source_analysis_agent(
+async def _analyze_source(
     title: str,
     kind: str,
     source_material: Dict[str, Any],
@@ -1752,7 +1734,7 @@ async def source_analysis_agent(
         }
 
     prompt = (
-        "You are the Source Analysis Agent for a module leader. Analyze only the supplied source. "
+        "You are the Quality and Governance Agent for a module leader. Analyze only the supplied source. "
         "Do not add facts that are absent from it. Return JSON only with readable (boolean), "
         "source_summary (string), concepts (5 to 12 objects with name, evidence, and importance), "
         "learning_objectives (3 to 6 measurable strings), difficulty (Foundational, Intermediate, or Advanced), "
@@ -1760,14 +1742,14 @@ async def source_analysis_agent(
         f"Draft kind: {kind}. Draft title: {title}. Filename: {source_material.get('filename', '')}. "
         f"Source text:\n{source_text[:30000]}"
     )
-    resp = await _call_layer("content", [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000)
+    resp = await _call_layer("governance", [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000)
     payload = _json_from_model_text(resp["choices"][0]["message"]["content"])
     concepts = payload.get("concepts")
     objectives = payload.get("learning_objectives")
     if payload.get("readable") is False or not isinstance(concepts, list) or len(concepts) < 3:
-        raise ValueError("Source Analysis Agent did not return enough source-grounded concepts")
+        raise ValueError("Quality and Governance Agent did not return enough source-grounded concepts")
     if not isinstance(objectives, list) or len(objectives) < 2:
-        raise ValueError("Source Analysis Agent did not return enough learning objectives")
+        raise ValueError("Quality and Governance Agent did not return enough learning objectives")
     return {
         **payload,
         "readable": True,
@@ -1778,7 +1760,7 @@ async def source_analysis_agent(
     }
 
 
-async def quality_check_agent(
+async def _generate_governed_draft(
     title: str,
     kind: str,
     source_analysis: Dict[str, Any],
@@ -1819,7 +1801,7 @@ async def quality_check_agent(
     source_text = _representative_source_excerpt(str((source_material or {}).get("text") or ""))
     analysis_for_prompt = {key: value for key, value in source_analysis.items() if key != "source_text"}
     prompt = (
-        "You are the Source-Grounded Lesson and Assessment Agent for a module leader. Analyze the complete source, then "
+        "You are the Quality and Governance Agent for a module leader. Analyze the complete source, then "
         "rewrite and quality-check the candidate content for "
         "accuracy, completeness, appropriate difficulty, accessibility, clarity, answer correctness, and source fidelity. "
         "Remove unsupported claims. Return JSON only, containing the corrected final content rather than a review report. "
@@ -1828,7 +1810,7 @@ async def quality_check_agent(
         f"Candidate draft: {json.dumps(draft, ensure_ascii=False)}. Full extracted source:\n{source_text}"
     )
     resp = await _call_layer(
-        "draft",
+        "governance",
         [
             {"role": "system", "content": "You create accurate, highly teachable classroom material. Return one valid JSON object only, without Markdown fences."},
             {"role": "user", "content": prompt},
@@ -1841,12 +1823,12 @@ async def quality_check_agent(
     reviewed = _json_from_model_text(resp["choices"][0]["message"]["content"])
     if kind == "lesson":
         if not isinstance(reviewed.get("sections"), list) or len(reviewed["sections"]) < 4:
-            raise ValueError("Quality Check Agent returned an incomplete lesson")
+            raise ValueError("Quality and Governance Agent returned an incomplete lesson")
         if not isinstance(reviewed.get("learning_objectives"), list) or len(reviewed["learning_objectives"]) < 2:
-            raise ValueError("Quality Check Agent returned a lesson without sufficient objectives")
+            raise ValueError("Quality and Governance Agent returned a lesson without sufficient objectives")
         for section in reviewed["sections"]:
             if not isinstance(section, dict) or not section.get("title") or not section.get("summary"):
-                raise ValueError("Quality Check Agent returned an incomplete lesson section")
+                raise ValueError("Quality and Governance Agent returned an incomplete lesson section")
             summary = str(section["summary"]).strip()
             section["guided_explanation"] = str(section.get("guided_explanation") or summary).strip()
             section["quick_takeaway"] = str(section.get("quick_takeaway") or summary).strip()
@@ -1861,14 +1843,14 @@ async def quality_check_agent(
                 normalized_flowcharts.append({**flow, "steps": steps})
         reviewed["flowcharts"] = normalized_flowcharts[:3]
         if not reviewed["flowcharts"]:
-            raise ValueError("Quality Check Agent returned a lesson without a source-specific visual")
+            raise ValueError("Quality and Governance Agent returned a lesson without a source-specific visual")
     else:
         questions = reviewed.get("questions")
         if not isinstance(questions, list) or len(questions) < 5:
-            raise ValueError("Quality Check Agent returned an incomplete assessment")
+            raise ValueError("Quality and Governance Agent returned an incomplete assessment")
         for question in questions:
             if not isinstance(question, dict) or not question.get("question") or not question.get("answer") or not question.get("topic"):
-                raise ValueError("Quality Check Agent returned an invalid assessment question")
+                raise ValueError("Quality and Governance Agent returned an invalid assessment question")
             question_type = str(question.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
             question["type"] = question_type
             if question_type == "short_answer":
@@ -1878,20 +1860,20 @@ async def quality_check_agent(
                 or len(question["options"]) != 4
                 or question["answer"] not in question["options"]
             ):
-                raise ValueError("Quality Check Agent returned an invalid MCQ")
+                raise ValueError("Quality and Governance Agent returned an invalid MCQ")
     return {
         **reviewed,
         "title": str(reviewed.get("title") or title).strip(),
         "source_locked": True,
         "workflow": "source_grounded_generation_requires_module_leader_approval",
-        "agent_workflow": ["Source-Grounded Generation Agent", "Quality Check Agent"],
+        "agent_workflow": ["Quality and Governance Agent"],
         "quality_check": {
             "status": "passed",
             "checks": ["accuracy", "completeness", "difficulty", "accessibility", "source_fidelity"],
         },
         "generation": {
             "provider": str(resp.get("provider") or settings.active_provider).lower(),
-            "model": str(resp.get("model") or ModelRouter.get_model("draft")),
+            "model": str(resp.get("model") or ModelRouter.get_model("governance")),
             "mode": "primary_model",
         },
     }
@@ -1981,7 +1963,7 @@ def _draft_response_schema(kind: str) -> Dict[str, Any]:
     }
 
 
-async def interactive_agent(req: models.TutorInteractionRequest, session_state: Dict[str, Any]) -> models.TutorInteractionResponse:
+async def _answer_tutor_question(req: models.TutorInteractionRequest, session_state: Dict[str, Any]) -> models.TutorInteractionResponse:
     lesson = session_state.get("lesson", {})
     selected_lesson = lesson.get("selected_lesson") or {}
     prompt = (
@@ -2005,7 +1987,7 @@ async def interactive_agent(req: models.TutorInteractionRequest, session_state: 
         f"Learner question: {req.question}"
     )
     try:
-        resp = await _call_layer("tutor", [{"role": "user", "content": prompt}], temperature=0.2)
+        resp = await _call_layer("instruction", [{"role": "user", "content": prompt}], temperature=0.2)
         answer = _format_tutor_answer(resp["choices"][0]["message"]["content"], lesson, req.question)
     except Exception as exc:
         logger.warning("Tutor model unavailable; using lesson-grounded response: %s", exc)
@@ -2095,7 +2077,8 @@ async def _evaluate_assessment_submission(sub: models.AssessmentSubmission, sess
     prompt = (
         "Evaluate this learner assessment. Return JSON only with quiz_scores (object of 0-1 scores keyed by question), "
         "mastery_estimates (object of 0-1 concept scores), score (0-1 overall), strengths (list), weaknesses (list), "
-        "misconceptions (list), and detailed_feedback (string). "
+        "misconceptions (list), detailed_feedback (string), and adaptation (object). The adaptation object must include "
+        "action, targets, and reasoning for the learner's next lesson. "
         "Each submission answer may contain selected_options and long_answer. Grade both the multiple-select choices "
         "and the written reasoning, with more weight on conceptual justification than guessing. "
         "Assess only the concepts taught in the selected lesson and its learning objectives. "
@@ -2107,32 +2090,35 @@ async def _evaluate_assessment_submission(sub: models.AssessmentSubmission, sess
     try:
         resp = await _call_layer("assessment", [{"role": "user", "content": prompt}], temperature=0.0)
         payload = _json_from_model_text(resp["choices"][0]["message"]["content"])
-        return models.AssessmentResult(learner_id=sub.learner_id, session_id=sub.session_id, **payload)
+        result = models.AssessmentResult(learner_id=sub.learner_id, session_id=sub.session_id, **payload)
+        if not result.adaptation:
+            result.adaptation = _mastery_derived_adaptation(result.model_dump())
+        return result
     except Exception as exc:
         logger.warning("Assessment model unavailable; using confidence-aware scoring: %s", exc)
         return _fallback_assessment(sub)
 
 
-async def assessment_agent(
+async def _run_assessment(
     request: models.GenerateQuizRequest | models.AssessmentSubmission,
     session_state: Dict[str, Any] | None = None,
 ) -> models.QuizResponse | models.AssessmentResult:
-    """Generate assessment questions or evaluate answers through one assessment agent."""
+    """Generate questions or evaluate answers within the assessment and adaptation agent."""
     if isinstance(request, models.GenerateQuizRequest):
         return await _generate_assessment_questions(request, session_state or {})
     return await _evaluate_assessment_submission(request, session_state)
 
 
-async def adaptation_agent(req: models.AdaptationRequest) -> models.AdaptationDecision:
+async def _decide_adaptation(req: models.AdaptationRequest) -> models.AdaptationDecision:
     prompt = (
-        "You are an adaptive learning agent. Decide the next teaching adaptation from this assessment state. "
+        "You are the Assessment and Adaptation Agent. Decide the next teaching adaptation from this assessment state. "
         "Return JSON only with an 'adaptations' object describing the action, targets, and reasoning. "
         "Do not use em dashes in any generated text; use commas or periods instead. "
         f"Assessment state: {json.dumps(req.assessment_state)}"
     )
     try:
         resp = await _call_layer(
-            "adaptation",
+            "assessment",
             [{"role": "user", "content": prompt}],
             temperature=0.0,
         )
@@ -2147,16 +2133,24 @@ async def adaptation_agent(req: models.AdaptationRequest) -> models.AdaptationDe
         )
     except Exception as exc:
         logger.warning("Adaptation model unavailable; using mastery-derived adaptation: %s", exc)
-        weak = [key for key, value in req.assessment_state.get("mastery_estimates", {}).items() if float(value) < 0.7]
         return models.AdaptationDecision(
             learner_id=req.learner_id,
             session_id=req.session_id,
-            adaptations={
-                "action": "reinforce_foundations" if weak else "increase_challenge",
-                "targets": weak,
-                "reasoning": "Adjusted from the learner's latest mastery estimates.",
-            },
+            adaptations=_mastery_derived_adaptation(req.assessment_state),
         )
+
+
+def _mastery_derived_adaptation(assessment_state: Dict[str, Any]) -> Dict[str, Any]:
+    weak = [
+        key
+        for key, value in assessment_state.get("mastery_estimates", {}).items()
+        if float(value) < 0.7
+    ]
+    return {
+        "action": "reinforce_foundations" if weak else "increase_challenge",
+        "targets": weak,
+        "reasoning": "Adjusted from the learner's latest mastery estimates.",
+    }
 
 
 def _validate_roadmap_item(item: Any, index: int) -> models.LessonRoadmapItem:
@@ -2419,7 +2413,7 @@ def _fallback_assessment(sub: models.AssessmentSubmission) -> models.AssessmentR
         scores[question_id] = round((completeness * 0.7) + (confidence * 0.3), 3)
     overall = sum(scores.values()) / len(scores) if scores else 0.0
     weak = [key for key, value in scores.items() if value < 0.7]
-    return models.AssessmentResult(
+    result = models.AssessmentResult(
         learner_id=sub.learner_id,
         session_id=sub.session_id,
         quiz_scores=scores,
@@ -2430,3 +2424,83 @@ def _fallback_assessment(sub: models.AssessmentSubmission) -> models.AssessmentR
         misconceptions=[],
         detailed_feedback="Your responses were recorded. The next lesson will adjust its pacing and practice emphasis from your answer completeness and confidence.",
     )
+    result.adaptation = _mastery_derived_adaptation(result.model_dump())
+    return result
+
+
+class PersonalizedInstructionAgent:
+    """Owns learner context, pedagogy, lesson delivery, roadmap generation, and tutoring."""
+
+    async def build_learner_state(self, profile_or_state: Any) -> models.LearnerState:
+        return await _build_learner_state(profile_or_state)
+
+    async def design_strategy(self, context: Dict[str, Any]) -> models.TeachingStrategy:
+        return await _design_teaching_strategy(context)
+
+    async def generate_lesson(
+        self,
+        request: models.GenerateLessonRequest,
+        learner_state: models.LearnerState,
+        teaching_strategy: models.TeachingStrategy,
+    ) -> models.LessonBlueprint:
+        return await _plan_lesson(request, learner_state, teaching_strategy)
+
+    async def generate_roadmap(
+        self,
+        request: models.GenerateLessonRequest,
+        learner_profile: models.LearnerProfile,
+        learner_state: models.LearnerState,
+        teaching_strategy: models.TeachingStrategy,
+    ) -> models.LessonRoadmapResponse:
+        return await _plan_roadmap(request, learner_profile, learner_state, teaching_strategy)
+
+    async def index_content(self, blueprint: models.LessonBlueprint) -> models.GeneratedContent:
+        return await _index_lesson_content(blueprint)
+
+    async def tutor(
+        self,
+        request: models.TutorInteractionRequest,
+        session_state: Dict[str, Any],
+    ) -> models.TutorInteractionResponse:
+        return await _answer_tutor_question(request, session_state)
+
+
+class AssessmentAdaptationAgent:
+    """Owns question generation, grading, and evidence-based next-step decisions."""
+
+    async def run(
+        self,
+        request: models.GenerateQuizRequest | models.AssessmentSubmission,
+        session_state: Dict[str, Any] | None = None,
+    ) -> models.QuizResponse | models.AssessmentResult:
+        return await _run_assessment(request, session_state)
+
+    async def adapt(self, request: models.AdaptationRequest) -> models.AdaptationDecision:
+        existing = request.assessment_state.get("adaptation")
+        if isinstance(existing, dict) and existing:
+            return models.AdaptationDecision(
+                learner_id=request.learner_id,
+                session_id=request.session_id,
+                adaptations=existing,
+            )
+        return await _decide_adaptation(request)
+
+
+class QualityGovernanceAgent:
+    """Owns source-grounded generation, validation, safety, and publish readiness."""
+
+    async def generate_draft(
+        self,
+        title: str,
+        kind: str,
+        source_analysis: Dict[str, Any],
+        draft: Dict[str, Any],
+        source_material: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        return await _generate_governed_draft(title, kind, source_analysis, draft, source_material)
+
+
+# These are the only three agent instances in the EvolvED runtime.
+personalized_instruction_agent = PersonalizedInstructionAgent()
+assessment_adaptation_agent = AssessmentAdaptationAgent()
+quality_governance_agent = QualityGovernanceAgent()
