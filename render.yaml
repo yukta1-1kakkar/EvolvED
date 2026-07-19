@@ -74,8 +74,6 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 22.16.0
-      - key: NODE_ENV
-        value: production
       # Free Render web services cannot receive private-network traffic, so the
       # frontend proxy must use the API's public URL.
       - key: BACKEND_URL
